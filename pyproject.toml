@@ -9,7 +9,7 @@ description = "Shared library for the Multiplai Claude Code plugins — paths, c
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-authors = [{ name = "spikelab" }]
+authors = [{ name = "Spike", email = "fsm@spikelab.org" }]
 dependencies = [
     "anthropic==0.102.0",
     "claude-agent-sdk==0.1.56",
