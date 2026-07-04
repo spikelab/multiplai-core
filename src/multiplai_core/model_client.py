@@ -50,6 +50,20 @@ _SDK_RETRY_BACKOFF_S = 1.5
 # must never be able to mutate the filesystem, shell out, ask a (headless,
 # unanswerable) question, or spawn an expensive subagent.
 _SDK_MAX_TURNS = 6
+
+# Hard ceiling on a single SDK call. The bundled CLI subprocess can stall
+# indefinitely — a network hang on the model call, or the CLI parked waiting on
+# stream-json stdin that never closes — and the SDK exposes no timeout. Without
+# this guard the `async for` consume loop below blocks forever: the retry/except
+# machinery only catches *exceptions* (crashes), never a hang, so a single
+# stalled subprocess wedges the whole pipeline (observed: dream hung ~8h on the
+# critic pass, 2026-06-20). asyncio.wait_for turns a stall into a TimeoutError
+# that the existing retry loop catches and, after _SDK_MAX_ATTEMPTS, surfaces as
+# SDKQueryError — callers that tolerate failure (e.g. dream's critic pass) then
+# degrade gracefully instead of hanging. Default keeps interactive callers
+# (context_manager, session_start) snappy; long-running batch callers raise it
+# via env — dream.py sets MULTIPLAI_SDK_CALL_TIMEOUT_S=1800 before import.
+_SDK_CALL_TIMEOUT_S = float(os.environ.get("MULTIPLAI_SDK_CALL_TIMEOUT_S", "600"))
 _DISALLOWED_TOOLS = [
     "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
     "Task", "Agent", "AskUserQuestion", "SlashCommand", "ExitPlanMode",
@@ -266,15 +280,27 @@ class AgentSDKClient:
 
             chunks: list[str] = []
             message_count = 0
-            try:
+
+            async def _consume() -> int:
+                # Drain the SDK generator into `chunks`; returns the message count.
+                # Factored out so asyncio.wait_for can bound the whole drain —
+                # cancelling this coroutine on timeout closes the SDK generator,
+                # which terminates the bundled-CLI subprocess.
+                count = 0
                 async for message in _safe_query(
                     self._sdk, prompt=prompt, options=options
                 ):
-                    message_count += 1
+                    count += 1
                     if isinstance(message, AssistantMessage):
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 chunks.append(block.text)
+                return count
+
+            try:
+                message_count = await asyncio.wait_for(
+                    _consume(), timeout=_SDK_CALL_TIMEOUT_S
+                )
                 response_bytes = sum(len(c.encode("utf-8")) for c in chunks)
                 elapsed = asyncio.get_event_loop().time() - call_start
                 logger.info(
@@ -290,14 +316,20 @@ class AgentSDKClient:
                 last_exc = e
                 last_tail = _summarize_stderr(error_lines, list(recent_lines))
                 any_attempt_failed = True
+                # TimeoutError stringifies to "" — describe it explicitly.
+                reason = (
+                    f"timed out after {_SDK_CALL_TIMEOUT_S:.0f}s"
+                    if isinstance(e, asyncio.TimeoutError)
+                    else f"failed: {e}"
+                )
                 if attempt + 1 < _SDK_MAX_ATTEMPTS:
                     logger.warning(
-                        "claude_agent_sdk.query() failed (attempt %d/%d), "
-                        "retrying in %.1fs: %s",
+                        "claude_agent_sdk.query() %s (attempt %d/%d), "
+                        "retrying in %.1fs",
+                        reason,
                         attempt + 1,
                         _SDK_MAX_ATTEMPTS,
                         _SDK_RETRY_BACKOFF_S,
-                        e,
                     )
                     await asyncio.sleep(_SDK_RETRY_BACKOFF_S)
 
