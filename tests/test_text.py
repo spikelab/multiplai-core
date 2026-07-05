@@ -40,6 +40,21 @@ def test_escaped_quote_in_string():
     assert extract_json(text) == {"q": 'he said "hi"', "n": 2}
 
 
+def test_non_json_fence_before_json_fence():
+    # A ```python example before the answer must not shadow the real ```json.
+    text = (
+        "Some code:\n```python\nx = 1\n```\n"
+        "Result:\n```json\n{\"a\": 1}\n```"
+    )
+    assert extract_json(text) == {"a": 1}
+
+
+def test_non_json_bare_fence_falls_through_to_balancer():
+    # A bare ``` fence that isn't JSON should fall through, not raise.
+    text = "```\nnot json at all\n```\nthen: {\"b\": 2}"
+    assert extract_json(text) == {"b": 2}
+
+
 def test_empty_raises():
     with pytest.raises(ValueError):
         extract_json("")

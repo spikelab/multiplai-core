@@ -215,6 +215,30 @@ class TestAgentSDKClient:
 
             asyncio.run(_test())
 
+    def test_query_accepts_content_block_lists(self):
+        """WHEN a user message's content is an Anthropic content-block list
+        THEN the text blocks are flattened into the prompt (parity with the
+        API backend), not stringified into a TypeError."""
+        mock_sdk = _make_mock_sdk(["ok"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            from multiplai_core.model_client import AgentSDKClient
+            client = AgentSDKClient()
+
+            messages = [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "block one"},
+                    {"type": "image", "source": {}},
+                    {"type": "text", "text": "block two"},
+                ]},
+            ]
+
+            async def _test():
+                await client.query("sys", messages)
+                prompt = mock_sdk.query.call_args.kwargs["prompt"]
+                assert "block one" in prompt and "block two" in prompt
+
+            asyncio.run(_test())
+
     def test_query_extracts_text_from_text_blocks(self):
         """WHEN the SDK yields AssistantMessage with multiple TextBlock entries
         THEN their .text values are concatenated into ModelResponse.content."""

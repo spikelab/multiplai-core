@@ -1,6 +1,6 @@
 """Logging utilities for multiplai plugin.
 
-Implements ``reference/dev/logging-standard.md``:
+Standard adopted across every Multiplai plugin:
 
 - UTC ISO-8601 line format with component + session id
 - ``MULTIPLAI_DEBUG`` / ``MULTIPLAI_LOG_LEVEL`` env-driven level
@@ -259,6 +259,11 @@ def setup_logging(
                 if isinstance(formatter, _StandardFormatter):
                     formatter.set_session(session_id)
         return logger
+
+    # Don't also bubble records to the root logger: an embedding app with its
+    # own root handler would otherwise print every line twice (our handler +
+    # root's). We attach our own handlers below, so propagation is redundant.
+    logger.propagate = False
 
     fmt = _StandardFormatter(session_id)
 

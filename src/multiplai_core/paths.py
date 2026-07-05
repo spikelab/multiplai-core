@@ -4,7 +4,7 @@ Resolves file locations from plugin environment variables with standalone
 fallbacks.  Paths are cached at first access and immutable for the process
 lifetime (frozen dataclass + module-level singleton).
 
-Resolution order per D2 spec:
+Resolution order:
     1. Plugin env var (``CLAUDE_PLUGIN_ROOT``, ``CLAUDE_PLUGIN_DATA``,
        ``CLAUDE_PLUGIN_OPTION_*``) — expanded and resolved to absolute.
     2. Workspace-scoped fallback rooted at ``$WORKSPACE/.multiplai/`` (or
@@ -65,23 +65,24 @@ def _workspace_base() -> Path:
     return _explicit_workspace_base() or _STANDALONE_BASE
 
 
-class _CallablePath(type(Path())):
+class CallablePath(type(Path())):
     """A ``Path`` subclass whose instances are callable (returning *self*).
 
-    Dataclass fields store ``_CallablePath`` instances so that both attribute
-    access (``p.plugin_root``) and method-call syntax (``p.plugin_root()``)
-    work identically.  This keeps the public API uniform — callers can always
-    use ``()`` regardless of whether the accessor is a dataclass field or a
-    derived-path method.
+    :class:`Paths` fields hold ``CallablePath`` instances so that both
+    attribute access (``p.plugin_root``) and method-call syntax
+    (``p.plugin_root()``) work identically.  This keeps the public API
+    uniform — callers can always use ``()`` regardless of whether the
+    accessor is a dataclass field or a derived-path method — and the fields
+    are annotated with this type so both spellings pass type checking.
     """
 
     def __call__(self) -> Path:
         return self
 
 
-def _callable(p: Path) -> _CallablePath:
-    """Wrap *p* as a ``_CallablePath`` so it can be called with ``()``."""
-    return _CallablePath(p)
+def _callable(p: Path) -> CallablePath:
+    """Wrap *p* as a ``CallablePath`` so it can be called with ``()``."""
+    return CallablePath(p)
 
 
 def _env(name: str) -> str:
@@ -104,28 +105,27 @@ class Paths:
     """Immutable container of resolved plugin paths.
 
     Use :meth:`resolve` to create an instance from the current environment.
-    Fields are ``_CallablePath`` instances — they behave as regular ``Path``
-    objects but are also callable (returning themselves) so that the
+    Fields are :class:`CallablePath` instances — they behave as regular
+    ``Path`` objects but are also callable (returning themselves) so that the
     ``paths.field()`` accessor pattern works uniformly.
     """
 
-    plugin_root: Path
-    data_dir: Path
-    memory_dir: Path
-    diary_dir: Path
-    now_dir: Path
-    learnings_dir: Path
-    venv_dir: Path
-    catalogs_dir: Path
-    templates_dir: Path
+    plugin_root: CallablePath
+    data_dir: CallablePath
+    memory_dir: CallablePath
+    diary_dir: CallablePath
+    now_dir: CallablePath
+    learnings_dir: CallablePath
+    venv_dir: CallablePath
+    catalogs_dir: CallablePath
+    templates_dir: CallablePath
     _is_plugin_mode: bool = dataclasses.field(default=False, repr=False)
 
     @classmethod
     def resolve(cls) -> "Paths":
         """Resolve all paths from environment variables, with fallbacks.
 
-        Each path category follows an env-var-first, fallback-second cascade
-        per the D2 design table.
+        Each path category follows an env-var-first, fallback-second cascade.
         """
         env_root = _env("CLAUDE_PLUGIN_ROOT")
         env_data = _env("CLAUDE_PLUGIN_DATA")

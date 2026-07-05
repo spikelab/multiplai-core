@@ -552,12 +552,11 @@ class TestCachingAndImmutability:
             p.some_new_attr = "should fail"
 
     def test_paths_frozen_dataclass(self, clean_env, reset_paths_cache):
-        """Paths should be implemented as a frozen dataclass per D2 spec."""
+        """Paths should be implemented as a frozen dataclass."""
         from multiplai_core.paths import Paths
 
         assert dataclasses.is_dataclass(Paths), (
-            "Paths must be a dataclass (per D2 design: "
-            "@dataclasses.dataclass(frozen=True))"
+            "Paths must be a dataclass (@dataclasses.dataclass(frozen=True))"
         )
 
 

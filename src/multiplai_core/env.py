@@ -94,17 +94,25 @@ def load_multiplai_conf() -> dict:
     if conf_path is None or not conf_path.exists():
         return {"_sections": {}}
 
+    try:
+        text = conf_path.read_text()
+    except OSError as e:
+        # An unreadable conf (permissions, race with deletion) degrades to
+        # defaults like every other loader here, instead of crashing callers.
+        log.warning("Could not read %s (%s); using defaults", conf_path, e)
+        return {"_sections": {}}
+
     result: dict[str, str] = {}
     sections: dict[str, dict[str, str]] = {}
     current_section: str | None = None
-    for line in conf_path.read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         section_match = re.match(r"^\[([a-zA-Z0-9_-]+)\]\s*$", line)
         if section_match:
             current_section = section_match.group(1)
-            sections.setdefault(current_section, {})
+            sections.setdefault(current_section, {})  # type: ignore[arg-type]
             continue
         if "=" in line:
             key, _, value = line.partition("=")

@@ -42,13 +42,16 @@ _SDK_RETRY_BACKOFF_S = 1.5
 # (Agent→Explore, a guessed Read path, or ToolSearch loading a deferred tool
 # like AskUserQuestion) whose result needs a turn 2 that never comes, so the
 # session ends with no text → CLI exit 1. Verified across subprocess transcripts
-# 2026-05-24. Enumerating disallowed_tools can't fully fix this: ToolSearch is a
-# meta-tool that can load any deferred tool, so there is always something to
-# call. The real fix is _SDK_MAX_TURNS > 1 (a stray tool call recovers instead
-# of crashing) plus a system-prompt directive to answer directly. disallowed_
-# tools is kept as a SAFETY floor only: under bypassPermissions a multi-turn run
-# must never be able to mutate the filesystem, shell out, ask a (headless,
-# unanswerable) question, or spawn an expensive subagent.
+# 2026-05-24. The real fix is _SDK_MAX_TURNS > 1 (a stray tool call recovers
+# instead of crashing) plus a system-prompt directive to answer directly.
+# disallowed_tools is the SAFETY floor: under bypassPermissions a multi-turn
+# run must never be able to mutate the filesystem, shell out, spawn a subagent,
+# ask a (headless, unanswerable) question — or, because callers routinely feed
+# UNTRUSTED text through this client, read local files / fetch URLs. Leaving
+# Read+WebFetch enabled would let injected instructions in that text exfiltrate
+# local secrets in a single auto-approved multi-turn run. ToolSearch and Skill
+# are blocked too so deferred tools can't be loaded back in. The
+# _NO_TOOLS_SUFFIX prompt directive is an optimization, not a boundary.
 _SDK_MAX_TURNS = 6
 
 # Hard ceiling on a single SDK call. The bundled CLI subprocess can stall
@@ -62,7 +65,8 @@ _SDK_MAX_TURNS = 6
 # SDKQueryError — callers that tolerate failure (e.g. dream's critic pass) then
 # degrade gracefully instead of hanging. Default keeps interactive callers
 # (context_manager, session_start) snappy; long-running batch callers raise it
-# via env — dream.py sets MULTIPLAI_SDK_CALL_TIMEOUT_S=1800 before import.
+# via env — e.g. a long-running batch caller sets
+# MULTIPLAI_SDK_CALL_TIMEOUT_S=1800 before import.
 def _env_float(name: str, default: float) -> float:
     """Parse a float env var, falling back to the default on garbage.
 
@@ -82,8 +86,13 @@ def _env_float(name: str, default: float) -> float:
 
 _SDK_CALL_TIMEOUT_S = _env_float("MULTIPLAI_SDK_CALL_TIMEOUT_S", 600.0)
 _DISALLOWED_TOOLS = [
+    # mutation / execution
     "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
     "Task", "Agent", "AskUserQuestion", "SlashCommand", "ExitPlanMode",
+    # read / network / meta — closes the prompt-injection exfiltration chain
+    # (untrusted input steering an auto-approved Read → WebFetch of a secret)
+    "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch",
+    "Skill",
 ]
 _NO_TOOLS_SUFFIX = (
     "\n\nAll information you need is already provided in this message. Do NOT "
@@ -147,8 +156,24 @@ def _messages_to_prompt(messages: list[dict]) -> str:
     messages list. Plugin callers invoke single-turn user queries, so we
     concatenate every user message. Non-user roles are ignored (the
     system prompt is passed separately via ``ClaudeAgentOptions``).
+
+    Accepts both plain-string content and Anthropic content-block lists
+    (``[{"type": "text", "text": ...}]``) so the same messages work against
+    either backend; non-text blocks are skipped.
     """
-    user_parts = [m["content"] for m in messages if m.get("role") == "user"]
+    user_parts: list[str] = []
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        content = m["content"]
+        if isinstance(content, str):
+            user_parts.append(content)
+        else:
+            user_parts.extend(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
     return "\n\n".join(user_parts)
 
 
@@ -266,7 +291,7 @@ class AgentSDKClient:
             "SDK call start: model=%s system=%d bytes prompt=%d bytes",
             model, system_bytes, prompt_bytes,
         )
-        call_start = asyncio.get_event_loop().time()
+        call_start = asyncio.get_running_loop().time()
 
         last_exc: Exception | None = None
         last_tail = ""
@@ -300,9 +325,7 @@ class AgentSDKClient:
                 # Calendar/etc). Without it the bundled CLI discovers those
                 # OAuth integrations and tries to authenticate them in a
                 # non-interactive subprocess, collapsing with exit 1 and no
-                # usable stderr. Verified root cause 2026-05-19 against
-                # mcp-needs-auth-cache.json; see anthropics/
-                # claude-agent-sdk-python issues + PLANS doc.
+                # usable stderr.
                 extra_args={
                     "setting-sources": "",
                     "debug-to-stderr": None,
@@ -341,7 +364,7 @@ class AgentSDKClient:
                     _consume(), timeout=_SDK_CALL_TIMEOUT_S
                 )
                 response_bytes = sum(len(c.encode("utf-8")) for c in chunks)
-                elapsed = asyncio.get_event_loop().time() - call_start
+                elapsed = asyncio.get_running_loop().time() - call_start
                 logger.info(
                     "SDK call OK on attempt %d/%d: messages=%d response=%d bytes elapsed=%.1fs",
                     attempt + 1, _SDK_MAX_ATTEMPTS, message_count, response_bytes, elapsed,

@@ -12,12 +12,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Memory template filenames shipped with the plugin.  Used by both
-# setup_check.py and setup_write.py to iterate over the known set.
+# Memory template filenames shipped by the context plugin — the known set its
+# onboarding/health scripts iterate over. (Plugin-specific data; kept here only
+# because it is consumed across those scripts.)
 TEMPLATE_FILENAMES: list[str] = ["me.md", "technical-pref.md", "preferences.md"]
 
-# Expected memory filenames for health checks and audit.
-MEMORY_FILENAMES: list[str] = ["me.md", "technical-pref.md", "preferences.md"]
+# Backwards-compatible alias for the same set.
+MEMORY_FILENAMES: list[str] = TEMPLATE_FILENAMES
 
 
 def load_yaml(path: Path) -> dict[str, Any]:

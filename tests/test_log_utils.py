@@ -1,4 +1,4 @@
-"""Tests for lib/log_utils.py — standard-compliant logging + activity stream.
+"""Tests for multiplai_core.log_utils — standard logging + activity stream.
 
 Covers env-driven level resolution, the standard line format, session-id
 stamping, the shared hook-errors sink, and the log_event() dual-sink

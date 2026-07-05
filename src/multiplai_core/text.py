@@ -23,10 +23,17 @@ def extract_json(text: str) -> dict | list:
     if not text or not text.strip():
         raise ValueError("Empty response")
 
-    # 1. Fenced code blocks
-    fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if fence_match:
-        return json.loads(fence_match.group(1).strip())
+    # 1. Fenced code blocks — try explicit ```json fences first, then bare
+    #    ``` fences. A non-JSON fence earlier in the text (e.g. a ```python
+    #    example before the answer) must not shadow the real JSON, so every
+    #    candidate is tried and a non-parsing fence falls through to the
+    #    bracket-balancing scan instead of raising.
+    for pattern in (r"```json\s*\n(.*?)\n```", r"```\s*\n(.*?)\n```"):
+        for fence_match in re.finditer(pattern, text, re.DOTALL):
+            try:
+                return json.loads(fence_match.group(1).strip())
+            except json.JSONDecodeError:
+                continue
 
     # 2. First complete JSON object/array via bracket balancing
     stripped = text.strip()
