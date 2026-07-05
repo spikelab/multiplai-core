@@ -21,13 +21,13 @@ Consumed as a git-URL dependency — no PyPI. In a script's PEP 723 header:
 ```python
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.3.0"]
+# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.4.0"]
 # ///
 ```
 
-Pin by **git tag** (`@v0.3.0`); cut a new tag rather than moving an existing one.
+Pin by **git tag** (`@v0.4.0`); cut a new tag rather than moving an existing one.
 
-Optional extras (append to the requirement, e.g. `multiplai-core[sdk] @ git+...@v0.3.0`):
+Optional extras (append to the requirement, e.g. `multiplai-core[sdk] @ git+...@v0.4.0`):
 
 - `sdk` — the Agent SDK backend (`claude-agent-sdk`) when running outside the
   Claude Code runtime, which otherwise injects it.

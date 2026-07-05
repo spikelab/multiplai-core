@@ -45,7 +45,7 @@ from .model_client import (
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
 from .paths import Paths, get_paths
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # paths
