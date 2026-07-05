@@ -5,6 +5,7 @@ model client. Every Multiplai plugin imports from here instead of vendoring
 its own copy.
 """
 
+from .aio import hard_timeout, swallow_task_result
 from .config import (
     load_config,
     load_yaml,
@@ -13,6 +14,15 @@ from .config import (
     save_yaml,
     write_session_state,
 )
+from .env import (
+    env_candidates,
+    find_project_root,
+    load_env,
+    load_multiplai_conf,
+    resolve_effort,
+    resolve_model,
+)
+from .text import extract_json
 from .log_utils import (
     log_event,
     resolve_level,
@@ -35,7 +45,7 @@ from .model_client import (
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
 from .paths import Paths, get_paths
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
     # paths
@@ -63,5 +73,17 @@ __all__ = [
     "SDKQueryError",
     "DEFAULT_MODEL",
     "DEFAULT_MAX_TOKENS",
+    # async helpers
+    "hard_timeout",
+    "swallow_task_result",
+    # env / config loading
+    "load_env",
+    "env_candidates",
+    "find_project_root",
+    "load_multiplai_conf",
+    "resolve_model",
+    "resolve_effort",
+    # text
+    "extract_json",
     "__version__",
 ]
