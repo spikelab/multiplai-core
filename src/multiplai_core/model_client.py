@@ -28,9 +28,9 @@ _STDERR_RING_LINES = 50          # trailing context kept for the fallback tail
 _STDERR_MAX_ERROR_LINES = 15     # [ERROR] lines surfaced in the summary
 _STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
 
-# The bundled CLI intermittently exits 1 (verified recurring: diary
-# 2026-04-19/28304b42, 2026-04-29/8bcd0f1c). One bounded retry turns a flaky
-# failure into a transparent recovery for unattended pipelines like dream.
+# The bundled CLI intermittently exits 1 (verified recurring). One bounded
+# retry turns a flaky failure into a transparent recovery for unattended
+# pipelines like dream.
 _SDK_MAX_ATTEMPTS = 2
 _SDK_RETRY_BACKOFF_S = 1.5
 
@@ -63,7 +63,24 @@ _SDK_MAX_TURNS = 6
 # degrade gracefully instead of hanging. Default keeps interactive callers
 # (context_manager, session_start) snappy; long-running batch callers raise it
 # via env — dream.py sets MULTIPLAI_SDK_CALL_TIMEOUT_S=1800 before import.
-_SDK_CALL_TIMEOUT_S = float(os.environ.get("MULTIPLAI_SDK_CALL_TIMEOUT_S", "600"))
+def _env_float(name: str, default: float) -> float:
+    """Parse a float env var, falling back to the default on garbage.
+
+    Read at import time (this value is a module constant), so a malformed
+    value must not crash `import multiplai_core` for every consumer — mirror
+    the defensive parsing in log_utils.retention_days().
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number; using default %s", name, raw, default)
+        return default
+
+
+_SDK_CALL_TIMEOUT_S = _env_float("MULTIPLAI_SDK_CALL_TIMEOUT_S", 600.0)
 _DISALLOWED_TOOLS = [
     "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
     "Task", "Agent", "AskUserQuestion", "SlashCommand", "ExitPlanMode",
@@ -202,6 +219,7 @@ class AgentSDKClient:
     """
 
     def __init__(self) -> None:
+        self._warned_ignored_params = False
         try:
             import claude_agent_sdk
             self._sdk = claude_agent_sdk
@@ -227,6 +245,20 @@ class AgentSDKClient:
             TextBlock,
         )
 
+        # max_tokens/temperature are accepted for interface parity but the SDK
+        # uses session defaults — warn once if a caller relies on them (e.g.
+        # temperature=0 for determinism) so the silent no-op is visible.
+        if not self._warned_ignored_params and (
+            temperature != 1.0 or max_tokens != DEFAULT_MAX_TOKENS
+        ):
+            logger.warning(
+                "AgentSDKClient ignores max_tokens/temperature "
+                "(got max_tokens=%s, temperature=%s); the SDK uses session "
+                "defaults. Use AnthropicAPIClient if you need to control them.",
+                max_tokens, temperature,
+            )
+            self._warned_ignored_params = True
+
         prompt = _messages_to_prompt(messages)
         system_bytes = len(system.encode("utf-8")) if system else 0
         prompt_bytes = len(prompt.encode("utf-8"))
@@ -238,6 +270,7 @@ class AgentSDKClient:
 
         last_exc: Exception | None = None
         last_tail = ""
+        last_reason = ""
         any_attempt_failed = False
         for attempt in range(_SDK_MAX_ATTEMPTS):
             # Capture stderr in memory only: a ring buffer of recent lines for
@@ -283,18 +316,24 @@ class AgentSDKClient:
 
             async def _consume() -> int:
                 # Drain the SDK generator into `chunks`; returns the message count.
-                # Factored out so asyncio.wait_for can bound the whole drain —
-                # cancelling this coroutine on timeout closes the SDK generator,
-                # which terminates the bundled-CLI subprocess.
+                # Factored out so asyncio.wait_for can bound the whole drain. On
+                # timeout wait_for cancels this coroutine, but an `async for`
+                # does NOT deterministically aclose() its generator on
+                # cancellation — the bundled-CLI subprocess would then linger
+                # until GC finalization while the retry loop spawns a second
+                # one. Hold the generator explicitly and aclose() it in finally
+                # so the subprocess is torn down synchronously on timeout.
                 count = 0
-                async for message in _safe_query(
-                    self._sdk, prompt=prompt, options=options
-                ):
-                    count += 1
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                chunks.append(block.text)
+                gen = _safe_query(self._sdk, prompt=prompt, options=options)
+                try:
+                    async for message in gen:
+                        count += 1
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    chunks.append(block.text)
+                finally:
+                    await gen.aclose()
                 return count
 
             try:
@@ -322,6 +361,7 @@ class AgentSDKClient:
                     if isinstance(e, asyncio.TimeoutError)
                     else f"failed: {e}"
                 )
+                last_reason = reason
                 if attempt + 1 < _SDK_MAX_ATTEMPTS:
                     logger.warning(
                         "claude_agent_sdk.query() %s (attempt %d/%d), "
@@ -334,8 +374,8 @@ class AgentSDKClient:
                     await asyncio.sleep(_SDK_RETRY_BACKOFF_S)
 
         raise SDKQueryError(
-            f"claude_agent_sdk.query() failed after {_SDK_MAX_ATTEMPTS} "
-            f"attempts: {last_exc}",
+            f"claude_agent_sdk.query() {last_reason or f'failed: {last_exc}'} "
+            f"after {_SDK_MAX_ATTEMPTS} attempts",
             stderr_tail=last_tail,
         ) from last_exc
 
@@ -382,15 +422,18 @@ class AnthropicAPIClient:
             system=system,
             messages=messages,
         )
-        # Empty content list (tool-only turn, refusal, non-text stop) would
-        # otherwise IndexError and convert a recoverable empty reply into a
-        # total extraction/routing failure.
-        text = ""
-        for block in response.content:
-            if getattr(block, "type", None) == "text":
-                text = block.text
-                break
-        return ModelResponse(content=text)
+        # Concatenate every text block, matching AgentSDKClient's behavior — a
+        # response whose text is split around thinking/citation/search blocks
+        # must not be truncated to its first segment. An empty content list
+        # (tool-only turn, refusal, non-text stop) yields "" rather than
+        # IndexError, keeping a recoverable empty reply from becoming a total
+        # extraction/routing failure. `.strip()` also mirrors the SDK path.
+        parts = [
+            block.text
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ]
+        return ModelResponse(content="".join(parts).strip())
 
 
 def detect_client_type() -> str:

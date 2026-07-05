@@ -265,5 +265,12 @@ def _reset_cache() -> None:
         _cached_paths = None
 
 
-# Module-level convenience accessors
-paths = get_paths()
+# Module-level convenience accessor. Resolved lazily via PEP 562 so that
+# merely importing the package does not read env vars and permanently cache
+# the result — a consumer that sets CLAUDE_PLUGIN_OPTION_* / WORKSPACE after
+# `import multiplai_core` but before first path use still gets correct paths.
+# `from multiplai_core.paths import paths` continues to work unchanged.
+def __getattr__(name: str) -> "Paths":
+    if name == "paths":
+        return get_paths()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

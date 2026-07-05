@@ -180,6 +180,9 @@ class _StandardFormatter(logging.Formatter):
 
     def __init__(self, session_id: str | None = None):
         super().__init__()
+        self.set_session(session_id)
+
+    def set_session(self, session_id: str | None) -> None:
         sid = (session_id or "")[:8]
         self._sid = sid if sid else "--------"
 
@@ -247,6 +250,14 @@ def setup_logging(
     logger.setLevel(resolved)
 
     if logger.handlers:
+        # Already configured. A long-lived process may call setup_logging again
+        # for a new session — refresh the session id on the existing formatters
+        # so subsequent lines aren't mislabeled with the first session's id.
+        if session_id is not None:
+            for handler in logger.handlers:
+                formatter = handler.formatter
+                if isinstance(formatter, _StandardFormatter):
+                    formatter.set_session(session_id)
         return logger
 
     fmt = _StandardFormatter(session_id)
@@ -334,8 +345,11 @@ def log_event(
         # Time carries a ``Z`` (UTC, unambiguous across timezones) and
         # the 8-char session id is inline so a line is self-traceable
         # (grep one id to replay a whole session) without the JSONL.
+        # Non-INFO severities are tagged inline so a WARNING/ERROR is
+        # visible in the human log, not only in the JSONL mirror.
+        sev = "" if level.upper() == "INFO" else f" [{level.upper()}]"
         human = (
-            f"{now.strftime('%H:%M:%S')}Z [{sid}] [{component}] {message}"
+            f"{now.strftime('%H:%M:%S')}Z [{sid}] [{component}]{sev} {message}"
         )
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(human + "\n")

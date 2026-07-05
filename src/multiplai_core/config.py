@@ -32,23 +32,42 @@ def load_yaml(path: Path) -> dict[str, Any]:
         return {}
     try:
         with path.open() as f:
-            return yaml.safe_load(f) or {}
+            loaded = yaml.safe_load(f)
     except Exception:
         logger.warning("Could not read %s, starting fresh", path.name)
         return {}
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        # A top-level list/scalar would pass through and later explode on
+        # `.get()` far from the cause; treat it as unusable.
+        logger.warning(
+            "%s did not contain a mapping (got %s), starting fresh",
+            path.name, type(loaded).__name__,
+        )
+        return {}
+    return loaded
 
 
 def save_yaml(path: Path, data: dict[str, Any]) -> None:
-    """Write *data* to a YAML file, creating parent directories as needed.
+    """Atomically write *data* to a YAML file, creating parent dirs as needed.
 
-    Imports ``pyyaml`` on demand so the module can be imported before venv
-    bootstrap completes.
+    Writes to a temp file then ``os.replace`` so a crash mid-dump never leaves
+    a truncated YAML file that ``load_yaml`` would silently swallow to ``{}``,
+    wiping persisted state. Imports ``pyyaml`` on demand so the module can be
+    imported before venv bootstrap completes.
     """
     import yaml
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
-        yaml.dump(data, f, default_flow_style=False)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp.open("w") as f:
+            yaml.dump(data, f, default_flow_style=False)
+        os.replace(str(tmp), str(path))
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def read_memory_files(memory_dir: Path, *, exclude: set[str] | None = None) -> dict[str, str]:
@@ -127,13 +146,22 @@ def load_config(config_path: Path) -> dict[str, Any]:
     suffix = config_path.suffix.lower()
 
     if suffix == ".json":
-        return json.loads(config_path.read_text())
+        parsed = json.loads(config_path.read_text())
     elif suffix in (".yaml", ".yml"):
         import yaml
         with config_path.open() as f:
-            return yaml.safe_load(f) or {}
+            parsed = yaml.safe_load(f)
     else:
         raise ValueError(
             f"Unsupported config file format: {suffix}. "
             f"Use .json or .yaml/.yml."
         )
+
+    if parsed is None:
+        return {}
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"Configuration file {config_path} must contain a mapping at the "
+            f"top level, got {type(parsed).__name__}."
+        )
+    return parsed

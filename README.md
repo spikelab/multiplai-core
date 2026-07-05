@@ -18,11 +18,13 @@ Consumed as a git-URL dependency — no PyPI. In a script's PEP 723 header:
 ```python
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.1"]
+# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.2.1"]
 # ///
 ```
 
-Pin by **git tag** (`@v0.1`); cut a new tag rather than moving an existing one.
+Pin by **git tag** (`@v0.2.1`); cut a new tag rather than moving an existing one.
+For the Agent SDK backend from plain Python, install the `sdk` extra:
+`multiplai-core[sdk] @ git+...@v0.2.1`.
 
 ## Develop
 

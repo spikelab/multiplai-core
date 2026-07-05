@@ -4,22 +4,43 @@ build-backend = "hatchling.build"
 
 [project]
 name = "multiplai-core"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Shared library for the Multiplai Claude Code plugins — paths, config, logging, model client."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Spike", email = "fsm@spikelab.org" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+# Loose ranges: this is a library, so exact pins would make it unsolvable
+# alongside any consumer (or sibling dep) that needs a different version.
 dependencies = [
-    "anthropic==0.102.0",
-    "claude-agent-sdk==0.1.56",
+    "anthropic>=0.40,<1.0",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-]
+# claude-agent-sdk is optional: inside the Claude Code runtime the host injects
+# it, and AgentSDKClient degrades to the API backend when it is absent. Install
+# `multiplai-core[sdk]` only when you want the SDK backend from plain Python.
+sdk = ["claude-agent-sdk>=0.1,<0.2"]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/spikelab/multiplai-core"
+Repository = "https://github.com/spikelab/multiplai-core"
+
+[tool.hatch.version]
+# Single source of truth for the version — no hand-duplicated string to drift.
+path = "src/multiplai_core/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/multiplai_core"]

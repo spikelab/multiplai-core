@@ -1,6 +1,6 @@
-"""Tests for path resolver module (scripts/lib/paths.py).
+"""Tests for the path resolver module (multiplai_core/paths.py).
 
-Covers all scenarios from requirements/path-resolver.md:
+Covers:
 - Plugin environment variable resolution
 - Standalone fallback resolution
 - Plugin mode detection
@@ -649,17 +649,16 @@ class TestModuleSingleton:
 
 
 # ---------------------------------------------------------------------------
-# sys.path Setup (Block Spec)
+# Public import surface
 # ---------------------------------------------------------------------------
 
 
-class TestSysPathSetup:
-    """Block spec: sys.path setup allows `from multiplai_core.paths import paths`
-    from any scripts/*.py file.
-    """
+class TestPublicImports:
+    """The documented public import paths resolve (including the lazily-
+    resolved `paths` singleton via PEP 562 module __getattr__)."""
 
     def test_lib_paths_importable(self):
-        """from multiplai_core.paths import paths must work."""
+        """from multiplai_core.paths import paths must work (lazy resolution)."""
         from multiplai_core.paths import paths
 
         assert paths is not None

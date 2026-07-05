@@ -656,6 +656,7 @@ class TestResponseNormalization:
         mock_sdk = _make_mock_sdk(["sdk text"])
 
         mock_text_block = MagicMock()
+        mock_text_block.type = "text"
         mock_text_block.text = "api text"
         mock_api_response = MagicMock()
         mock_api_response.content = [mock_text_block]
@@ -677,8 +678,65 @@ class TestResponseNormalization:
                 api_result = await api_client.query("sys", messages)
                 assert isinstance(sdk_result, ModelResponse)
                 assert isinstance(api_result, ModelResponse)
-                assert isinstance(sdk_result.content, str)
-                assert isinstance(api_result.content, str)
+                # Assert the actual extracted text, not just the type — a weak
+                # isinstance-only check let the API-vs-SDK extraction asymmetry
+                # (first-block-only truncation) go unnoticed.
+                assert sdk_result.content == "sdk text"
+                assert api_result.content == "api text"
+
+            asyncio.run(_test())
+
+    def test_api_concatenates_multiple_text_blocks(self):
+        """A response whose text is split across multiple text blocks (around
+        thinking/citation blocks) must be joined, not truncated to the first —
+        matching AgentSDKClient. Non-text blocks are skipped."""
+        from multiplai_core.model_client import AnthropicAPIClient
+
+        def _blk(btype, text):
+            b = MagicMock()
+            b.type = btype
+            b.text = text
+            return b
+
+        mock_api_response = MagicMock()
+        mock_api_response.content = [
+            _blk("text", "first "),
+            _blk("thinking", "IGNORED"),
+            _blk("text", "second"),
+        ]
+        mock_async_client = MagicMock()
+        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
+        mock_anthropic = MagicMock()
+        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            client = AnthropicAPIClient("sk-test")
+            client._client = None
+
+            async def _test():
+                result = await client.query("sys", [{"role": "user", "content": "hi"}])
+                assert result.content == "first second"
+
+            asyncio.run(_test())
+
+    def test_api_empty_content_returns_empty_string(self):
+        """A tool-only/refusal turn (no text blocks) yields "" not IndexError."""
+        from multiplai_core.model_client import AnthropicAPIClient
+
+        mock_api_response = MagicMock()
+        mock_api_response.content = []
+        mock_async_client = MagicMock()
+        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
+        mock_anthropic = MagicMock()
+        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            client = AnthropicAPIClient("sk-test")
+            client._client = None
+
+            async def _test():
+                result = await client.query("sys", [{"role": "user", "content": "hi"}])
+                assert result.content == ""
 
             asyncio.run(_test())
 
@@ -739,14 +797,17 @@ class TestNoVendoring:
         assert hasattr(model_client, "ModelClient")
 
     def test_pyproject_declares_deps_not_vendored(self):
-        """anthropic + a pinned claude-agent-sdk are declared as project
-        dependencies (the opposite of vendoring). Vendoring = bundling SDK
-        source into the repo, which would show up as a committed package
-        dir, not a dependency line."""
+        """anthropic and claude-agent-sdk are declared as dependencies (the
+        opposite of vendoring), with loose ranges rather than exact pins so a
+        consumer's resolver can satisfy them. Vendoring = bundling SDK source
+        into the repo, which would show up as a committed package dir."""
         pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
-        text = pyproject.read_text()
+        text = pyproject.read_text().lower()
         assert "anthropic" in text
-        assert "claude-agent-sdk==" in text.lower()
+        assert "claude-agent-sdk" in text
+        # Deliberately NOT exact-pinned (a library must not pin its deps).
+        assert "anthropic==" not in text
+        assert "claude-agent-sdk==" not in text
         # Not vendored: no SDK source tree committed under the package.
         pkg = Path(__file__).resolve().parent.parent / "src" / "multiplai_core"
         assert not (pkg / "claude_agent_sdk").exists()
@@ -791,7 +852,6 @@ class TestLoggingOnFallback:
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import create_client, logger as mc_logger
-            handler = logging.Handler()
             records = []
 
             class Capture(logging.Handler):
@@ -830,3 +890,130 @@ class TestLoggingOnFallback:
             assert any(r.levelno >= logging.WARNING for r in records)
         finally:
             actual_logger.removeHandler(cap)
+
+
+class TestSDKCallTimeout:
+    """Cover the v0.2 hard-timeout guard around a stalled SDK call."""
+
+    @staticmethod
+    def _hanging_sdk() -> MagicMock:
+        """Mock SDK whose query() generator never yields (simulates a hang)."""
+        mock = MagicMock()
+        mock.AssistantMessage = _FakeAssistantMessage
+        mock.TextBlock = _FakeTextBlock
+
+        def _options_ctor(**kwargs):
+            opts = MagicMock()
+            for k, v in kwargs.items():
+                setattr(opts, k, v)
+            return opts
+
+        mock.ClaudeAgentOptions = MagicMock(side_effect=_options_ctor)
+
+        closed = {"aclosed": False}
+
+        async def _agen(prompt, options):
+            try:
+                await asyncio.sleep(10)  # longer than the patched timeout
+                yield _FakeAssistantMessage([_FakeTextBlock("never")])
+            except asyncio.CancelledError:
+                closed["aclosed"] = True
+                raise
+
+        mock.query = MagicMock(side_effect=_agen)
+        mock._closed = closed
+        return mock
+
+    def test_timeout_raises_sdk_query_error_with_reason(self):
+        """A stalled call times out on every attempt and surfaces as
+        SDKQueryError whose message names the timeout (TimeoutError
+        stringifies to '')."""
+        from multiplai_core import model_client
+
+        mock_sdk = self._hanging_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}), \
+                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05), \
+                patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0):
+            client = model_client.AgentSDKClient()
+
+            async def _test():
+                with pytest.raises(model_client.SDKQueryError) as exc_info:
+                    await client.query("sys", [{"role": "user", "content": "hi"}])
+                assert "timed out" in str(exc_info.value)
+
+            asyncio.run(_test())
+
+    def test_timeout_closes_generator(self):
+        """On timeout the generator is aclose()'d so the CLI subprocess is torn
+        down synchronously rather than leaking until GC."""
+        from multiplai_core import model_client
+
+        mock_sdk = self._hanging_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}), \
+                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05), \
+                patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0):
+            client = model_client.AgentSDKClient()
+
+            async def _test():
+                with pytest.raises(model_client.SDKQueryError):
+                    await client.query("sys", [{"role": "user", "content": "hi"}])
+
+            asyncio.run(_test())
+            assert mock_sdk._closed["aclosed"] is True
+
+    def test_retry_recovers_after_first_timeout(self):
+        """A first-attempt hang that then succeeds recovers within the retry
+        budget instead of failing."""
+        from multiplai_core import model_client
+
+        state = {"calls": 0}
+        mock = MagicMock()
+        mock.AssistantMessage = _FakeAssistantMessage
+        mock.TextBlock = _FakeTextBlock
+        mock.ClaudeAgentOptions = MagicMock(side_effect=lambda **kw: MagicMock())
+
+        async def _agen(prompt, options):
+            state["calls"] += 1
+            if state["calls"] == 1:
+                await asyncio.sleep(10)  # first attempt hangs
+            yield _FakeAssistantMessage([_FakeTextBlock("recovered")])
+
+        mock.query = MagicMock(side_effect=_agen)
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}), \
+                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05), \
+                patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0):
+            client = model_client.AgentSDKClient()
+
+            async def _test():
+                result = await client.query("sys", [{"role": "user", "content": "hi"}])
+                assert result.content == "recovered"
+                assert state["calls"] == 2
+
+            asyncio.run(_test())
+
+
+class TestEnvFloat:
+    """The SDK timeout constant is parsed at import — bad values must not
+    crash `import multiplai_core` for every consumer."""
+
+    def test_env_float_valid(self):
+        from multiplai_core.model_client import _env_float
+        with patch.dict(os.environ, {"X_TIMEOUT": "1800"}):
+            assert _env_float("X_TIMEOUT", 600.0) == 1800.0
+
+    def test_env_float_garbage_returns_default(self):
+        from multiplai_core.model_client import _env_float
+        with patch.dict(os.environ, {"X_TIMEOUT": "abc"}):
+            assert _env_float("X_TIMEOUT", 600.0) == 600.0
+
+    def test_env_float_empty_returns_default(self):
+        from multiplai_core.model_client import _env_float
+        with patch.dict(os.environ, {"X_TIMEOUT": ""}):
+            assert _env_float("X_TIMEOUT", 600.0) == 600.0
+
+    def test_env_float_unset_returns_default(self):
+        from multiplai_core.model_client import _env_float
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("X_TIMEOUT", None)
+            assert _env_float("X_TIMEOUT", 600.0) == 600.0

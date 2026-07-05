@@ -145,6 +145,22 @@ def test_log_event_writes_human_and_jsonl(logs_dir):
     assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", rec["ts"])
 
 
+def test_log_event_tags_non_info_severity_in_human_line(logs_dir):
+    """A WARNING/ERROR event is visible in the human log, not just the JSONL."""
+    log_utils.log_event("dream", "apply", "memory write failed",
+                         session_id="sess1234xx", level="ERROR")
+    human = (logs_dir / "activity.log").read_text().strip()
+    assert "[ERROR]" in human
+    assert "[dream] [ERROR] memory write failed" in human
+
+
+def test_log_event_info_has_no_severity_tag(logs_dir):
+    """INFO events stay clean — no severity tag."""
+    log_utils.log_event("context", "inject", "did a thing", session_id="s")
+    human = (logs_dir / "activity.log").read_text().strip()
+    assert "[INFO]" not in human
+
+
 def test_log_event_never_raises(monkeypatch):
     def boom():
         raise RuntimeError("no logs dir")

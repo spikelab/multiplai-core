@@ -451,11 +451,9 @@ wheels = [
 
 [[package]]
 name = "multiplai-core"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
-    { name = "claude-agent-sdk" },
     { name = "pyyaml" },
 ]
 
@@ -463,15 +461,18 @@ dependencies = [
 dev = [
     { name = "pytest" },
 ]
+sdk = [
+    { name = "claude-agent-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = "==0.102.0" },
-    { name = "claude-agent-sdk", specifier = "==0.1.56" },
+    { name = "anthropic", specifier = ">=0.40,<1.0" },
+    { name = "claude-agent-sdk", marker = "extra == 'sdk'", specifier = ">=0.1,<0.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "sdk"]
 
 [[package]]
 name = "packaging"
