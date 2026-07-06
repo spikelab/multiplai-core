@@ -7,26 +7,21 @@ Provides a Protocol-based interface with two implementations:
 The create_client() factory tries Agent SDK first, falls back to API key.
 """
 
-import asyncio
 import logging
 import os
-from collections import deque
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+from .agent_runner import (  # noqa: F401 — _summarize_stderr re-exported for compat
+    AgentRunError,
+    _summarize_stderr,
+    run_agent,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_TOKENS = 4096
-
-# CLI stderr capture (debug-to-stderr is on, so raw volume is large). We keep
-# it all in memory, never on disk, and only surface a compact slice when a
-# call actually fails: the `[ERROR]` lines (which carry the real cause —
-# rate limit, auth, crash), or a few trailing raw lines if there were none.
-_STDERR_RING_LINES = 50          # trailing context kept for the fallback tail
-_STDERR_MAX_ERROR_LINES = 15     # [ERROR] lines surfaced in the summary
-_STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
 
 # The bundled CLI intermittently exits 1 (verified recurring). One bounded
 # retry turns a flaky failure into a transparent recovery for unattended
@@ -60,10 +55,11 @@ _SDK_MAX_TURNS = 6
 # this guard the `async for` consume loop below blocks forever: the retry/except
 # machinery only catches *exceptions* (crashes), never a hang, so a single
 # stalled subprocess wedges the whole pipeline (observed: dream hung ~8h on the
-# critic pass, 2026-06-20). asyncio.wait_for turns a stall into a TimeoutError
-# that the existing retry loop catches and, after _SDK_MAX_ATTEMPTS, surfaces as
-# SDKQueryError — callers that tolerate failure (e.g. dream's critic pass) then
-# degrade gracefully instead of hanging. Default keeps interactive callers
+# critic pass, 2026-06-20). run_agent's hard timeout turns a stall into a
+# TimeoutError that the retry budget catches and, after _SDK_MAX_ATTEMPTS,
+# surfaces as SDKQueryError — callers that tolerate failure (e.g. dream's
+# critic pass) then degrade gracefully instead of hanging. Default keeps
+# interactive callers
 # (context_manager, session_start) snappy; long-running batch callers raise it
 # via env — e.g. a long-running batch caller sets
 # MULTIPLAI_SDK_CALL_TIMEOUT_S=1800 before import.
@@ -133,22 +129,6 @@ class SDKQueryError(RuntimeError):
         return "\n".join(parts)
 
 
-def _summarize_stderr(error_lines: list[str], recent_lines: list[str]) -> str:
-    """Build a compact stderr summary for a failed SDK call.
-
-    Prefers CLI ``[ERROR]`` lines (consecutive duplicates collapsed, capped)
-    since they carry the actionable cause. Falls back to the last few raw
-    lines when the CLI emitted no error-level output.
-    """
-    if error_lines:
-        deduped: list[str] = []
-        for line in error_lines:
-            if not deduped or deduped[-1] != line:
-                deduped.append(line)
-        return "\n".join(deduped[-_STDERR_MAX_ERROR_LINES:])
-    return "\n".join(recent_lines[-_STDERR_RING_LINES:])
-
-
 def _messages_to_prompt(messages: list[dict]) -> str:
     """Flatten the ModelClient messages list into a single prompt string.
 
@@ -175,39 +155,6 @@ def _messages_to_prompt(messages: list[dict]) -> str:
                 if isinstance(block, dict) and block.get("type") == "text"
             )
     return "\n\n".join(user_parts)
-
-
-def _hook_session_dir() -> Path:
-    """cwd for no-tool SDK calls — prevents project settings.json pickup."""
-    cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
-    d = cfg / "hook-sessions"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-async def _safe_query(sdk, *, prompt, options):
-    """Wrap ``claude_agent_sdk.query()`` to skip unknown message types.
-
-    The SDK message parser raises for message types it doesn't recognize.
-    With ``debug-to-stderr`` enabled (which this client sets), the CLI emits
-    additional internal message types the bundled SDK parser doesn't know
-    about — without this wrapper they crash the call with a generic
-    ``Command failed with exit code 1``. Mirrors deep-research/sdk.py and
-    buildme's ``_safe_query``. This guard is mandatory whenever
-    ``debug-to-stderr`` is on.
-    """
-    gen = sdk.query(prompt=prompt, options=options).__aiter__()
-    while True:
-        try:
-            message = await gen.__anext__()
-            yield message
-        except StopAsyncIteration:
-            break
-        except Exception as e:  # noqa: BLE001
-            if "Unknown message type" in str(e):
-                logger.debug("Skipping unknown SDK message type: %s", e)
-                continue
-            raise
 
 
 @runtime_checkable
@@ -264,12 +211,6 @@ class AgentSDKClient:
         temperature: float = 1.0,
     ) -> ModelResponse:
         """Send a single-turn query via the Agent SDK and return normalized text."""
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            TextBlock,
-        )
-
         # max_tokens/temperature are accepted for interface parity but the SDK
         # uses session defaults — warn once if a caller relies on them (e.g.
         # temperature=0 for determinism) so the silent no-op is visible.
@@ -286,121 +227,34 @@ class AgentSDKClient:
 
         prompt = _messages_to_prompt(messages)
         system_bytes = len(system.encode("utf-8")) if system else 0
-        prompt_bytes = len(prompt.encode("utf-8"))
         logger.info(
             "SDK call start: model=%s system=%d bytes prompt=%d bytes",
-            model, system_bytes, prompt_bytes,
+            model, system_bytes, len(prompt.encode("utf-8")),
         )
-        call_start = asyncio.get_running_loop().time()
 
-        last_exc: Exception | None = None
-        last_tail = ""
-        last_reason = ""
-        any_attempt_failed = False
-        for attempt in range(_SDK_MAX_ATTEMPTS):
-            # Capture stderr in memory only: a ring buffer of recent lines for
-            # trailing context, plus a bounded list of [ERROR] lines so a
-            # fatal error is never evicted by a DEBUG burst. Summarized into a
-            # compact tail only if the call fails.
-            recent_lines: deque[str] = deque(maxlen=_STDERR_RING_LINES)
-            error_lines: list[str] = []
-
-            def _on_stderr(line: str, _r=recent_lines, _e=error_lines) -> None:
-                _r.append(line)
-                if "[ERROR]" in line and len(_e) < _STDERR_ERROR_CAPTURE_CAP:
-                    _e.append(line)
-
-            options = ClaudeAgentOptions(
+        # The timeout/retry knobs are read at call time so a caller (or test)
+        # can patch the module globals. prompt_file_fallback stays off: Read
+        # is deliberately disallowed on this untrusted-text path.
+        try:
+            result = await run_agent(
+                prompt,
+                system_prompt=system + _NO_TOOLS_SUFFIX,
                 allowed_tools=[],
                 disallowed_tools=_DISALLOWED_TOOLS,  # see _DISALLOWED_TOOLS note
                 max_turns=_SDK_MAX_TURNS,
-                permission_mode="bypassPermissions",
-                system_prompt=system + _NO_TOOLS_SUFFIX,
                 model=model,
-                env={"_HOOK_CHILD_SESSION": "1"},
-                cwd=str(_hook_session_dir()),
-                setting_sources=[],
-                # strict-mcp-config isolates this subprocess from
-                # account-level MCP integrations (claude.ai Gmail/Drive/
-                # Calendar/etc). Without it the bundled CLI discovers those
-                # OAuth integrations and tries to authenticate them in a
-                # non-interactive subprocess, collapsing with exit 1 and no
-                # usable stderr.
-                extra_args={
-                    "setting-sources": "",
-                    "debug-to-stderr": None,
-                    "strict-mcp-config": None,
-                },
-                stderr=_on_stderr,
+                timeout_s=_SDK_CALL_TIMEOUT_S,
+                max_attempts=_SDK_MAX_ATTEMPTS,
+                retry_backoff_s=_SDK_RETRY_BACKOFF_S,
+                prompt_file_fallback=False,
+                label="model_client",
             )
-
-            chunks: list[str] = []
-            message_count = 0
-
-            async def _consume() -> int:
-                # Drain the SDK generator into `chunks`; returns the message count.
-                # Factored out so asyncio.wait_for can bound the whole drain. On
-                # timeout wait_for cancels this coroutine, but an `async for`
-                # does NOT deterministically aclose() its generator on
-                # cancellation — the bundled-CLI subprocess would then linger
-                # until GC finalization while the retry loop spawns a second
-                # one. Hold the generator explicitly and aclose() it in finally
-                # so the subprocess is torn down synchronously on timeout.
-                count = 0
-                gen = _safe_query(self._sdk, prompt=prompt, options=options)
-                try:
-                    async for message in gen:
-                        count += 1
-                        if isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
-                                    chunks.append(block.text)
-                finally:
-                    await gen.aclose()
-                return count
-
-            try:
-                message_count = await asyncio.wait_for(
-                    _consume(), timeout=_SDK_CALL_TIMEOUT_S
-                )
-                response_bytes = sum(len(c.encode("utf-8")) for c in chunks)
-                elapsed = asyncio.get_running_loop().time() - call_start
-                logger.info(
-                    "SDK call OK on attempt %d/%d: messages=%d response=%d bytes elapsed=%.1fs",
-                    attempt + 1, _SDK_MAX_ATTEMPTS, message_count, response_bytes, elapsed,
-                )
-                if any_attempt_failed:
-                    logger.warning(
-                        "claude_agent_sdk.query() recovered after a failed attempt"
-                    )
-                return ModelResponse(content="".join(chunks).strip())
-            except Exception as e:  # noqa: BLE001
-                last_exc = e
-                last_tail = _summarize_stderr(error_lines, list(recent_lines))
-                any_attempt_failed = True
-                # TimeoutError stringifies to "" — describe it explicitly.
-                reason = (
-                    f"timed out after {_SDK_CALL_TIMEOUT_S:.0f}s"
-                    if isinstance(e, asyncio.TimeoutError)
-                    else f"failed: {e}"
-                )
-                last_reason = reason
-                if attempt + 1 < _SDK_MAX_ATTEMPTS:
-                    logger.warning(
-                        "claude_agent_sdk.query() %s (attempt %d/%d), "
-                        "retrying in %.1fs",
-                        reason,
-                        attempt + 1,
-                        _SDK_MAX_ATTEMPTS,
-                        _SDK_RETRY_BACKOFF_S,
-                    )
-                    await asyncio.sleep(_SDK_RETRY_BACKOFF_S)
-
-        raise SDKQueryError(
-            f"claude_agent_sdk.query() {last_reason or f'failed: {last_exc}'} "
-            f"after {_SDK_MAX_ATTEMPTS} attempts",
-            stderr_tail=last_tail,
-        ) from last_exc
+        except AgentRunError as e:
+            raise SDKQueryError(
+                f"claude_agent_sdk.query() {e.reason} after {e.attempts} attempts",
+                stderr_tail=e.stderr_tail,
+            ) from (e.__cause__ or e)
+        return ModelResponse(content=result.text)
 
 
 class AnthropicAPIClient:
