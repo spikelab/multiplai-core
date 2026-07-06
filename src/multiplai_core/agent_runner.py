@@ -169,6 +169,47 @@ async def _safe_query(sdk, *, prompt, options):
             raise
 
 
+def _record_cost(
+    component: str, label: str, model: str | None,
+    usage: AgentUsage, session_id: str,
+) -> None:
+    """Append one SDK-run record to the cost ledger; never raise.
+
+    Undifferentiated ``cache_creation_tokens`` go in the 5m tier (errs low);
+    the SDK's own ``cost_usd`` wins over token-derived pricing when present.
+    """
+    if not component:
+        return
+    if not any((usage.input_tokens, usage.output_tokens,
+                usage.cache_creation_tokens, usage.cache_read_tokens,
+                usage.cost_usd)):
+        return
+    try:
+        import uuid
+        from datetime import datetime, timezone
+
+        from .costing import TokenCounts, append_records, build_record
+
+        append_records([build_record(
+            ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            source="sdk",
+            session=session_id or f"sdk-{label}",
+            model=model or "sdk-default",
+            msg_id=f"run-{uuid.uuid4().hex[:12]}",
+            tokens=TokenCounts(
+                input=usage.input_tokens,
+                output=usage.output_tokens,
+                cw5m=usage.cache_creation_tokens,
+                cr=usage.cache_read_tokens,
+            ),
+            component=component,
+            cost_usd=usage.cost_usd if usage.cost_usd > 0 else None,
+        )])
+    except Exception:  # noqa: BLE001 — ledger is never worth failing a run
+        logger.warning("run_agent [%s]: cost ledger write failed (ignored)",
+                       label, exc_info=True)
+
+
 def _sdk_class(sdk, name: str) -> type | None:
     """Fetch a message/block class off the SDK module, tolerating absence.
 
@@ -196,6 +237,7 @@ async def run_agent(
     retry_backoff_s: float = 1.5,
     prompt_file_fallback: bool = True,
     label: str = "agent",
+    component: str = "",
 ) -> AgentRunResult:
     """Run one agent invocation via ``claude_agent_sdk.query()``.
 
@@ -216,6 +258,9 @@ async def run_agent(
             exit-1 into a transparent recovery.
         label: Short identifier used in log lines to tell concurrent calls
             apart.
+        component: Cost-ledger component tag (e.g. ``"buildme"``). When set,
+            the run's usage is appended to the cost ledger (source ``"sdk"``);
+            ledger failures never break the run. Empty = no ledger write.
 
     Raises:
         AgentRunTimeout: every attempt exceeded ``timeout_s``.
@@ -277,6 +322,7 @@ async def run_agent(
     last_reason = ""
     last_tail = ""
     last_partial: AgentRunResult | None = None
+    last_session_id = ""
     any_attempt_failed = False
     timed_out = False
 
@@ -319,6 +365,7 @@ async def run_agent(
             files_changed: list[str] = []
             turns = 0
             usage = AgentUsage()
+            session_id = ""
 
             async def _consume() -> None:
                 # Hold the generator explicitly and aclose() it in finally: on
@@ -326,7 +373,7 @@ async def run_agent(
                 # `async for` does not deterministically close its generator
                 # on cancellation — the CLI subprocess would linger until GC
                 # while a retry spawns a second one.
-                nonlocal turns, usage
+                nonlocal turns, usage, session_id
                 gen = _safe_query(sdk, prompt=prompt, options=options)
                 try:
                     async for message in gen:
@@ -343,6 +390,7 @@ async def run_agent(
                                         if fp and fp not in files_changed:
                                             files_changed.append(fp)
                         elif result_cls and isinstance(message, result_cls):
+                            session_id = getattr(message, "session_id", "") or ""
                             u = getattr(message, "usage", None) or {}
                             usage = AgentUsage(
                                 input_tokens=u.get("input_tokens", 0) or 0,
@@ -373,6 +421,7 @@ async def run_agent(
                     logger.warning(
                         "run_agent [%s] recovered after a failed attempt", label
                     )
+                _record_cost(component, label, model, usage, session_id)
                 return AgentRunResult(
                     text="".join(chunks).strip(),
                     turns=turns,
@@ -397,6 +446,7 @@ async def run_agent(
                     files_changed=files_changed,
                     stderr_tail=last_tail,
                 )
+                last_session_id = session_id
                 any_attempt_failed = True
                 if attempt + 1 < max_attempts:
                     logger.warning(
@@ -418,6 +468,9 @@ async def run_agent(
         "--- captured CLI stderr (errors) ---\n%s",
         label, last_reason, max_attempts, elapsed, last_tail or "(none)",
     )
+    if last_partial is not None:
+        # Failed runs still spent tokens — record what was consumed.
+        _record_cost(component, label, model, last_partial.usage, last_session_id)
     err_cls = AgentRunTimeout if timed_out else AgentRunError
     raise err_cls(
         f"run_agent [{label}] {last_reason} after {max_attempts} attempt(s)",

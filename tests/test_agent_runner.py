@@ -463,3 +463,89 @@ class TestPromptFileFallback:
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("small"))
         assert mock_sdk.query.call_args.kwargs["prompt"] == "small"
+
+
+class TestCostLedgerTap:
+    """component= writes the run's usage to the cost ledger; ledger failures
+    never break the run."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_workspace(self, monkeypatch, tmp_path, reset_paths_cache):
+        monkeypatch.setenv("WORKSPACE", str(tmp_path))
+
+    def _result_message(self):
+        return _FakeResultMessage(
+            usage={
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "cache_creation_input_tokens": 200,
+                "cache_read_input_tokens": 3000,
+            },
+            cost=0.123,
+        )
+
+    def test_component_writes_ledger_record(self):
+        from multiplai_core.costing import iter_ledger
+
+        mock_sdk = _make_mock_sdk([
+            _FakeAssistantMessage([_FakeTextBlock("done")]),
+            self._result_message(),
+        ])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("p", model="claude-opus-4-8", component="buildme"))
+        records = list(iter_ledger())
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["source"] == "sdk"
+        assert rec["component"] == "buildme"
+        assert rec["cost_usd"] == pytest.approx(0.123)  # SDK cost wins
+        assert rec["tokens"] == {"in": 1000, "out": 500, "cw5m": 200, "cw1h": 0, "cr": 3000}
+
+    def test_no_component_writes_nothing(self):
+        from multiplai_core.costing import iter_ledger
+
+        mock_sdk = _make_mock_sdk([self._result_message()])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("p"))
+        assert list(iter_ledger()) == []
+
+    def test_zero_usage_writes_nothing(self):
+        from multiplai_core.costing import iter_ledger
+
+        mock_sdk = _make_mock_sdk([_FakeAssistantMessage([_FakeTextBlock("x")])])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("p", component="buildme"))
+        assert list(iter_ledger()) == []
+
+    def test_ledger_failure_never_breaks_the_run(self, monkeypatch):
+        import multiplai_core.costing as costing
+
+        def _boom(records):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(costing, "append_records", _boom)
+        mock_sdk = _make_mock_sdk([
+            _FakeAssistantMessage([_FakeTextBlock("done")]),
+            self._result_message(),
+        ])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            result = _run(run_agent("p", component="buildme"))
+        assert result.text == "done"
+
+    def test_failed_run_records_partial_usage(self):
+        from multiplai_core.costing import iter_ledger
+
+        # Result message arrives, then the stream dies — partial usage exists.
+        async def _agen(prompt, options):
+            yield _FakeAssistantMessage([_FakeTextBlock("some")])
+            yield self._result_message()
+            raise RuntimeError("stream died")
+
+        mock_sdk = _make_mock_sdk()
+        mock_sdk.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(AgentRunError):
+                _run(run_agent("p", component="deep-research"))
+        records = list(iter_ledger())
+        assert len(records) == 1
+        assert records[0]["component"] == "deep-research"

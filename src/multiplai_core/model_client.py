@@ -190,7 +190,9 @@ class AgentSDKClient:
     defaults.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, component: str = "model_client") -> None:
+        # Cost-ledger tag for this client's runs (see agent_runner.run_agent).
+        self._component = component
         self._warned_ignored_params = False
         try:
             import claude_agent_sdk
@@ -248,6 +250,7 @@ class AgentSDKClient:
                 retry_backoff_s=_SDK_RETRY_BACKOFF_S,
                 prompt_file_fallback=False,
                 label="model_client",
+                component=self._component,
             )
         except AgentRunError as e:
             raise SDKQueryError(
@@ -329,12 +332,16 @@ def detect_client_type() -> str:
         return "none (no SDK or API key)"
 
 
-async def create_client(*, api_key: str | None = None) -> ModelClient:
+async def create_client(
+    *, api_key: str | None = None, component: str = "model_client"
+) -> ModelClient:
     """Create a model client. Tries Agent SDK first, falls back to API key.
 
     Args:
         api_key: Optional API key override. If not provided, reads from
                  CLAUDE_PLUGIN_OPTION_anthropic_api_key env var.
+        component: Cost-ledger tag for this client's runs (SDK backend only;
+                 e.g. "extraction", "dream").
 
     Returns:
         A ModelClient instance.
@@ -343,7 +350,7 @@ async def create_client(*, api_key: str | None = None) -> ModelClient:
         RuntimeError: If neither Agent SDK nor API key is available.
     """
     try:
-        client = AgentSDKClient()
+        client = AgentSDKClient(component=component)
         logger.info("Model client: Agent SDK selected (zero-config)")
         return client
     except ImportError:
