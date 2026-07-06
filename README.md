@@ -13,6 +13,7 @@ own drifting copy:
 | `multiplai_core.aio` | `hard_timeout()` and async task helpers. |
 | `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, dated rotation, retention. |
 | `multiplai_core.model_client` | `create_client()` — Agent SDK first, Anthropic API fallback. |
+| `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting). |
 
 ## Install
 
@@ -21,7 +22,7 @@ Consumed as a git-URL dependency — no PyPI. In a script's PEP 723 header:
 ```python
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.4.0"]
+# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.5.0"]
 # ///
 ```
 
