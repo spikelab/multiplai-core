@@ -28,9 +28,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# claude-agent-sdk is optional: inside the Claude Code runtime the host injects
-# it, and AgentSDKClient degrades to the API backend when it is absent. Install
-# `multiplai-core[sdk]` only when you want the SDK backend from plain Python.
+# claude-agent-sdk is optional so API-only consumers stay light. NOTE: nothing
+# injects it at runtime — PEP 723 uv scripts get a fresh isolated env, so any
+# consumer that wants the SDK backend MUST depend on `multiplai-core[sdk]`
+# explicitly. Without it, AgentSDKClient degrades to the API backend, which
+# needs an API key.
 sdk = ["claude-agent-sdk>=0.1,<0.2"]
 # load_env() needs python-dotenv; without this extra it degrades to a no-op
 # with a warning.

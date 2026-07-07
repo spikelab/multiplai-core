@@ -304,3 +304,47 @@ def test_sweep_prunes_only_dated_files_beyond_cutoff(logs_dir):
     assert keep_current.exists()
     assert keep_recent.exists()
     assert not drop_old.exists()
+
+
+# --------------------------------------------------------------------------
+# oversize truncation of append-only logs (hook-errors.log)
+# --------------------------------------------------------------------------
+
+def test_truncate_oversized_keeps_recent_tail(tmp_path):
+    log = tmp_path / "hook-errors.log"
+    lines = [f"line-{i:06d}\n" for i in range(20_000)]  # ~260KB
+    log.write_text("".join(lines))
+    assert log.stat().st_size > log_utils._ERROR_LOG_MAX_BYTES
+
+    log_utils._truncate_oversized(log)
+
+    size = log.stat().st_size
+    assert size <= log_utils._ERROR_LOG_MAX_BYTES
+    content = log.read_text()
+    assert content.startswith("[truncated:")
+    # Most recent entries survive; oldest are gone.
+    assert "line-019999" in content
+    assert "line-000000" not in content
+    # Tail starts on a whole line, not mid-entry.
+    assert re.search(r"\n(line-\d{6}\n)", content)
+
+
+def test_truncate_oversized_noop_under_limit(tmp_path):
+    log = tmp_path / "hook-errors.log"
+    log.write_text("small\n")
+    log_utils._truncate_oversized(log)
+    assert log.read_text() == "small\n"
+
+    missing = tmp_path / "absent.log"
+    log_utils._truncate_oversized(missing)  # must not raise
+    assert not missing.exists()
+
+
+def test_setup_logging_truncates_oversized_hook_errors(logs_dir):
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    err_log = logs_dir / "hook-errors.log"
+    err_log.write_text("x" * (log_utils._ERROR_LOG_MAX_BYTES * 2))
+
+    log_utils.setup_logging(_unique("truncator"))
+
+    assert err_log.stat().st_size <= log_utils._ERROR_LOG_MAX_BYTES
