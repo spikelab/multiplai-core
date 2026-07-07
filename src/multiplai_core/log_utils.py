@@ -60,11 +60,71 @@ _REJECTED_RE = re.compile(r"^(?P<base>.+)\.log\.(?P<date>\d{4}-\d{2}-\d{2})$")
 # Directory sweep (migrate + prune) runs at most once per process.
 _swept = False
 
+# Oversize ceiling for append-only logs (hook-errors.log), per the logging
+# standard: "truncated to ~100KB when oversized".
+_ERROR_LOG_MAX_BYTES = 100 * 1024
+
+
+def _truncate_oversized(path: Path, max_bytes: int = _ERROR_LOG_MAX_BYTES) -> None:
+    """Truncate an append-only log to its most recent tail when oversized.
+
+    Keeps roughly half of *max_bytes* so truncation runs infrequently.
+    Rewrites in place (same inode) so concurrent O_APPEND writers keep
+    working; a few lines may interleave during the rewrite — acceptable
+    for a best-effort error sink. Never raises.
+    """
+    try:
+        if not path.exists() or path.stat().st_size <= max_bytes:
+            return
+        keep = max_bytes // 2
+        with path.open("r+b") as f:
+            f.seek(-keep, os.SEEK_END)
+            tail = f.read()
+            nl = tail.find(b"\n")
+            if nl != -1:
+                tail = tail[nl + 1:]
+            f.seek(0)
+            f.write(b"[truncated: exceeded %d bytes]\n" % max_bytes + tail)
+            f.truncate()
+    except OSError:
+        pass
+
 
 def _get_logs_dir() -> Path:
     """Get logs directory from path resolver (imported lazily)."""
     from .paths import get_paths
-    return get_paths().logs_dir()
+    return _pytest_guard(get_paths().logs_dir())
+
+
+# Per-process redirect target when the pytest guard trips (one dir, so all
+# components in a test process land together).
+_pytest_redirect: Path | None = None
+
+
+def _pytest_guard(logs_dir: Path) -> Path:
+    """Never write logs into a real workspace from inside pytest.
+
+    Loggers are typically configured at module import time; pytest imports
+    modules during collection, before any fixture (including autouse env
+    scrubbers) runs, so a leaked WORKSPACE — or the ``~/.multiplai``
+    standalone fallback — would silently route test log writes into real
+    logs. Under pytest, any logs dir outside the system temp root is
+    redirected to a throwaway temp dir.
+    """
+    if "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
+        return logs_dir
+    import tempfile
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    try:
+        resolved = logs_dir.resolve()
+    except OSError:
+        resolved = logs_dir
+    if resolved == tmp_root or tmp_root in resolved.parents:
+        return logs_dir
+    global _pytest_redirect
+    if _pytest_redirect is None:
+        _pytest_redirect = Path(tempfile.mkdtemp(prefix="multiplai-pytest-logs-"))
+    return _pytest_redirect
 
 
 def _utc_today() -> str:
@@ -284,7 +344,9 @@ def setup_logging(
         logger.addHandler(file_handler)
 
         # Shared ERROR+ sink across all components (append-only, undated
-        # per the logging standard).
+        # per the logging standard). Enforce the oversize ceiling before
+        # binding — nothing else ever truncates this file.
+        _truncate_oversized(logs_dir / "hook-errors.log")
         error_handler = logging.FileHandler(
             logs_dir / "hook-errors.log", encoding="utf-8"
         )
