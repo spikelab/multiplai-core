@@ -200,6 +200,48 @@ class TestDerivedPaths:
         p = Paths.resolve()
         assert p.logs_dir() == Path("/data/logs")
 
+    def test_skill_state_dir_derived_from_data(self, monkeypatch, reset_paths_cache):
+        """Scenario: skill state bucket lives under data_dir/skills/<name>."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_data_dir", "/data")
+        from multiplai_core.paths import Paths
+
+        p = Paths.resolve()
+        # Compare as strings: the accessor mkdir's the dir, which fails for a
+        # non-writable "/data" — the returned path is still correct.
+        assert str(p.data_dir / "skills" / "gmail") == "/data/skills/gmail"
+
+    def test_skill_state_dir_creates_dir_and_gitignores_bucket(
+        self, monkeypatch, reset_paths_cache, tmp_path,
+    ):
+        """Scenario: first access creates the dir and a `*` .gitignore at data_dir."""
+        data = tmp_path / "data"
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_data_dir", str(data))
+        from multiplai_core.paths import Paths
+
+        p = Paths.resolve()
+        d = p.skill_state_dir("slack")
+        assert d == data / "skills" / "slack"
+        assert d.is_dir()
+        gi = data / ".gitignore"
+        assert gi.read_text(encoding="utf-8") == "*\n"
+
+    def test_skill_state_dir_preserves_existing_gitignore(
+        self, monkeypatch, reset_paths_cache, tmp_path,
+    ):
+        """Scenario: an existing data_dir/.gitignore is not overwritten."""
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / ".gitignore").write_text("custom\n", encoding="utf-8")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_data_dir", str(data))
+        from multiplai_core.paths import Paths
+
+        p = Paths.resolve()
+        p.skill_state_dir("gmail")
+        assert (data / ".gitignore").read_text(encoding="utf-8") == "custom\n"
+
     def test_dream_state_derived_from_data(self, monkeypatch, reset_paths_cache):
         """Scenario: Dream state path derived from plugin data."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
