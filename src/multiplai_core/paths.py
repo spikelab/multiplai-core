@@ -90,6 +90,22 @@ def _env(name: str) -> str:
     return os.environ.get(name, "").strip()
 
 
+def _ensure_data_gitignore(data_dir: Path) -> None:
+    """Drop a ``.gitignore`` of ``*`` at *data_dir* if none exists.
+
+    Makes the whole runtime data bucket git-ignored by mechanism, so a
+    skill writing state under a workspace repo can never stage it — no
+    reliance on a workspace-level ignore rule. Best-effort; never raises.
+    """
+    gi = data_dir / ".gitignore"
+    try:
+        if not gi.exists():
+            data_dir.mkdir(parents=True, exist_ok=True)
+            gi.write_text("*\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _resolve_env_path(value: str, fallback: Path) -> Path:
     """Return an absolute ``Path`` from *value*, or *fallback* if empty.
 
@@ -211,6 +227,30 @@ class Paths:
     def logs_dir(self) -> Path:
         """Plugin log files directory."""
         return self.data_dir / "logs"
+
+    def skill_state_dir(self, name: str) -> Path:
+        """Git-ignored per-skill state bucket at ``data_dir/skills/<name>``.
+
+        One home for a skill's regenerable runtime state (SQLite caches,
+        downloaded assets, token files) — replacing the hand-rolled
+        WORKSPACE→``~/.multiplai`` resolvers each skill used to copy. The
+        directory is created on first access and, at the same time, a
+        ``.gitignore`` containing ``*`` is dropped at the ``data_dir`` root
+        so *everything* under the data bucket is git-ignored by mechanism,
+        not by a claim in docs or a workspace-level rule that a standalone
+        checkout might lack.
+
+        Best-effort: directory creation and the ignore-file write never
+        raise (a read-only or racing filesystem must not break the skill);
+        the resolved path is always returned so callers can proceed.
+        """
+        d = self.data_dir / "skills" / name
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            _ensure_data_gitignore(self.data_dir)
+        except OSError:
+            pass
+        return d
 
     def dream_state_file(self) -> Path:
         """Dream state tracking file (YAML)."""
