@@ -6,9 +6,11 @@ import pytest
 
 from multiplai_core import env as env_mod
 from multiplai_core.env import (
+    CURRENT_MODEL,
     env_candidates,
     find_project_root,
     load_multiplai_conf,
+    pick_model,
     resolve_effort,
     resolve_model,
 )
@@ -94,3 +96,65 @@ class TestLoadMultiplaiConf:
     def test_missing_returns_empty(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         assert load_multiplai_conf() == {"_sections": {}}
+
+    def test_dotted_section_name(self, monkeypatch, tmp_path):
+        # Dotted task keys must parse as section names — pick_model's per-task
+        # override channel depends on this.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        (tmp_path / "multiplai.conf").write_text(
+            "[deep-research.parse]\nMODEL=sonnet\n"
+        )
+        conf = load_multiplai_conf()
+        assert conf["_sections"]["deep-research.parse"]["MODEL"] == "sonnet"
+
+
+def _write_conf(tmp_path, text):
+    (tmp_path / "multiplai.conf").write_text(text)
+
+
+class TestPickModel:
+    def test_default_tier_opus(self, monkeypatch, tmp_path):
+        # Ceiling of opus allows the opus family through verbatim.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        assert pick_model() == CURRENT_MODEL["opus"]
+
+    def test_explicit_sonnet_tier(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        assert pick_model("sonnet") == CURRENT_MODEL["sonnet"]
+
+    def test_task_override_wins_over_default(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(
+            tmp_path,
+            'MULTIPLAI_MODEL="claude-opus-4-6"\n'
+            "[deep-research.parse]\nMODEL=sonnet\n",
+        )
+        assert pick_model("opus", task="deep-research.parse") == CURRENT_MODEL["sonnet"]
+
+    def test_missing_task_section_falls_back_to_default(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        assert pick_model("opus", task="unconfigured.task") == CURRENT_MODEL["opus"]
+
+    def test_ceiling_caps_the_tier(self, monkeypatch, tmp_path):
+        # A sonnet ceiling downgrades an opus request to the ceiling string.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-sonnet-4-6"\n')
+        assert pick_model("opus") == "claude-sonnet-4-6"
+
+    def test_override_accepts_full_model_id(self, monkeypatch, tmp_path):
+        # A dated ID in the override normalizes to its family.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(
+            tmp_path,
+            'MULTIPLAI_MODEL="claude-opus-4-6"\n'
+            "[buildme.implementer]\nMODEL=claude-opus-4-8\n",
+        )
+        assert pick_model("sonnet", task="buildme.implementer") == CURRENT_MODEL["opus"]
+
+    def test_unknown_default_tier_falls_back_to_opus(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        assert pick_model("bogus") == CURRENT_MODEL["opus"]

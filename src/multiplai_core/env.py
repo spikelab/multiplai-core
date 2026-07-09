@@ -109,7 +109,9 @@ def load_multiplai_conf() -> dict:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        section_match = re.match(r"^\[([a-zA-Z0-9_-]+)\]\s*$", line)
+        # Dots allowed so dotted task keys work as section names, e.g.
+        # ``[deep-research.parse]`` — see pick_model()'s per-task overrides.
+        section_match = re.match(r"^\[([a-zA-Z0-9_.-]+)\]\s*$", line)
         if section_match:
             current_section = section_match.group(1)
             sections.setdefault(current_section, {})  # type: ignore[arg-type]
@@ -149,6 +151,63 @@ def resolve_model(requested: str, ceiling: str | None = None) -> str:
         log.info("Model ceiling: %s → %s", requested, ceiling)
         return ceiling
     return requested
+
+
+# The ONE place a dated model ID lives. Bump these 3 lines when a model ships;
+# everything downstream references families (opus/sonnet/haiku), never a dated ID.
+# IDs verified against the claude-api catalog (2026-07-09): opus/sonnet are bare
+# aliases, haiku's alias resolves to claude-haiku-4-5-20251001.
+CURRENT_MODEL = {
+    "haiku": "claude-haiku-4-5",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-4-8",
+}
+
+
+def _normalize_tier(value: str | None) -> str | None:
+    """Map a MODEL override value to a known family key, or None.
+
+    Accepts a family name (``opus``) or a full/dated ID (``claude-opus-4-8``);
+    returns the matching key in ``CURRENT_MODEL``. Unknown values → None so the
+    caller can fall back to its default tier.
+    """
+    if not value:
+        return None
+    v = value.strip().lower()
+    if v in CURRENT_MODEL:
+        return v
+    for family in CURRENT_MODEL:
+        if family in v:
+            return family
+    return None
+
+
+def _section_override(conf: dict, task: str | None) -> str | None:
+    """Return the family from ``[task] MODEL=...`` in the conf, or None.
+
+    Looks up the dotted *task* key (e.g. ``deep-research.parse``) in the conf's
+    ``_sections`` and normalizes its ``MODEL`` value to a family.
+    """
+    if not task:
+        return None
+    section = conf.get("_sections", {}).get(task)
+    if not section:
+        return None
+    return _normalize_tier(section.get("MODEL"))
+
+
+def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
+    """Resolve a semantic tier to a concrete, ceiling-capped model ID.
+
+    *default_tier* is the call site's choice (``opus`` for hard work, ``sonnet``
+    for cheap bulk work). A ``[task] MODEL=...`` section in ``multiplai.conf``
+    overrides it per task without a code edit. The result is then capped by the
+    ``MULTIPLAI_MODEL`` ceiling, so a laptop/budget run can force all-sonnet.
+    """
+    conf = load_multiplai_conf()
+    tier = _section_override(conf, task) or _normalize_tier(default_tier) or "opus"
+    ceiling = conf.get("MULTIPLAI_MODEL")  # None → resolve_model uses env/default
+    return resolve_model(CURRENT_MODEL[tier], ceiling=ceiling)
 
 
 def _effort_tier(effort: str) -> int:

@@ -23,10 +23,12 @@ from .config import (
     write_session_state,
 )
 from .env import (
+    CURRENT_MODEL,
     env_candidates,
     find_project_root,
     load_env,
     load_multiplai_conf,
+    pick_model,
     resolve_effort,
     resolve_model,
 )
@@ -53,7 +55,7 @@ from .model_client import (
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
 from .paths import Paths, get_paths
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     # agent runner
@@ -98,6 +100,8 @@ __all__ = [
     "load_multiplai_conf",
     "resolve_model",
     "resolve_effort",
+    "pick_model",
+    "CURRENT_MODEL",
     # text
     "extract_json",
     "__version__",
