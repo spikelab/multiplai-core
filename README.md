@@ -28,6 +28,21 @@ Consumed as a git-URL dependency — no PyPI. In a script's PEP 723 header:
 
 Pin by **git tag** (`@v0.4.0`); cut a new tag rather than moving an existing one.
 
+### Availability guarantee
+
+Every installed multiplai plugin resolves this library from GitHub on first
+run, so its availability is part of the plugins' contract with their users:
+
+- **This repository stays public.** Taking it private or deleting it would
+  break every installed plugin; it will not happen casually.
+- **Release tags are immutable.** A `vX.Y.Z` tag is never moved, deleted, or
+  reused — what a PEP 723 pin resolved yesterday is what it resolves tomorrow.
+- Fixes ship as **new tags**; consumers upgrade by bumping their pin.
+
+(PyPI publication — which would also remove the GitHub-availability dependency
+and speed up first-run resolution — is under consideration; until then the
+guarantee above is the contract.)
+
 Optional extras (append to the requirement, e.g. `multiplai-core[sdk] @ git+...@v0.4.0`):
 
 - `sdk` — the Agent SDK backend (`claude-agent-sdk`) when running outside the
