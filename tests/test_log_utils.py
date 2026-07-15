@@ -115,6 +115,57 @@ def test_errors_go_to_shared_hook_errors_log(logs_dir):
     assert f"[{name}]" in shared
 
 
+@pytest.fixture
+def clean_pkg_logger():
+    """Package loggers have fixed names, so their handlers leak across tests.
+    Detach anything a test attaches to ``multiplai_core`` (and children)."""
+    yield
+    pkg = logging.getLogger("multiplai_core")
+    for h in list(pkg.handlers):
+        pkg.removeHandler(h)
+
+
+def test_setup_logging_captures_propagate_loggers(logs_dir, clean_pkg_logger):
+    """propagate_loggers routes a package logger's records into the
+    component file AND the shared hook-errors sink."""
+    name = _unique("cap")
+    log_utils.setup_logging(name, propagate_loggers=("multiplai_core",))
+    logging.getLogger("multiplai_core.agent_runner").error("boom")
+    for h in logging.getLogger("multiplai_core").handlers:
+        h.flush()
+
+    component = (logs_dir / f"{name}.log").read_text()
+    shared = (logs_dir / "hook-errors.log").read_text()
+    assert "ERROR: boom" in component
+    assert "ERROR: boom" in shared
+
+
+def test_setup_logging_default_does_not_capture_packages(logs_dir, clean_pkg_logger):
+    """Back-compat: a bare setup_logging(name) must NOT route multiplai_core.*
+    records into <name>.log (guards other components from double-logging)."""
+    name = _unique("nocap")
+    log_utils.setup_logging(name)
+    logging.getLogger("multiplai_core.agent_runner").error("boom")
+
+    log_file = logs_dir / f"{name}.log"
+    text = log_file.read_text() if log_file.exists() else ""
+    assert "boom" not in text
+
+
+def test_setup_logging_capture_no_double_write(logs_dir, clean_pkg_logger):
+    """Calling setup_logging twice must not attach the handlers twice —
+    each package record is written exactly once."""
+    name = _unique("dbl")
+    log_utils.setup_logging(name, propagate_loggers=("multiplai_core",))
+    log_utils.setup_logging(name, propagate_loggers=("multiplai_core",))
+    logging.getLogger("multiplai_core.agent_runner").error("solo")
+    for h in logging.getLogger("multiplai_core").handlers:
+        h.flush()
+
+    component = (logs_dir / f"{name}.log").read_text()
+    assert component.count("ERROR: solo") == 1
+
+
 # --------------------------------------------------------------------------
 # log_event
 # --------------------------------------------------------------------------

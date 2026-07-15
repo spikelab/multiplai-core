@@ -296,6 +296,8 @@ def setup_logging(
     name: str = "multiplai",
     level: int | None = None,
     session_id: str | None = None,
+    *,
+    propagate_loggers: tuple[str, ...] = (),
 ) -> logging.Logger:
     """Set up logging for a multiplai script.
 
@@ -304,6 +306,18 @@ def setup_logging(
     a shared ``hook-errors.log`` handler for ERROR+. When *level* is omitted
     it is resolved from the environment via :func:`resolve_level` so
     ``MULTIPLAI_DEBUG=1`` makes every script verbose without code changes.
+
+    ``propagate_loggers`` names extra loggers (typically packages such as
+    ``"multiplai_core"``) whose records should also land in this component's
+    ``<name>.log`` and the shared ``hook-errors.log``. Those libraries log to
+    their own dotted loggers (e.g. ``multiplai_core.agent_runner``) which
+    normally propagate only to the root logger — which has no file handler in a
+    hook process, so their failure detail reaches stderr only. Attaching the
+    same file + error handlers to the named package loggers captures that
+    detail on disk without adding a second stderr stream (interactive stderr is
+    left to this component's own logger). Default ``()`` leaves behavior
+    unchanged. The attachment is idempotent — a handler already present on a
+    package logger is not attached twice.
     """
     logger = logging.getLogger(name)
     resolved = level if level is not None else resolve_level()
@@ -353,6 +367,18 @@ def setup_logging(
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(fmt)
         logger.addHandler(error_handler)
+
+        # Route named package loggers' records into this component's file and
+        # the shared error sink. Same handler objects, no stderr handler — so
+        # library failure detail lands on disk without doubling interactive
+        # output. Root has no handlers, so no duplication; we leave each
+        # package logger's ``propagate`` untouched.
+        for pkg_name in propagate_loggers:
+            pkg_logger = logging.getLogger(pkg_name)
+            pkg_logger.setLevel(resolved)
+            for handler in (file_handler, error_handler):
+                if handler not in pkg_logger.handlers:
+                    pkg_logger.addHandler(handler)
 
         global _swept
         if not _swept:
