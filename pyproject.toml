@@ -33,7 +33,18 @@ dependencies = [
 # consumer that wants the SDK backend MUST depend on `multiplai-core[sdk]`
 # explicitly. Without it, AgentSDKClient degrades to the API backend, which
 # needs an API key.
-sdk = ["claude-agent-sdk>=0.1,<0.2"]
+#
+# Floor is >=0.2.116: the 0.1.x line misparses the terminal result message
+# emitted by modern Claude CLIs (>=2.x), raising the notorious
+# `Claude Code returned an error result: success` after a full generation.
+# The retry wrapper can't help — it's deterministic. Matches the floor pinned
+# by multiplai-kit / multiplai-gui so all SDK consumers resolve compatibly.
+#
+# Ceiling is <0.3: claude-agent-sdk is a fast-moving 0.x package where a single
+# minor bump (0.1 -> 0.2) already shipped a breaking result-message parse
+# change. Without a cap, a downstream consumer that doesn't vendor our lock
+# could resolve a future 0.3.x/1.0 fresh and silently re-break the same way.
+sdk = ["claude-agent-sdk>=0.2.116,<0.3"]
 # load_env() needs python-dotenv; without this extra it degrades to a no-op
 # with a warning.
 dotenv = ["python-dotenv>=1.0"]
