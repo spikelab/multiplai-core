@@ -117,12 +117,15 @@ def test_errors_go_to_shared_hook_errors_log(logs_dir):
 
 @pytest.fixture
 def clean_pkg_logger():
-    """Package loggers have fixed names, so their handlers leak across tests.
-    Detach anything a test attaches to ``multiplai_core`` (and children)."""
-    yield
+    """Package loggers have fixed names, so their handlers and level leak
+    across tests. Detach anything a test attaches to ``multiplai_core`` and
+    restore its level."""
     pkg = logging.getLogger("multiplai_core")
+    saved_level = pkg.level
+    yield
     for h in list(pkg.handlers):
         pkg.removeHandler(h)
+    pkg.setLevel(saved_level)
 
 
 def test_setup_logging_captures_propagate_loggers(logs_dir, clean_pkg_logger):

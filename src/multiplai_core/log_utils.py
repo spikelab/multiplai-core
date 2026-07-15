@@ -318,6 +318,13 @@ def setup_logging(
     left to this component's own logger). Default ``()`` leaves behavior
     unchanged. The attachment is idempotent — a handler already present on a
     package logger is not attached twice.
+
+    Two caveats. Once a package logger has handlers, ``logging.lastResort``
+    stops firing for it, so its WARNING+ records no longer reach stderr at all
+    in the capturing process — they land only in the files. And because a
+    logger that already has handlers makes ``setup_logging`` return early,
+    ``propagate_loggers`` takes effect only on the call that first configures
+    *name*; passing it for an already-configured *name* is silently a no-op.
     """
     logger = logging.getLogger(name)
     resolved = level if level is not None else resolve_level()
