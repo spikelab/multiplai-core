@@ -48,7 +48,10 @@ sdk = ["claude-agent-sdk>=0.2.116,<0.3"]
 # load_env() needs python-dotenv; without this extra it degrades to a no-op
 # with a warning.
 dotenv = ["python-dotenv>=1.0"]
-dev = ["pytest>=8.0"]
+# packaging is a direct test dependency (tests/test_pyproject_sdk_floor.py
+# parses Requirement specs) — declared explicitly, not leaned on as a
+# transitive dep of pytest.
+dev = ["pytest>=8.0", "packaging>=24"]
 
 [project.urls]
 Homepage = "https://github.com/spikelab/multiplai-core"

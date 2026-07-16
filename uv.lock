@@ -460,6 +460,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "packaging" },
     { name = "pytest" },
 ]
 dotenv = [
@@ -473,6 +474,7 @@ sdk = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40,<1.0" },
     { name = "claude-agent-sdk", marker = "extra == 'sdk'", specifier = ">=0.2.116,<0.3" },
+    { name = "packaging", marker = "extra == 'dev'", specifier = ">=24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-dotenv", marker = "extra == 'dotenv'", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
