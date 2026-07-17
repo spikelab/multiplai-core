@@ -9,8 +9,7 @@ breaking result-message parse change. The [sdk] extra must therefore:
 Parsed from pyproject.toml with tomllib — no network, no install required.
 """
 
-import sys
-import tomllib
+import tomllib  # requires Python 3.11+, matching requires-python
 from pathlib import Path
 
 from packaging.requirements import Requirement
@@ -43,7 +42,3 @@ def test_sdk_floor_and_cap():
 
     # The resolved version we ship in uv.lock must satisfy the constraint.
     assert spec.contains("0.2.119"), "current resolved version must satisfy the spec"
-
-
-if sys.version_info < (3, 11):  # pragma: no cover - project requires >=3.11
-    raise RuntimeError("tomllib requires Python 3.11+")
