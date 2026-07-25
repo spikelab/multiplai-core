@@ -7,10 +7,14 @@ import pytest
 from multiplai_core import env as env_mod
 from multiplai_core.env import (
     CURRENT_MODEL,
+    ModelSpec,
     env_candidates,
     find_project_root,
     load_multiplai_conf,
+    parse_model_spec,
+    pick_effort,
     pick_model,
+    pick_model_spec,
     resolve_effort,
     resolve_model,
 )
@@ -47,6 +51,13 @@ class TestResolveEffort:
 
     def test_default_ceiling_high(self):
         assert resolve_effort("max") == "high"
+
+    def test_xhigh_ranks_between_high_and_max(self):
+        # Regression guard: an earlier copy of the effort table omitted xhigh,
+        # which made it rank as "unknown" (= high) and silently un-capped max.
+        assert resolve_effort("xhigh", "high") == "high"
+        assert resolve_effort("xhigh", "max") == "xhigh"
+        assert resolve_effort("max", "xhigh") == "xhigh"
 
 
 class TestEnvCandidates:
@@ -158,3 +169,95 @@ class TestPickModel:
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
         assert pick_model("bogus") == CURRENT_MODEL["opus"]
+
+
+class TestParseModelSpec:
+    def test_bare_id_defaults_to_anthropic(self):
+        assert parse_model_spec("claude-opus-4-8") == ModelSpec("anthropic", "claude-opus-4-8")
+
+    def test_provider_prefix(self):
+        assert parse_model_spec("openai:gpt-5") == ModelSpec("openai", "gpt-5")
+
+    def test_splits_on_first_colon_only(self):
+        # Some vendors put colons inside the model name (ollama tags).
+        assert parse_model_spec("ollama:llama3:70b") == ModelSpec("ollama", "llama3:70b")
+
+    def test_provider_case_normalized(self):
+        assert parse_model_spec("OpenAI:gpt-5").provider == "openai"
+
+    def test_qualified_round_trips(self):
+        spec = parse_model_spec("openai:gpt-5")
+        assert spec.qualified == "openai:gpt-5"
+        assert parse_model_spec(spec.qualified) == spec
+
+    @pytest.mark.parametrize("bad", ["", "  ", ":gpt-5", "openai:"])
+    def test_malformed_rejected(self, bad):
+        with pytest.raises(ValueError):
+            parse_model_spec(bad)
+
+
+class TestPickModelSpec:
+    def test_default_is_anthropic(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        spec = pick_model_spec("opus")
+        assert spec.is_anthropic and spec.model == CURRENT_MODEL["opus"]
+
+    def test_cross_vendor_override_passes_through_uncapped(self, monkeypatch, tmp_path):
+        # The ceiling ranks the Claude family only — coercing a GPT reviewer to
+        # a Claude tier would defeat the point of a cross-family panel.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(
+            tmp_path,
+            'MULTIPLAI_MODEL="claude-haiku-4-5"\n'
+            "[buildme.reviewer2]\nMODEL=openai:gpt-5\n",
+        )
+        spec = pick_model_spec("opus", task="buildme.reviewer2")
+        assert spec == ModelSpec("openai", "gpt-5")
+
+    def test_anthropic_qualified_override_still_capped(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(
+            tmp_path,
+            'MULTIPLAI_MODEL="claude-sonnet-4-6"\n'
+            "[t]\nMODEL=anthropic:claude-opus-4-8\n",
+        )
+        assert pick_model_spec("haiku", task="t") == ModelSpec("anthropic", "claude-sonnet-4-6")
+
+    def test_pick_model_returns_bare_id_for_cross_vendor(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, "[t]\nMODEL=openai:gpt-5\n")
+        assert pick_model("opus", task="t") == "gpt-5"
+
+
+class TestPickEffort:
+    def test_default_high(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, "")
+        assert pick_effort() == "high"
+
+    def test_task_override_wins(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, "[buildme.implementer]\nEFFORT=low\n")
+        assert pick_effort("high", task="buildme.implementer") == "low"
+
+    def test_ceiling_caps_the_override(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_EFFORT="medium"\n[t]\nEFFORT=max\n')
+        assert pick_effort("low", task="t") == "medium"
+
+    def test_model_and_effort_are_independent_axes(self, monkeypatch, tmp_path):
+        # The whole point: a cheap model at high effort is a reachable point.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(
+            tmp_path,
+            'MULTIPLAI_MODEL="claude-opus-4-6"\nMULTIPLAI_EFFORT="max"\n'
+            "[t]\nMODEL=haiku\nEFFORT=xhigh\n",
+        )
+        assert pick_model("opus", task="t") == CURRENT_MODEL["haiku"]
+        assert pick_effort("low", task="t") == "xhigh"
+
+    def test_unknown_effort_value_falls_back(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, "[t]\nEFFORT=turbo\n")
+        assert pick_effort("low", task="t") == "low"

@@ -1041,3 +1041,127 @@ class TestEnvFloat:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("X_TIMEOUT", None)
             assert _env_float("X_TIMEOUT", 600.0) == 600.0
+
+
+class TestProviderSeam:
+    """The registry that lets a non-Anthropic reviewer backend plug in.
+
+    The seam ships without any such backend on purpose — picking a provider
+    means picking whose API key and whose bill — so these tests register a
+    stub, which is exactly what an out-of-tree backend does.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _restore_registry(self):
+        from multiplai_core import model_client as mc
+        before = dict(mc._PROVIDERS)
+        yield
+        mc._PROVIDERS.clear()
+        mc._PROVIDERS.update(before)
+
+    def test_anthropic_registered_by_default(self):
+        from multiplai_core.model_client import registered_providers
+        assert "anthropic" in registered_providers()
+
+    def test_bare_model_string_routes_to_anthropic(self):
+        from multiplai_core.model_client import AgentSDKClient, create_client_for
+        mock_sdk = MagicMock()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            client = asyncio.run(create_client_for("claude-opus-4-8"))
+        assert isinstance(client, AgentSDKClient)
+
+    def test_unknown_provider_raises_with_registered_names(self):
+        from multiplai_core.model_client import UnknownProviderError, create_client_for
+
+        with pytest.raises(UnknownProviderError) as exc:
+            asyncio.run(create_client_for("openai:gpt-5"))
+        # The usual cause is a config typo, so the message must name what IS
+        # registered rather than only what is missing.
+        assert "openai" in str(exc.value)
+        assert "anthropic" in str(exc.value)
+
+    def test_registered_sync_factory_is_used(self):
+        from multiplai_core.model_client import (
+            ModelResponse, create_client_for, register_provider,
+        )
+
+        class _Stub:
+            def __init__(self, spec):
+                self.spec = spec
+
+            async def query(self, system, messages, *, model=None, max_tokens=None,
+                            temperature=1.0, effort=None):
+                return ModelResponse(content="stub")
+
+        register_provider("acme", lambda spec, **kw: _Stub(spec))
+        client = asyncio.run(create_client_for("acme:m-1"))
+        assert client.spec.model == "m-1"
+        assert asyncio.run(client.query("s", [])).content == "stub"
+
+    def test_registered_async_factory_is_awaited(self):
+        from multiplai_core.model_client import create_client_for, register_provider
+
+        class _Stub:
+            def __init__(self, spec):
+                self.spec = spec
+
+        async def _factory(spec, **kw):
+            return _Stub(spec)
+
+        register_provider("acme", _factory)
+        assert asyncio.run(create_client_for("acme:m-2")).spec.model == "m-2"
+
+    def test_factory_receives_component_and_api_key(self):
+        from multiplai_core.model_client import create_client_for, register_provider
+        seen = {}
+
+        def _factory(spec, *, api_key=None, component="model_client"):
+            seen.update(spec=spec, api_key=api_key, component=component)
+            return MagicMock()
+
+        register_provider("acme", _factory)
+        asyncio.run(create_client_for("acme:m", api_key="k", component="buildme"))
+        assert seen["api_key"] == "k" and seen["component"] == "buildme"
+        assert seen["spec"].qualified == "acme:m"
+
+    def test_model_spec_object_accepted(self):
+        from multiplai_core.env import ModelSpec
+        from multiplai_core.model_client import create_client_for, register_provider
+        register_provider("acme", lambda spec, **kw: MagicMock(name=spec.model))
+        assert asyncio.run(create_client_for(ModelSpec("acme", "m"))) is not None
+
+    def test_unregister_removes_the_provider(self):
+        from multiplai_core.model_client import (
+            UnknownProviderError, create_client_for, register_provider,
+            registered_providers, unregister_provider,
+        )
+        register_provider("acme", lambda spec, **kw: MagicMock())
+        assert "acme" in registered_providers()
+        unregister_provider("acme")
+        with pytest.raises(UnknownProviderError):
+            asyncio.run(create_client_for("acme:m"))
+
+
+class TestEffortForwarding:
+    """Effort is the second tuning axis; it must reach the SDK when set."""
+
+    def test_effort_forwarded_to_run_agent(self):
+        from multiplai_core.model_client import AgentSDKClient
+        mock_sdk = MagicMock()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            client = AgentSDKClient()
+        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+            ra.return_value = types.SimpleNamespace(text="ok")
+            asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}], effort="low"))
+        assert ra.call_args.kwargs["effort"] == "low"
+
+    def test_effort_none_by_default(self):
+        from multiplai_core.model_client import AgentSDKClient
+        mock_sdk = MagicMock()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            client = AgentSDKClient()
+        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+            ra.return_value = types.SimpleNamespace(text="ok")
+            asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}]))
+        # None means run_agent omits the option entirely — older SDKs keep working.
+        assert ra.call_args.kwargs["effort"] is None
