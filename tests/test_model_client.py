@@ -1165,3 +1165,62 @@ class TestEffortForwarding:
             asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}]))
         # None means run_agent omits the option entirely — older SDKs keep working.
         assert ra.call_args.kwargs["effort"] is None
+
+
+class TestPromptCaching:
+    """The direct-API path sent `system=` as a bare string, which is never
+    cached — every call re-paid full input price for an identical prompt."""
+
+    def test_short_system_prompt_passes_through_unchanged(self):
+        from multiplai_core.model_client import cacheable_system
+        assert cacheable_system("You are helpful.") == "You are helpful."
+
+    def test_empty_system_passes_through(self):
+        from multiplai_core.model_client import cacheable_system
+        assert cacheable_system("") == ""
+
+    def test_long_system_prompt_gets_a_cache_breakpoint(self):
+        from multiplai_core.model_client import (
+            MIN_CACHEABLE_SYSTEM_BYTES, cacheable_system,
+        )
+        big = "x" * (MIN_CACHEABLE_SYSTEM_BYTES + 1)
+        out = cacheable_system(big)
+        assert out == [{"type": "text", "text": big,
+                        "cache_control": {"type": "ephemeral"}}]
+
+    def test_threshold_is_measured_in_bytes_not_characters(self):
+        """Multi-byte text must not be counted as cacheable on character
+        count alone — the API minimum is about tokens, and a conservative
+        bytes floor only ever skips prompts that could not be cached."""
+        from multiplai_core.model_client import (
+            MIN_CACHEABLE_SYSTEM_BYTES, cacheable_system,
+        )
+        # Under the byte floor despite a large character count would be wrong;
+        # 'é' is 2 bytes, so this crosses the floor with half the characters.
+        text = "é" * (MIN_CACHEABLE_SYSTEM_BYTES // 2 + 1)
+        assert isinstance(cacheable_system(text), list)
+
+    def test_query_sends_the_breakpoint_to_the_api(self):
+        from multiplai_core.model_client import (
+            MIN_CACHEABLE_SYSTEM_BYTES, AnthropicAPIClient,
+        )
+        mock_block = MagicMock()
+        mock_block.type = "text"
+        mock_block.text = "ok"
+        mock_response = MagicMock()
+        mock_response.content = [mock_block]
+        mock_async_client = MagicMock()
+        mock_async_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_anthropic = MagicMock()
+        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+
+        big = "y" * (MIN_CACHEABLE_SYSTEM_BYTES + 10)
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            client = AnthropicAPIClient("sk-test-key")
+
+            async def _test():
+                await client.query(big, [{"role": "user", "content": "hi"}])
+                sent = mock_async_client.messages.create.call_args.kwargs["system"]
+                assert sent[0]["cache_control"] == {"type": "ephemeral"}
+
+            asyncio.run(_test())
