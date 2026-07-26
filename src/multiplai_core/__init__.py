@@ -65,7 +65,7 @@ from .model_client import (
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
 from .paths import Paths, get_paths
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 
 __all__ = [
     # agent runner
