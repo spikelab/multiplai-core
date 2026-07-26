@@ -224,10 +224,41 @@ class TestPickModelSpec:
         )
         assert pick_model_spec("haiku", task="t") == ModelSpec("anthropic", "claude-sonnet-4-6")
 
-    def test_pick_model_returns_bare_id_for_cross_vendor(self, monkeypatch, tmp_path):
+    def test_anthropic_qualified_family_name_normalizes(self, monkeypatch, tmp_path):
+        # `anthropic:opus` must take the same path as a bare `opus`. Resolving
+        # the spec's model directly returned the literal string "opus", which is
+        # not a model ID — the ceiling in the sibling test hid it.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(
+            tmp_path,
+            'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL=anthropic:opus\n',
+        )
+        assert pick_model_spec("haiku", task="t") == ModelSpec(
+            "anthropic", CURRENT_MODEL["opus"])
+
+    def test_anthropic_qualified_dated_id_is_repinned(self, monkeypatch, tmp_path):
+        """A legacy dated ID must not survive un-pinned just for being qualified."""
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(
+            tmp_path,
+            'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL=anthropic:claude-opus-4-2\n',
+        )
+        assert pick_model_spec("haiku", task="t").model == CURRENT_MODEL["opus"]
+
+    def test_pick_model_rejects_a_cross_vendor_override(self, monkeypatch, tmp_path):
+        # Returning the bare "gpt-5" would reach an Anthropic client and 404 at
+        # request time, far from the config line responsible.
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, "[t]\nMODEL=openai:gpt-5\n")
-        assert pick_model("opus", task="t") == "gpt-5"
+        with pytest.raises(ValueError) as exc:
+            pick_model("opus", task="t")
+        assert "pick_model_spec" in str(exc.value)
+        assert "openai:gpt-5" in str(exc.value)
+
+    def test_pick_model_unaffected_without_a_provider_prefix(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL=haiku\n')
+        assert pick_model("opus", task="t") == CURRENT_MODEL["haiku"]
 
 
 class TestPickEffort:

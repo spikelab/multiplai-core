@@ -469,7 +469,7 @@ async def create_client_for(
         raise UnknownProviderError(
             f"No backend registered for provider {spec.provider!r} "
             f"(from model spec {spec.qualified!r}). "
-            f"Registered: {registered_providers() or ['(none)']}. "
+            f"Registered: {', '.join(registered_providers()) or '(none)'}. "
             "Call register_provider() to add one."
         )
     client = factory(spec, api_key=api_key, component=component)

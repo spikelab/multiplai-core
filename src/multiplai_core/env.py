@@ -240,17 +240,24 @@ def pick_model_spec(default_tier: str = "opus", task: str | None = None) -> Mode
     ``MULTIPLAI_MODEL`` ceiling are meaningless for another vendor's model, and
     silently coercing it to a Claude tier would defeat the whole point of naming
     a cross-family model (reviewer panels want *disjoint* error sets).
+
+    An ``anthropic:``-qualified value takes the SAME path as a bare one — family
+    normalization (``anthropic:opus`` → the current opus ID) and then the
+    ceiling. Resolving `spec.model` directly instead would hand back the literal
+    string ``"opus"``, which is not a model ID, and would let a dated legacy ID
+    (``anthropic:claude-opus-4-2``) survive un-pinned where the bare path pins
+    it to CURRENT_MODEL.
     """
     conf = load_multiplai_conf()
     raw = ((conf.get("_sections", {}) or {}).get(task) or {}).get("MODEL") if task else None
+    ceiling = conf.get("MULTIPLAI_MODEL")  # None → resolve_model uses env/default
     if raw and ":" in raw:
         spec = parse_model_spec(raw)
         if not spec.is_anthropic:
             log.info("Task %s uses non-Anthropic model %s", task, spec.qualified)
             return spec
-        return ModelSpec(DEFAULT_PROVIDER, resolve_model(spec.model, ceiling=conf.get("MULTIPLAI_MODEL")))
+        raw = spec.model  # fall through to the shared Anthropic path below
     tier = _normalize_tier(raw) or _normalize_tier(default_tier) or "opus"
-    ceiling = conf.get("MULTIPLAI_MODEL")  # None → resolve_model uses env/default
     return ModelSpec(DEFAULT_PROVIDER, resolve_model(CURRENT_MODEL[tier], ceiling=ceiling))
 
 
@@ -262,16 +269,23 @@ def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
     overrides it per task without a code edit. The result is then capped by the
     ``MULTIPLAI_MODEL`` ceiling, so a laptop/budget run can force all-sonnet.
 
-    Returns the bare model ID. Provider-unaware call sites that hit a
-    cross-vendor override get a warning and the bare ID — use
-    :func:`pick_model_spec` to honor the provider.
+    Returns the bare model ID.
+
+    Raises:
+        ValueError: the task is configured for a non-Anthropic provider. This
+            call site cannot honor it, and returning the bare ID would send
+            e.g. ``gpt-5`` to an Anthropic client — a 404 at request time, far
+            from the config line that caused it. Failing here names the config
+            key and the function to use instead.
     """
     spec = pick_model_spec(default_tier, task)
     if not spec.is_anthropic:
-        log.warning(
-            "Task %s is configured for %s but this call site is provider-unaware; "
-            "returning the bare model ID. Use pick_model_spec() to route it.",
-            task, spec.qualified,
+        raise ValueError(
+            f"Task {task!r} is configured for {spec.qualified!r}, but this call "
+            f"site is provider-unaware and would send {spec.model!r} to an "
+            f"Anthropic client. Use pick_model_spec() + create_client_for() "
+            f"here, or drop the provider prefix from [{task}] MODEL= in "
+            f"multiplai.conf."
         )
     return spec.model
 
