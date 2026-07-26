@@ -18,9 +18,37 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
-- Documentation and tooling only, no library changes: this `CHANGELOG.md`, a
-  stated compatibility promise in `README.md`, a gated `release.sh`, CI on
-  Python 3.11 and 3.12, and a `CLAUDE.md` for agents editing the library.
+### Added
+
+- **`untrusted` module** — consolidated defang/fence primitives for
+  externally-authored text, replacing the four diverged copies in
+  `multiplai-cc-mktplace` (log-doctor's `defang`/`fence`/`contains_injection`,
+  gmail's `defang`, slack's `_defang`, deep-research's `defang_untrusted`).
+  New exports: `defang`, `fence`, `contains_injection`, `markdown_notice`,
+  `bracket_notice`.
+  - `defang(text, limit=None, *, markdown_fences=False, mark_injections=False)`
+    always strips control/bidi/zero-width characters and full ANSI sequences
+    and HTML-escapes the `<untrusted-content>` markers. With both flags off it
+    is byte-identical to the gmail/slack/deep-research copies; with both flags
+    on (plus `limit`) it is byte-identical to log-doctor's. `None`/falsy → `""`;
+    non-str input is `str()`-coerced.
+  - `fence(text, source, limit=None) -> list[str]` reproduces log-doctor's
+    fenced-block contract: `[]` on empty body, ` ```text ` inner fence,
+    defanged `source` attribute, injection spans marked `⟪INJECTION?⟫…⟪/⟫`.
+  - `markdown_notice(what, channel, *, injection_marker=False)` and
+    `bracket_notice(channel)` rebuild the two existing notice shapes
+    byte-exactly (log-doctor's blockquote; gmail/slack's bracketed one-liner).
+
+  For a plugin author: if your script carries a local defang copy, moving your
+  pin to the release containing this lets you delete it and import from core;
+  output is unchanged for all four existing consumers. Purely additive —
+  nothing existing was changed or removed.
+
+### Housekeeping
+
+- Documentation and tooling: this `CHANGELOG.md`, a stated compatibility
+  promise in `README.md`, a gated `release.sh`, CI on Python 3.11 and 3.12,
+  and a `CLAUDE.md` for agents editing the library.
 
 ## [0.9.0] – 2026-07-26
 

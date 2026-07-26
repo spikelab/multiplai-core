@@ -38,6 +38,13 @@ from .env import (
     resolve_model,
 )
 from .text import extract_json
+from .untrusted import (
+    bracket_notice,
+    contains_injection,
+    defang,
+    fence,
+    markdown_notice,
+)
 from .log_utils import (
     log_event,
     resolve_level,
@@ -125,5 +132,11 @@ __all__ = [
     "CURRENT_MODEL",
     # text
     "extract_json",
+    # untrusted content
+    "defang",
+    "fence",
+    "contains_injection",
+    "markdown_notice",
+    "bracket_notice",
     "__version__",
 ]
