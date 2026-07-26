@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -129,7 +130,14 @@ def load_multiplai_conf() -> dict:
 
 
 _TIERS = {"haiku": 1, "sonnet": 2, "opus": 3}
-_EFFORT_TIERS = {"low": 1, "medium": 2, "high": 3, "max": 4}
+# `xhigh` sits between high and max. An earlier copy of this table (the now-dead
+# sync_skill_config.py) omitted it, which silently ranked xhigh as "unknown" and
+# capped it to high — do not drop it again when copying this table.
+_EFFORT_TIERS = {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
+
+# The provider a bare model string belongs to. Everything in this repo predates
+# multi-vendor support, so an unqualified ID is Anthropic by definition.
+DEFAULT_PROVIDER = "anthropic"
 
 
 def _tier(model: str) -> int:
@@ -182,18 +190,75 @@ def _normalize_tier(value: str | None) -> str | None:
     return None
 
 
-def _section_override(conf: dict, task: str | None) -> str | None:
-    """Return the family from ``[task] MODEL=...`` in the conf, or None.
+@dataclass(frozen=True)
+class ModelSpec:
+    """A model identifier plus the provider that serves it.
 
-    Looks up the dotted *task* key (e.g. ``deep-research.parse``) in the conf's
-    ``_sections`` and normalizes its ``MODEL`` value to a family.
+    The tier/ceiling machinery above only understands the Claude family, so a
+    provider-qualified spec is the seam that lets a *non*-Anthropic model be
+    named in config without pretending it has a haiku/sonnet/opus rank.
     """
-    if not task:
-        return None
-    section = conf.get("_sections", {}).get(task)
-    if not section:
-        return None
-    return _normalize_tier(section.get("MODEL"))
+
+    provider: str
+    model: str
+
+    @property
+    def qualified(self) -> str:
+        """``provider:model`` — the round-trippable form used in config."""
+        return f"{self.provider}:{self.model}"
+
+    @property
+    def is_anthropic(self) -> bool:
+        return self.provider == DEFAULT_PROVIDER
+
+
+def parse_model_spec(value: str, *, default_provider: str = DEFAULT_PROVIDER) -> ModelSpec:
+    """Parse ``provider:model`` (or a bare model ID) into a :class:`ModelSpec`.
+
+    A bare ID keeps *default_provider*, so every existing config value and code
+    path resolves exactly as it did before this seam existed. Splitting on the
+    FIRST colon only, because some vendors put colons inside the model name
+    (e.g. ``ollama:llama3:70b`` → provider ``ollama``, model ``llama3:70b``).
+    """
+    raw = (value or "").strip()
+    if not raw:
+        raise ValueError("model spec is empty")
+    provider, sep, model = raw.partition(":")
+    if not sep:
+        return ModelSpec(default_provider, raw)
+    provider, model = provider.strip().lower(), model.strip()
+    if not provider or not model:
+        raise ValueError(f"malformed model spec {value!r} (expected 'provider:model')")
+    return ModelSpec(provider, model)
+
+
+def pick_model_spec(default_tier: str = "opus", task: str | None = None) -> ModelSpec:
+    """Provider-aware :func:`pick_model`.
+
+    A ``[task] MODEL=`` value carrying a provider prefix (``openai:gpt-5``) is
+    passed through verbatim: the Claude-family tier ranking and the
+    ``MULTIPLAI_MODEL`` ceiling are meaningless for another vendor's model, and
+    silently coercing it to a Claude tier would defeat the whole point of naming
+    a cross-family model (reviewer panels want *disjoint* error sets).
+
+    An ``anthropic:``-qualified value takes the SAME path as a bare one — family
+    normalization (``anthropic:opus`` → the current opus ID) and then the
+    ceiling. Resolving `spec.model` directly instead would hand back the literal
+    string ``"opus"``, which is not a model ID, and would let a dated legacy ID
+    (``anthropic:claude-opus-4-2``) survive un-pinned where the bare path pins
+    it to CURRENT_MODEL.
+    """
+    conf = load_multiplai_conf()
+    raw = ((conf.get("_sections", {}) or {}).get(task) or {}).get("MODEL") if task else None
+    ceiling = conf.get("MULTIPLAI_MODEL")  # None → resolve_model uses env/default
+    if raw and ":" in raw:
+        spec = parse_model_spec(raw)
+        if not spec.is_anthropic:
+            log.info("Task %s uses non-Anthropic model %s", task, spec.qualified)
+            return spec
+        raw = spec.model  # fall through to the shared Anthropic path below
+    tier = _normalize_tier(raw) or _normalize_tier(default_tier) or "opus"
+    return ModelSpec(DEFAULT_PROVIDER, resolve_model(CURRENT_MODEL[tier], ceiling=ceiling))
 
 
 def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
@@ -203,11 +268,26 @@ def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
     for cheap bulk work). A ``[task] MODEL=...`` section in ``multiplai.conf``
     overrides it per task without a code edit. The result is then capped by the
     ``MULTIPLAI_MODEL`` ceiling, so a laptop/budget run can force all-sonnet.
+
+    Returns the bare model ID.
+
+    Raises:
+        ValueError: the task is configured for a non-Anthropic provider. This
+            call site cannot honor it, and returning the bare ID would send
+            e.g. ``gpt-5`` to an Anthropic client — a 404 at request time, far
+            from the config line that caused it. Failing here names the config
+            key and the function to use instead.
     """
-    conf = load_multiplai_conf()
-    tier = _section_override(conf, task) or _normalize_tier(default_tier) or "opus"
-    ceiling = conf.get("MULTIPLAI_MODEL")  # None → resolve_model uses env/default
-    return resolve_model(CURRENT_MODEL[tier], ceiling=ceiling)
+    spec = pick_model_spec(default_tier, task)
+    if not spec.is_anthropic:
+        raise ValueError(
+            f"Task {task!r} is configured for {spec.qualified!r}, but this call "
+            f"site is provider-unaware and would send {spec.model!r} to an "
+            f"Anthropic client. Use pick_model_spec() + create_client_for() "
+            f"here, or drop the provider prefix from [{task}] MODEL= in "
+            f"multiplai.conf."
+        )
+    return spec.model
 
 
 def _effort_tier(effort: str) -> int:
@@ -222,3 +302,29 @@ def resolve_effort(requested: str, ceiling: str | None = None) -> str:
         log.info("Effort ceiling: %s → %s", requested, ceiling)
         return ceiling
     return requested
+
+
+def _normalize_effort(value: str | None) -> str | None:
+    """Map an EFFORT override to a known tier name, or None if unrecognized."""
+    if not value:
+        return None
+    v = value.strip().lower()
+    return v if v in _EFFORT_TIERS else None
+
+
+def pick_effort(default_effort: str = "high", task: str | None = None) -> str:
+    """Resolve a reasoning-effort tier, the second axis alongside :func:`pick_model`.
+
+    Model and effort form a 2-axis grid — a cheap model at high effort and an
+    expensive one at low effort are different points, and tuning only the model
+    leaves half the grid unexplored. A ``[task] EFFORT=`` section in
+    ``multiplai.conf`` overrides the call site's default, then the
+    ``MULTIPLAI_EFFORT`` ceiling (env or conf) caps it, mirroring
+    :func:`pick_model` exactly.
+    """
+    conf = load_multiplai_conf()
+    section = (conf.get("_sections", {}) or {}).get(task) if task else None
+    override = _normalize_effort((section or {}).get("EFFORT"))
+    effort = override or _normalize_effort(default_effort) or "high"
+    ceiling = conf.get("MULTIPLAI_EFFORT")  # None → resolve_effort uses env/default
+    return resolve_effort(effort, ceiling=ceiling)

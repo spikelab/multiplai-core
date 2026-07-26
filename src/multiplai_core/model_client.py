@@ -7,16 +7,18 @@ Provides a Protocol-based interface with two implementations:
 The create_client() factory tries Agent SDK first, falls back to API key.
 """
 
+import inspect
 import logging
 import os
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 from .agent_runner import (  # noqa: F401 — _summarize_stderr re-exported for compat
     AgentRunError,
     _summarize_stderr,
     run_agent,
 )
+from .env import DEFAULT_PROVIDER, ModelSpec, parse_model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +171,7 @@ class ModelClient(Protocol):
         model: str = DEFAULT_MODEL,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
+        effort: str | None = None,
     ) -> ModelResponse: ...
 
 
@@ -211,8 +214,14 @@ class AgentSDKClient:
         model: str = DEFAULT_MODEL,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
+        effort: str | None = None,
     ) -> ModelResponse:
-        """Send a single-turn query via the Agent SDK and return normalized text."""
+        """Send a single-turn query via the Agent SDK and return normalized text.
+
+        *effort* is the second axis alongside *model*: forwarded to the SDK only
+        when set (``run_agent`` omits the option entirely for ``None``), so an
+        older SDK without the parameter keeps working.
+        """
         # max_tokens/temperature are accepted for interface parity but the SDK
         # uses session defaults — warn once if a caller relies on them (e.g.
         # temperature=0 for determinism) so the silent no-op is visible.
@@ -245,6 +254,7 @@ class AgentSDKClient:
                 disallowed_tools=_DISALLOWED_TOOLS,  # see _DISALLOWED_TOOLS note
                 max_turns=_SDK_MAX_TURNS,
                 model=model,
+                effort=effort,
                 timeout_s=_SDK_CALL_TIMEOUT_S,
                 max_attempts=_SDK_MAX_ATTEMPTS,
                 retry_backoff_s=_SDK_RETRY_BACKOFF_S,
@@ -292,8 +302,15 @@ class AnthropicAPIClient:
         model: str = DEFAULT_MODEL,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
+        effort: str | None = None,
     ) -> ModelResponse:
-        """Send a query via the Anthropic API and return a normalized response."""
+        """Send a query via the Anthropic API and return a normalized response.
+
+        *effort* is accepted for interface parity and ignored: reasoning effort
+        is a Claude Code/Agent-SDK session knob, not a Messages API parameter.
+        """
+        if effort is not None:
+            logger.debug("AnthropicAPIClient ignores effort=%s (not a Messages API param)", effort)
         client = self._ensure_client()
         response = await client.messages.create(
             model=model,
@@ -366,3 +383,99 @@ async def create_client(
 
     logger.warning("Model client: Falling back to Anthropic API key authentication")
     return AnthropicAPIClient(key)
+
+
+# --------------------------------------------------------------------------
+# Provider seam
+# --------------------------------------------------------------------------
+# Reviewer panels want models from *different families*, because Claude and GPT
+# reviewers empirically find largely disjoint error sets — a same-family panel
+# mostly re-finds the same things. The tier/ceiling machinery in env.py only
+# ranks the Claude family, so cross-vendor support cannot be a new branch inside
+# create_client(); it has to be a registry that an out-of-tree backend can join.
+#
+# This is the seam only. No non-Anthropic backend ships here: choosing a
+# provider means choosing whose API key and whose bill, which is a human
+# decision, not a default. Registering one is three lines from the outside.
+
+ProviderFactory = Callable[..., "ModelClient | Awaitable[ModelClient]"]
+
+
+class UnknownProviderError(RuntimeError):
+    """Raised when a :class:`ModelSpec` names a provider nobody registered."""
+
+
+_PROVIDERS: dict[str, ProviderFactory] = {}
+
+
+async def _anthropic_factory(spec: ModelSpec, *, api_key: str | None = None,
+                             component: str = "model_client") -> ModelClient:
+    """Built-in provider: the existing SDK-then-API-key ladder, unchanged.
+
+    The model in *spec* is deliberately not baked into the client — both
+    Anthropic clients take ``model=`` per :meth:`ModelClient.query` call.
+    """
+    logger.debug("Anthropic provider serving %s", spec.model)
+    return await create_client(api_key=api_key, component=component)
+
+
+def register_provider(name: str, factory: ProviderFactory) -> None:
+    """Register *factory* as the client builder for provider *name*.
+
+    The factory is called as ``factory(spec, api_key=..., component=...)`` and
+    may be sync or async; it must return an object satisfying
+    :class:`ModelClient`. Re-registering a name replaces it (so a test can swap
+    in a stub and put the original back).
+    """
+    key = name.strip().lower()
+    if not key:
+        raise ValueError("provider name is empty")
+    if key in _PROVIDERS:
+        logger.info("Replacing already-registered provider %r", key)
+    _PROVIDERS[key] = factory
+
+
+def unregister_provider(name: str) -> None:
+    """Remove a provider registration. Missing names are a no-op."""
+    _PROVIDERS.pop(name.strip().lower(), None)
+
+
+def registered_providers() -> list[str]:
+    """Sorted list of provider names currently registered."""
+    return sorted(_PROVIDERS)
+
+
+async def create_client_for(
+    spec: ModelSpec | str,
+    *,
+    api_key: str | None = None,
+    component: str = "model_client",
+) -> ModelClient:
+    """Build the client that serves *spec*, honoring its provider.
+
+    Accepts a :class:`ModelSpec` or a ``provider:model`` / bare-model string.
+    A bare string keeps the Anthropic default, so this is a drop-in for
+    :func:`create_client` at any call site that has a model ID in hand.
+
+    Raises:
+        UnknownProviderError: the spec names a provider with no registered
+            factory — with the registered names in the message, because the
+            usual cause is a config typo or a backend nobody installed.
+    """
+    if isinstance(spec, str):
+        spec = parse_model_spec(spec)
+    factory = _PROVIDERS.get(spec.provider)
+    if factory is None:
+        raise UnknownProviderError(
+            f"No backend registered for provider {spec.provider!r} "
+            f"(from model spec {spec.qualified!r}). "
+            f"Registered: {', '.join(registered_providers()) or '(none)'}. "
+            "Call register_provider() to add one."
+        )
+    client = factory(spec, api_key=api_key, component=component)
+    if inspect.isawaitable(client):
+        client = await client
+    return client
+
+
+register_provider(DEFAULT_PROVIDER, _anthropic_factory)

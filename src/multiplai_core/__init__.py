@@ -24,11 +24,16 @@ from .config import (
 )
 from .env import (
     CURRENT_MODEL,
+    DEFAULT_PROVIDER,
+    ModelSpec,
     env_candidates,
     find_project_root,
     load_env,
     load_multiplai_conf,
+    parse_model_spec,
+    pick_effort,
     pick_model,
+    pick_model_spec,
     resolve_effort,
     resolve_model,
 )
@@ -47,8 +52,13 @@ from .model_client import (
     ModelClient,
     ModelResponse,
     SDKQueryError,
+    UnknownProviderError,
     create_client,
+    create_client_for,
     detect_client_type,
+    register_provider,
+    registered_providers,
+    unregister_provider,
 )
 # NB: do not re-export the `paths` singleton here — binding the name `paths`
 # in the package namespace would shadow the `multiplai_core.paths` submodule.
@@ -90,6 +100,16 @@ __all__ = [
     "SDKQueryError",
     "DEFAULT_MODEL",
     "DEFAULT_MAX_TOKENS",
+    # provider seam
+    "create_client_for",
+    "register_provider",
+    "unregister_provider",
+    "registered_providers",
+    "UnknownProviderError",
+    "ModelSpec",
+    "parse_model_spec",
+    "pick_model_spec",
+    "DEFAULT_PROVIDER",
     # async helpers
     "hard_timeout",
     "swallow_task_result",
@@ -101,6 +121,7 @@ __all__ = [
     "resolve_model",
     "resolve_effort",
     "pick_model",
+    "pick_effort",
     "CURRENT_MODEL",
     # text
     "extract_json",
