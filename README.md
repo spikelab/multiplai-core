@@ -1,6 +1,12 @@
 # multiplai-core
 
-Shared library for the [Multiplai](https://github.com/spikelab) Claude Code plugins.
+> Part of the **[Multiplai suite](https://github.com/spikelab/multiplai)** — what the suite is, how the five repos fit together, and which part you need.
+
+Shared library for the [Multiplai](https://github.com/spikelab/multiplai) Claude Code plugins.
+Multiplai is a plugin suite that turns Claude Code into a persistent, self-improving
+working environment — a memory/context engine plus six themed skill packs, shipped
+via [multiplai-cc-mktplace](https://github.com/spikelab/multiplai-cc-mktplace). This
+library is the plumbing their scripts share.
 One source of truth for the things every plugin needs, so no plugin vendors its
 own drifting copy:
 
