@@ -76,10 +76,18 @@ class TestModelClientInterface:
         assert hasattr(ModelClient, "query")
 
     def test_query_is_async(self):
+        """Every caller awaits ``query()``, so the Protocol must declare it as
+        a coroutine function.
+
+        Asserted via ``inspect``, not via ``typing`` internals: this test used
+        to read ``ModelClient.__protocol_attrs__``, a CPython implementation
+        detail that only exists on 3.12+, so it raised AttributeError on the
+        3.11 floor ``requires-python`` claims. It also never checked async at
+        all — only that the name existed, which is already covered by
+        ``test_model_client_is_protocol``.
+        """
         from multiplai_core.model_client import ModelClient
-        # Protocol methods should indicate async
-        hints = ModelClient.__protocol_attrs__
-        assert "query" in hints
+        assert inspect.iscoroutinefunction(ModelClient.query)
 
     def test_unimplemented_subclass_fails(self):
         from multiplai_core.model_client import ModelClient
