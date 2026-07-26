@@ -270,6 +270,35 @@ class AgentSDKClient:
         return ModelResponse(content=result.text)
 
 
+# Anthropic will not cache a prefix shorter than its per-model minimum (1024
+# tokens for Sonnet/Opus, 2048 for Haiku); a breakpoint below it is ignored,
+# not an error. We gate on bytes rather than tokens to avoid a tokenizer
+# dependency — ~2 bytes/token is a deliberately conservative floor, so we only
+# ever skip the breakpoint on prompts that could not have been cached anyway.
+MIN_CACHEABLE_SYSTEM_BYTES = 4096
+
+
+def cacheable_system(system: str) -> str | list[dict[str, object]]:
+    """The `system` argument with a cache breakpoint on long, stable prompts.
+
+    The direct-API path sent `system=` as a bare string, which is never
+    cached — every call re-paid full input price for the same prompt. The
+    Agent-SDK path caches on its own (measured ~100% hit ratio in the ledger);
+    this closes the same gap for the fallback client.
+
+    Short prompts pass through as a plain string: below the model minimum the
+    breakpoint buys nothing, and the string form keeps the request identical
+    to what it was for every existing caller.
+    """
+    if not system or len(system.encode("utf-8")) < MIN_CACHEABLE_SYSTEM_BYTES:
+        return system
+    return [{
+        "type": "text",
+        "text": system,
+        "cache_control": {"type": "ephemeral"},
+    }]
+
+
 class AnthropicAPIClient:
     """Uses the anthropic PyPI package with an explicit API key.
 
@@ -316,7 +345,7 @@ class AnthropicAPIClient:
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            system=system,
+            system=cacheable_system(system),
             messages=messages,
         )
         # Concatenate every text block, matching AgentSDKClient's behavior — a
