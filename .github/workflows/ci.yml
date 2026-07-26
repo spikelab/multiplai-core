@@ -1,0 +1,37 @@
+name: CI
+
+# Every multiplai plugin resolves this library from GitHub at an immutable tag,
+# so a bad commit on `main` becomes a bad tag that can never be withdrawn — and
+# until this workflow existed nothing ran the test suite before a tag was cut.
+# `release.sh` gates on the same command locally; this is the same gate on every
+# push and PR, on every Python the package claims to support.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject declares requires-python = ">=3.11"; 3.11 is the floor that
+        # claim rests on, and nothing proved it before this matrix existed.
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # `uv run` resolves the declared deps itself; --python pins the
+      # interpreter so the matrix leg tests what it says it tests.
+      - name: Run tests
+        run: uv run --python ${{ matrix.python-version }} --extra dev pytest -q

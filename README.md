@@ -34,6 +34,13 @@ Consumed as a git-URL dependency — no PyPI. In a script's PEP 723 header:
 
 Pin by **git tag** (`@v0.8.1`); cut a new tag rather than moving an existing one.
 
+Optional extras (append to the requirement, e.g. `multiplai-core[sdk] @ git+...@v0.8.1`):
+
+- `sdk` — the Agent SDK backend (`claude-agent-sdk`) when running outside the
+  Claude Code runtime, which otherwise injects it.
+- `dotenv` — `python-dotenv`, required for `env.load_env()` to auto-load `.env`
+  files (without it, `load_env()` is a no-op that warns).
+
 ### Availability guarantee
 
 Every installed multiplai plugin resolves this library from GitHub on first
@@ -49,12 +56,34 @@ run, so its availability is part of the plugins' contract with their users:
 and speed up first-run resolution — is under consideration; until then the
 guarantee above is the contract.)
 
-Optional extras (append to the requirement, e.g. `multiplai-core[sdk] @ git+...@v0.8.1`):
+### Versioning and what a bump means
 
-- `sdk` — the Agent SDK backend (`claude-agent-sdk`) when running outside the
-  Claude Code runtime, which otherwise injects it.
-- `dotenv` — `python-dotenv`, required for `env.load_env()` to auto-load `.env`
-  files (without it, `load_env()` is a no-op that warns).
+The guarantee above covers **reachability** — that your pin keeps resolving. This
+covers **API stability** — what you are agreeing to when you move it.
+
+This library is pre-1.0, and the rule is:
+
+- **`0.x.0` (minor) — may add and may break the public API.** A minor bump can
+  introduce new names *and* remove, rename, or change the signature of existing
+  ones. **Read [`CHANGELOG.md`](CHANGELOG.md) before taking one.**
+- **`0.x.Y` (patch) — fixes only, never breaks.** Safe to take without reading
+  anything, though the changelog still says what was fixed.
+
+Once the library reaches 1.0 this tightens to ordinary semver (breaking changes
+only in a major bump); until then, the minor is the breaking axis.
+
+**Which surface is public:** the names exported from the `multiplai_core`
+package — its `__all__`, i.e. what `from multiplai_core import X` resolves.
+Everything else is internal: private helpers, module layout, submodule contents
+not re-exported at the top level, and the shape of `pricing.json`. Internals may
+change in any release, including a patch. If you need something that is not
+exported, ask for it to be exported rather than reaching in.
+
+**Which version should I pin?** Pin the **newest tag** when you add the
+dependency, and bump **deliberately, per consumer**, after reading the changelog
+entry for the version you are moving to. There is no floating `main` pin and no
+version range: every consumer names an exact, immutable tag, so nothing upgrades
+underneath you and each upgrade is a reviewable diff in the consuming repo.
 
 ## Usage
 
