@@ -278,7 +278,7 @@ class AgentSDKClient:
 MIN_CACHEABLE_SYSTEM_BYTES = 4096
 
 
-def cacheable_system(system: str) -> str | list[dict]:
+def cacheable_system(system: str) -> str | list[dict[str, object]]:
     """The `system` argument with a cache breakpoint on long, stable prompts.
 
     The direct-API path sent `system=` as a bare string, which is never
