@@ -64,6 +64,13 @@ from .model_client import (
 # in the package namespace would shadow the `multiplai_core.paths` submodule.
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
 from .paths import Paths, get_paths
+from .untrusted import (
+    bracket_notice,
+    contains_injection,
+    defang,
+    fence,
+    markdown_notice,
+)
 
 __version__ = "0.9.0"
 
@@ -125,5 +132,11 @@ __all__ = [
     "CURRENT_MODEL",
     # text
     "extract_json",
+    # untrusted content
+    "defang",
+    "fence",
+    "contains_injection",
+    "markdown_notice",
+    "bracket_notice",
     "__version__",
 ]
