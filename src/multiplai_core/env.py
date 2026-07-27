@@ -10,8 +10,11 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Final
 
 log = logging.getLogger(__name__)
 
@@ -132,8 +135,26 @@ def load_multiplai_conf() -> dict:
 _TIERS = {"haiku": 1, "sonnet": 2, "opus": 3}
 # `xhigh` sits between high and max. An earlier copy of this table (the now-dead
 # sync_skill_config.py) omitted it, which silently ranked xhigh as "unknown" and
-# capped it to high — do not drop it again when copying this table.
-_EFFORT_TIERS = {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
+# capped it to high — which is why this table is now exported rather than copied.
+EFFORT_TIERS: Final[Mapping[str, int]] = MappingProxyType(
+    {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
+)
+"""Effort names ranked low → high, the ordering :func:`pick_effort` caps against.
+
+Exported so consumers validate against *this* table instead of mirroring it. A
+copy that drifts is worse than no copy: :func:`pick_effort` normalizes a name it
+does not recognize away and floors to ``"high"``, so a caller that believes an
+unknown name is valid loses its own "unknown → default" fallback silently.
+
+Read-only, and additive by policy — a future release may add a tier, so treat
+membership as the question and the integers as relative order only.
+"""
+
+# Private alias kept so the module's own call sites read as before.
+_EFFORT_TIERS = EFFORT_TIERS
+
+KNOWN_EFFORTS: Final[frozenset[str]] = frozenset(EFFORT_TIERS)
+"""The valid effort names — ``frozenset(EFFORT_TIERS)``, for membership tests."""
 
 # The provider a bare model string belongs to. Everything in this repo predates
 # multi-vendor support, so an unqualified ID is Anthropic by definition.

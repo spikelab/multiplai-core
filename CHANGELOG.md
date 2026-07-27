@@ -20,6 +20,18 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Added
 
+- **`EFFORT_TIERS` and `KNOWN_EFFORTS` are now exported** — the effort-name
+  table `pick_effort` caps against, previously private as `_EFFORT_TIERS`.
+  Validate against these instead of mirroring the table: a drifted copy is
+  worse than none, because `pick_effort` normalizes a name it does not
+  recognize away and floors to `"high"`, so a caller that believes an unknown
+  name is valid silently loses its own "unknown → default" fallback.
+  `EFFORT_TIERS` is a read-only mapping name → rank (`low` 1 … `max` 5); treat
+  membership as the question and the integers as relative order only, since a
+  future release may add a tier. `KNOWN_EFFORTS` is `frozenset(EFFORT_TIERS)`
+  for membership tests. **Action for pin-movers:** if you keep a hand-copied
+  list of effort names (multiplai-cc-mktplace's buildme `KNOWN_EFFORTS` did),
+  delete it and import this one. Purely additive — `_EFFORT_TIERS` still works.
 - `SECURITY.md` — how to report a vulnerability (security@spikelab.org), what
   this code can reach, which versions get fixes, and how the immutable-tag
   delivery model (README → Availability guarantee) bounds the blast radius.

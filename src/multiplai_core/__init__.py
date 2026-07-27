@@ -25,6 +25,8 @@ from .config import (
 from .env import (
     CURRENT_MODEL,
     DEFAULT_PROVIDER,
+    EFFORT_TIERS,
+    KNOWN_EFFORTS,
     ModelSpec,
     env_candidates,
     find_project_root,
@@ -129,6 +131,8 @@ __all__ = [
     "resolve_effort",
     "pick_model",
     "pick_effort",
+    "EFFORT_TIERS",
+    "KNOWN_EFFORTS",
     "CURRENT_MODEL",
     # text
     "extract_json",
