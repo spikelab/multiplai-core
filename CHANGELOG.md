@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.10.0] – 2026-07-27
+
 ### Added
 
 - **`untrusted` module** — consolidated defang/fence primitives for
@@ -163,7 +165,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/spikelab/multiplai-core/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/spikelab/multiplai-core/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/spikelab/multiplai-core/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/spikelab/multiplai-core/compare/v0.7.0...v0.8.0
