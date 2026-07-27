@@ -7,6 +7,8 @@ import pytest
 from multiplai_core import env as env_mod
 from multiplai_core.env import (
     CURRENT_MODEL,
+    EFFORT_TIERS,
+    KNOWN_EFFORTS,
     ModelSpec,
     env_candidates,
     find_project_root,
@@ -292,3 +294,51 @@ class TestPickEffort:
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, "[t]\nEFFORT=turbo\n")
         assert pick_effort("low", task="t") == "low"
+
+
+class TestEffortTiers:
+    """The exported tier table — consumers validate against it instead of copying it."""
+
+    def test_exported_from_the_package_root(self):
+        import multiplai_core
+
+        assert multiplai_core.EFFORT_TIERS is EFFORT_TIERS
+        assert multiplai_core.KNOWN_EFFORTS is KNOWN_EFFORTS
+        assert {"EFFORT_TIERS", "KNOWN_EFFORTS"} <= set(multiplai_core.__all__)
+
+    def test_xhigh_sits_between_high_and_max(self):
+        # The regression the old copies kept reintroducing.
+        assert EFFORT_TIERS["high"] < EFFORT_TIERS["xhigh"] < EFFORT_TIERS["max"]
+
+    def test_ordering_is_strictly_ascending_low_to_max(self):
+        ranks = [EFFORT_TIERS[name] for name in ("low", "medium", "high", "xhigh", "max")]
+        assert ranks == sorted(ranks)
+        assert len(set(ranks)) == len(ranks)
+
+    def test_known_efforts_matches_the_table(self):
+        assert KNOWN_EFFORTS == frozenset(EFFORT_TIERS)
+
+    def test_table_is_read_only(self):
+        with pytest.raises(TypeError):
+            EFFORT_TIERS["turbo"] = 6  # type: ignore[index]
+
+    def test_every_known_effort_survives_pick_effort(self, monkeypatch, tmp_path):
+        # The contract that makes the table safe to validate against: a name in
+        # KNOWN_EFFORTS is recognized and returned verbatim, never normalized
+        # away to "high" the way an unknown name is. Raise the ceiling to max so
+        # the default `high` ceiling isn't what's under test here.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_EFFORT="max"\n')
+        for name in KNOWN_EFFORTS:
+            assert pick_effort(name) == name
+
+    def test_default_ceiling_is_high_so_the_top_tiers_need_raising(
+        self, monkeypatch, tmp_path
+    ):
+        # Not a bug, and worth pinning: with no MULTIPLAI_EFFORT set the ceiling
+        # is "high", so the two tiers above it are capped rather than rejected.
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        monkeypatch.delenv("MULTIPLAI_EFFORT", raising=False)
+        _write_conf(tmp_path, "")
+        assert pick_effort("xhigh") == "high"
+        assert pick_effort("max") == "high"
