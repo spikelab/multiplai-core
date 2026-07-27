@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.11.0] – 2026-07-27
+
 ### Added
 
 - **`EFFORT_TIERS` and `KNOWN_EFFORTS` are now exported** — the effort-name
@@ -190,7 +192,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/spikelab/multiplai-core/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/spikelab/multiplai-core/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/spikelab/multiplai-core/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/spikelab/multiplai-core/compare/v0.8.0...v0.8.1
