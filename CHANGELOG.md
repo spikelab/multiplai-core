@@ -18,6 +18,19 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- `SECURITY.md` — how to report a vulnerability (security@spikelab.org), what
+  this code can reach, which versions get fixes, and how the immutable-tag
+  delivery model (README → Availability guarantee) bounds the blast radius.
+  No API change; nothing to do for a pin.
+
+### Changed
+
+- README intro no longer describes the suite as improving itself — the memory
+  system learns what the user approves, and the docs now say exactly that.
+  Docs only; no API change.
+
 ## [0.10.0] – 2026-07-27
 
 ### Added
