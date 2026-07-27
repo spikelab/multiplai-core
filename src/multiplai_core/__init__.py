@@ -38,13 +38,6 @@ from .env import (
     resolve_model,
 )
 from .text import extract_json
-from .untrusted import (
-    bracket_notice,
-    contains_injection,
-    defang,
-    fence,
-    markdown_notice,
-)
 from .log_utils import (
     log_event,
     resolve_level,
@@ -71,6 +64,13 @@ from .model_client import (
 # in the package namespace would shadow the `multiplai_core.paths` submodule.
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
 from .paths import Paths, get_paths
+from .untrusted import (
+    bracket_notice,
+    contains_injection,
+    defang,
+    fence,
+    markdown_notice,
+)
 
 __version__ = "0.9.0"
 

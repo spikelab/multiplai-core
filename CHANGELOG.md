@@ -26,12 +26,19 @@ not backfilled; their contents are recoverable from `git log`.
   gmail's `defang`, slack's `_defang`, deep-research's `defang_untrusted`).
   New exports: `defang`, `fence`, `contains_injection`, `markdown_notice`,
   `bracket_notice`.
-  - `defang(text, limit=None, *, markdown_fences=False, mark_injections=False)`
-    always strips control/bidi/zero-width characters and full ANSI sequences
-    and HTML-escapes the `<untrusted-content>` markers. With both flags off it
-    is byte-identical to the gmail/slack/deep-research copies; with both flags
-    on (plus `limit`) it is byte-identical to log-doctor's. `None`/falsy → `""`;
-    non-str input is `str()`-coerced.
+  - `defang(text, limit=None, *, markdown_fences=True, mark_injections=False)`
+    always strips control/bidi/zero-width characters (including U+2028/U+2029),
+    strips full ANSI sequences, and HTML-escapes the `<untrusted-content>`
+    markers. `None`/falsy → `""`; non-str input is `str()`-coerced. The
+    escaping path is idempotent, so chained defangs don't double-escape.
+  - **`markdown_fences` defaults to `True`** — the safe behaviour is the
+    default one, so a caller who never thinks about the flag still gets a
+    fence the payload cannot break out of. If your output is *not* markdown
+    (plain stdout, a JSON field), pass `markdown_fences=False` to keep
+    ` ``` ` in the payload intact: that is the byte-for-byte equivalent of
+    the gmail/slack/deep-research copies. `mark_injections` defaults to
+    `False` and is an annotation, not a boundary; log-doctor's exact output is
+    `defang(text, limit, mark_injections=True)`.
   - `fence(text, source, limit=None) -> list[str]` reproduces log-doctor's
     fenced-block contract: `[]` on empty body, ` ```text ` inner fence,
     defanged `source` attribute, injection spans marked `⟪INJECTION?⟫…⟪/⟫`.
@@ -40,15 +47,19 @@ not backfilled; their contents are recoverable from `git log`.
     byte-exactly (log-doctor's blockquote; gmail/slack's bracketed one-liner).
 
   For a plugin author: if your script carries a local defang copy, moving your
-  pin to the release containing this lets you delete it and import from core;
-  output is unchanged for all four existing consumers. Purely additive —
-  nothing existing was changed or removed.
+  pin to the release containing this lets you delete it and import from core.
+  Two deliberate improvements on the copies, so output is *not* byte-identical
+  in these two cases: `fence()` now escapes `"` in the `source` attribute (a
+  label containing a quote could previously close the attribute and append
+  attributes to our own tag), and the `ignore …` injection pattern now matches
+  "ignore **the** previous instructions", which every copy missed. Both
+  strictly widen protection; neither changes a signature.
 
-### Housekeeping
+### Added — documentation and tooling
 
-- Documentation and tooling: this `CHANGELOG.md`, a stated compatibility
-  promise in `README.md`, a gated `release.sh`, CI on Python 3.11 and 3.12,
-  and a `CLAUDE.md` for agents editing the library.
+- This `CHANGELOG.md`, a stated compatibility promise in `README.md`, a gated
+  `release.sh`, CI on Python 3.11 and 3.12, and a `CLAUDE.md` for agents
+  editing the library.
 
 ## [0.9.0] – 2026-07-26
 

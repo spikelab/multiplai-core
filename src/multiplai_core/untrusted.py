@@ -26,6 +26,7 @@ _CONTROL_RE = re.compile(
     "\u200b-\u200f"                      # zero-width chars + LTR/RTL marks
     "\u202a-\u202e"                      # bidi embedding / override
     "\u2066-\u2069"                      # bidi isolates
+    "\u2028\u2029"                       # line / paragraph separators
     "\ufeff]"                            # BOM / zero-width no-break space
 )
 
@@ -46,7 +47,10 @@ _MARKDOWN_FENCE_BREAKERS = (
 # Instruction-shaped patterns. Deliberately loose: a false positive costs one
 # noisy marker in the output, a false negative costs an executed instruction.
 _INJECTION_PATTERNS = [
-    r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier)\s+\w*\s*instructions?",
+    # `the` belongs in the optional group: "ignore the previous instructions" is
+    # one of the commonest phrasings and the copies this module replaces all
+    # missed it (they allowed `the` in the `disregard` pattern only).
+    r"ignore\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier)\s+\w*\s*instructions?",
     r"disregard\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier|the)\s+\w*\s*(?:instructions?|prompts?|rules?)",
     r"forget\s+(?:everything|all)\s+(?:you|above|before)",
     r"new\s+(?:instructions?|system\s+prompt|task)\s*[:\-]",
@@ -65,7 +69,7 @@ def defang(
     text: str | None,
     limit: int | None = None,
     *,
-    markdown_fences: bool = False,
+    markdown_fences: bool = True,
     mark_injections: bool = False,
 ) -> str:
     """Neutralize one span of externally-authored text for fenced inclusion.
@@ -76,12 +80,20 @@ def defang(
     to see what the text actually said, including an injection attempt it is
     asked to report.
 
-    With ``markdown_fences=True``, also neutralizes ``` and ``~~~`` so the
-    text cannot break out of a surrounding markdown code fence. With
-    ``mark_injections=True``, instruction-shaped spans are marked in place as
-    ``⟪INJECTION?⟫…⟪/⟫`` — marked, not removed, because a redacted payload is
-    useless to whoever has to diagnose the attack. ``limit`` truncates the
-    result with a trailing ``…``.
+    ``markdown_fences`` (**on by default**) also neutralizes ``` and ``~~~``,
+    so text placed inside a markdown code fence cannot break out of it. The
+    default is the safe one deliberately: most callers emit markdown, and a
+    caller who forgets the flag gets a fence that holds rather than one that
+    silently doesn't. Pass ``markdown_fences=False`` when the output is *not*
+    markdown (plain stdout, a JSON field) and mangling ``` in the payload
+    would be a pointless cosmetic loss.
+
+    With ``mark_injections=True``, instruction-shaped spans are marked in
+    place as ``⟪INJECTION?⟫…⟪/⟫`` — marked, not removed, because a redacted
+    payload is useless to whoever has to diagnose the attack. This one is off
+    by default and is *not* a boundary: it annotates, and text the reader must
+    quote verbatim (a page an extractor is asked to report on) is better left
+    unannotated. ``limit`` truncates the result with a trailing ``…``.
     """
     if not text:
         return ""
@@ -97,20 +109,34 @@ def defang(
     return clean
 
 
+def _attr(value: str) -> str:
+    """Defang *value* for use inside a double-quoted tag attribute.
+
+    :func:`defang` escapes the ``<untrusted-content`` marker, so a payload
+    cannot open a second tag — but it leaves ``"`` alone, which is enough to
+    close the attribute early and append attributes of the payload's choosing
+    to *our* tag (``source="app.log" trusted="yes"``). Quotes are escaped here
+    and not in :func:`defang` itself because escaping every ``"`` in body
+    prose would mangle ordinary text for no gain.
+    """
+    return defang(value, mark_injections=True).replace('"', "&quot;")
+
+
 def fence(text: str | None, source: str, limit: int | None = None) -> list[str]:
     """Markdown lines wrapping *text* in a labeled untrusted-content block.
 
-    The body (and the ``source`` label) go through :func:`defang` with
-    markdown-fence neutralization and injection marking on, since the output
-    is markdown structure. Returns lines rather than a string so callers can
-    extend their ``out`` list without re-splitting. Empty input yields no
-    lines at all — an empty fence is noise.
+    The body goes through :func:`defang` with injection marking on (fence
+    neutralization is already the default), since the output is markdown
+    structure; the ``source`` label additionally gets its quotes escaped so it
+    cannot break out of the attribute. Returns lines rather than a string so
+    callers can extend their ``out`` list without re-splitting. Empty input
+    yields no lines at all — an empty fence is noise.
     """
-    body = defang(text, limit, markdown_fences=True, mark_injections=True)
+    body = defang(text, limit, mark_injections=True)
     if not body:
         return []
     return [
-        f'<untrusted-content source="{defang(source, markdown_fences=True, mark_injections=True)}">',
+        f'<untrusted-content source="{_attr(source)}">',
         "```text",
         body,
         "```",
