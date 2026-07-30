@@ -1,0 +1,36 @@
+# Scheduled dependency updates.
+#
+# Why this exists: on 2026-07-30 this repo carried 2 open Dependabot alerts
+# (1 high) — mcp and pydantic-settings, both transitive via the optional
+# [sdk] extra, both stale purely because uv.lock had not been regenerated.
+# Scheduled updates keep the lock from drifting silently between releases.
+
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the routine churn, so the noise stays reviewable. Security
+      # updates are deliberately NOT grouped — Dependabot raises those
+      # separately and immediately regardless of this schedule.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # claude-agent-sdk is capped at <0.3 in pyproject.toml on purpose: the
+      # 0.1 -> 0.2 bump already shipped a breaking result-message parse
+      # change. Suppress major-bump PRs so the cap is reviewed deliberately
+      # rather than reopened weekly.
+      - dependency-name: "claude-agent-sdk"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"
