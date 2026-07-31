@@ -1,7 +1,9 @@
 """Tests for the single SDK agent runner (multiplai_core/agent_runner.py)."""
 
 import asyncio
+import logging
 import os
+import re
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -463,6 +465,122 @@ class TestPromptFileFallback:
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("small"))
         assert mock_sdk.query.call_args.kwargs["prompt"] == "small"
+
+
+class TestHeartbeat:
+    """A run emits nothing between START and DONE, so a multi-minute call is
+    indistinguishable from a wedged one. The heartbeat is that signal — and it
+    must die with the attempt that spawned it."""
+
+    @staticmethod
+    def _alive_lines(caplog) -> list[str]:
+        return [
+            r.getMessage()
+            for r in caplog.records
+            if " alive " in r.getMessage()
+        ]
+
+    @staticmethod
+    def _slow_sdk(delay: float) -> MagicMock:
+        """SDK that emits text, then stalls *delay* seconds before finishing."""
+        mock = MagicMock()
+        mock.AssistantMessage = _FakeAssistantMessage
+        mock.TextBlock = _FakeTextBlock
+        mock.ClaudeAgentOptions = MagicMock(side_effect=lambda **kw: MagicMock())
+
+        async def _agen(prompt, options):
+            yield _FakeAssistantMessage([_FakeTextBlock("hello")])
+            await asyncio.sleep(delay)
+            yield _FakeAssistantMessage([_FakeTextBlock(" world")])
+
+        mock.query = MagicMock(side_effect=_agen)
+        return mock
+
+    def test_heartbeat_logs_progress_while_the_call_runs(self, caplog, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_AGENT_HEARTBEAT_S", "0.05")
+        caplog.set_level(logging.INFO, logger="multiplai_core.agent_runner")
+        mock_sdk = self._slow_sdk(0.3)
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            result = _run(run_agent("hi", max_turns=5, label="slow"))
+
+        assert result.text == "hello world"
+        lines = self._alive_lines(caplog)
+        assert lines, "expected at least one alive heartbeat"
+        assert "run_agent [slow] alive" in lines[0]
+        assert "attempt=1/1" in lines[0]
+        # The byte count is the point: it separates "slow but producing" from
+        # "stalled with nothing". "hello" is already consumed by the first tick.
+        byte_counts = [
+            int(m.group(1))
+            for line in lines
+            if (m := re.search(r"text=(\d+) bytes", line))
+        ]
+        assert byte_counts and max(byte_counts) > 0
+
+    def test_no_heartbeat_after_the_call_returns(self, caplog, monkeypatch):
+        """The task is cancelled AND awaited in a finally — nothing may keep
+        ticking once run_agent has handed back a result."""
+        monkeypatch.setenv("MULTIPLAI_AGENT_HEARTBEAT_S", "0.05")
+        caplog.set_level(logging.INFO, logger="multiplai_core.agent_runner")
+        mock_sdk = self._slow_sdk(0.2)
+
+        async def _test():
+            await run_agent("hi", max_turns=5)
+            at_return = len(self._alive_lines(caplog))
+            await asyncio.sleep(0.3)  # several more intervals
+            return at_return, len(self._alive_lines(caplog))
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            at_return, later = _run(_test())
+
+        assert at_return >= 1
+        assert later == at_return
+
+    def test_no_heartbeat_after_a_timed_out_attempt(self, caplog, monkeypatch):
+        """On timeout the attempt is cancelled fire-and-forget; the heartbeat
+        must not outlive it (the reason _consume() aclose()s its generator)."""
+        monkeypatch.setenv("MULTIPLAI_AGENT_HEARTBEAT_S", "0.02")
+        caplog.set_level(logging.INFO, logger="multiplai_core.agent_runner")
+        mock_sdk = self._slow_sdk(10)
+
+        async def _test():
+            with pytest.raises(AgentRunTimeout):
+                await run_agent("hi", max_turns=5, timeout_s=0.1)
+            at_raise = len(self._alive_lines(caplog))
+            await asyncio.sleep(0.2)
+            return at_raise, len(self._alive_lines(caplog))
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            at_raise, later = _run(_test())
+
+        assert at_raise >= 1
+        assert later == at_raise
+
+    def test_interval_zero_disables_the_heartbeat(self, caplog, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_AGENT_HEARTBEAT_S", "0")
+        caplog.set_level(logging.INFO, logger="multiplai_core.agent_runner")
+        mock_sdk = self._slow_sdk(0.3)
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            result = _run(run_agent("hi", max_turns=5))
+
+        assert result.text == "hello world"
+        assert self._alive_lines(caplog) == []
+
+    def test_interval_read_at_call_time_not_import_time(self, monkeypatch):
+        """The knob is a call-time read, so a caller can set it per run —
+        unlike model_client's import-time _SDK_CALL_TIMEOUT_S."""
+        from multiplai_core.agent_runner import (
+            _HEARTBEAT_DEFAULT_S, _HEARTBEAT_ENV, _env_float,
+        )
+
+        monkeypatch.delenv(_HEARTBEAT_ENV, raising=False)
+        assert _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S) == 60.0
+        monkeypatch.setenv(_HEARTBEAT_ENV, "5")
+        assert _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S) == 5.0
+        monkeypatch.setenv(_HEARTBEAT_ENV, "not-a-number")
+        assert _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S) == 60.0
 
 
 class TestCostLedgerTap:

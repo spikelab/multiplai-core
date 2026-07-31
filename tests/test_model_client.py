@@ -1175,6 +1175,106 @@ class TestEffortForwarding:
         assert ra.call_args.kwargs["effort"] is None
 
 
+class TestPerCallTimeout:
+    """`query(timeout_s=…)` escalates the ceiling for ONE call.
+
+    The module default is a global read from the env; patching it to raise the
+    timeout for a single oversized request would change the ceiling for every
+    other call in flight under ``asyncio.gather``. This keyword is the
+    non-racy route.
+    """
+
+    @staticmethod
+    def _client():
+        from multiplai_core.model_client import AgentSDKClient
+        mock_sdk = MagicMock()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            return AgentSDKClient()
+
+    def test_timeout_s_reaches_run_agent(self):
+        client = self._client()
+        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+            ra.return_value = types.SimpleNamespace(text="ok")
+            asyncio.run(client.query(
+                "sys", [{"role": "user", "content": "hi"}], timeout_s=1800.0,
+            ))
+        assert ra.call_args.kwargs["timeout_s"] == 1800.0
+
+    def test_omitting_it_preserves_the_module_default(self):
+        from multiplai_core import model_client
+
+        client = self._client()
+        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+            ra.return_value = types.SimpleNamespace(text="ok")
+            asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}]))
+        assert ra.call_args.kwargs["timeout_s"] == model_client._SDK_CALL_TIMEOUT_S
+
+    def test_default_still_read_at_call_time(self):
+        """Existing callers patch the module global; that must keep working."""
+        from multiplai_core import model_client
+
+        client = self._client()
+        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra, \
+                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 123.0):
+            ra.return_value = types.SimpleNamespace(text="ok")
+            asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}]))
+        assert ra.call_args.kwargs["timeout_s"] == 123.0
+
+    def test_explicit_value_wins_over_the_module_default(self):
+        from multiplai_core import model_client
+
+        client = self._client()
+        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra, \
+                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 123.0):
+            ra.return_value = types.SimpleNamespace(text="ok")
+            asyncio.run(client.query(
+                "sys", [{"role": "user", "content": "hi"}], timeout_s=7.0,
+            ))
+        assert ra.call_args.kwargs["timeout_s"] == 7.0
+
+    def test_keyword_only_and_defaults_to_none(self):
+        """Additive keyword-only argument — no positional slot was taken, so
+        every existing call site is unaffected."""
+        from multiplai_core.model_client import (
+            AgentSDKClient, AnthropicAPIClient, ModelClient,
+        )
+        for meth in (
+            ModelClient.query, AgentSDKClient.query, AnthropicAPIClient.query,
+        ):
+            p = inspect.signature(meth).parameters["timeout_s"]
+            assert p.kind is inspect.Parameter.KEYWORD_ONLY
+            assert p.default is None
+
+    def test_api_client_accepts_it_and_does_not_forward_it(self):
+        """Parity only: the fallback client has its own transport timeouts, so
+        a caller that escalates must not get a TypeError or a bogus API param."""
+        from multiplai_core.model_client import AnthropicAPIClient
+
+        block = MagicMock()
+        block.type = "text"
+        block.text = "ok"
+        response = MagicMock()
+        response.content = [block]
+        mock_async_client = MagicMock()
+        mock_async_client.messages.create = AsyncMock(return_value=response)
+        mock_anthropic = MagicMock()
+        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            client = AnthropicAPIClient("sk-test")
+
+            async def _test():
+                result = await client.query(
+                    "sys", [{"role": "user", "content": "hi"}], timeout_s=1800.0,
+                )
+                assert result.content == "ok"
+                assert "timeout_s" not in (
+                    mock_async_client.messages.create.call_args.kwargs
+                )
+
+            asyncio.run(_test())
+
+
 class TestPromptCaching:
     """The direct-API path sent `system=` as a bare string, which is never
     cached — every call re-paid full input price for an identical prompt."""

@@ -18,6 +18,36 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`run_agent` now logs an `alive` heartbeat while a call is in flight.**
+  Between `START` and `DONE` a run emitted nothing, so a multi-minute call was
+  indistinguishable from a wedged one — the only signal was a `DONE`/`FAIL`
+  line that might be half an hour away. Every attempt now logs at INFO, every
+  60 s by default:
+  `run_agent [<label>] alive 120s attempt=1/2 turns=3 text=41252 bytes`.
+  The byte count is the useful part: it separates "slow but producing" from
+  "stalled with nothing". The task is cancelled and awaited when the attempt
+  ends, so nothing keeps ticking past a return, a timeout, or into a retry
+  backoff. **Nothing to do for a pin** — no signature or export changed. The
+  interval is `MULTIPLAI_AGENT_HEARTBEAT_S`, read at *call* time (not import),
+  so you can set it per run; **opt out with `MULTIPLAI_AGENT_HEARTBEAT_S=0`**
+  (`0` or negative disables it) if your caller's log must stay quiet.
+- **`ModelClient.query()` gains a keyword-only `timeout_s: float | None = None`**
+  — a per-call override of the SDK hard timeout, on `AgentSDKClient` and (for
+  interface parity, where it is accepted and ignored like `effort`)
+  `AnthropicAPIClient`. `None` keeps today's behaviour exactly: the module
+  default from `MULTIPLAI_SDK_CALL_TIMEOUT_S`. Until now the ceiling was
+  reachable only as a module global read from the env at import, so a caller
+  that needed a longer timeout for **one** oversized request had to patch
+  `model_client._SDK_CALL_TIMEOUT_S` — private, and racy under
+  `asyncio.gather`, where it changes the ceiling for every call in flight.
+  Pass the keyword instead. **Action for pin-movers:** none if you only call
+  `query()`; if you *implement* `ModelClient` out of tree (a registered
+  provider backend), add `timeout_s: float | None = None` to your `query()`
+  signature — ignoring it is fine, and `isinstance` against the runtime-checkable
+  Protocol was never affected.
+
 ## [0.11.0] – 2026-07-27
 
 ### Added
