@@ -74,7 +74,7 @@ from .untrusted import (
     markdown_notice,
 )
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 __all__ = [
     # agent runner
