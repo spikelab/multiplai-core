@@ -30,11 +30,16 @@ Every invocation always gets the isolation/hardening bundle:
 - ``env["_HOOK_CHILD_SESSION"]="1"`` — any hook that still loads skips work.
 - default ``cwd`` = ``$CLAUDE_CONFIG_DIR/hook-sessions`` — prevents project
   settings.json pickup and keeps child sessions out of the user's history.
+
+Every run also logs an ``alive`` heartbeat at INFO while an attempt is in
+flight, every ``MULTIPLAI_AGENT_HEARTBEAT_S`` seconds (default 60; ``0`` or
+negative disables it). Set it to ``0`` if a caller's log must stay quiet.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import tempfile
@@ -62,6 +67,36 @@ _PROMPT_FILE_READ_TOKENS = "100000"
 _STDERR_RING_LINES = 50          # trailing context kept for the fallback tail
 _STDERR_MAX_ERROR_LINES = 15     # [ERROR] lines surfaced in the summary
 _STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
+
+# Liveness heartbeat. Between START and DONE a run emits nothing, so a
+# multi-minute call (dream's consolidation pass runs 5-30 min) is
+# indistinguishable from a wedged one in the log — the operator's only signal
+# is the DONE/FAIL line that may be half an hour away. The heartbeat logs
+# elapsed time plus the output accumulated so far, which also distinguishes
+# "slow but producing" from "stalled with nothing".
+_HEARTBEAT_ENV = "MULTIPLAI_AGENT_HEARTBEAT_S"
+_HEARTBEAT_DEFAULT_S = 60.0
+
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a float env var, falling back to the default on garbage.
+
+    A deliberate private copy of ``model_client``'s helper of the same name
+    (private there, and not part of the exported surface): importing it would
+    make the runner depend on the client, which is backwards — the client is
+    built on the runner.
+
+    Read at **call** time here, not import time, so a caller or test can set
+    the knob per run.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number; using default %s", name, raw, default)
+        return default
 
 
 @dataclass(frozen=True)
@@ -407,6 +442,32 @@ async def run_agent(
                 finally:
                     await gen.aclose()
 
+            async def _heartbeat(interval: float, attempt_no: int = attempt) -> None:
+                """Log liveness every *interval* seconds until cancelled.
+
+                Reads the same ``chunks``/``turns`` locals ``_consume()``
+                mutates, so the line reports real progress rather than only
+                that the task is scheduled.
+                """
+                hb_start = loop.time()
+                while True:
+                    await asyncio.sleep(interval)
+                    logger.info(
+                        "run_agent [%s] alive %.0fs attempt=%d/%d turns=%d "
+                        "text=%d bytes",
+                        label, loop.time() - hb_start, attempt_no + 1,
+                        max_attempts, turns,
+                        sum(len(c.encode("utf-8")) for c in chunks),
+                    )
+
+            heartbeat_s = _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S)
+            heartbeat_task = (
+                asyncio.create_task(_heartbeat(heartbeat_s))
+                if heartbeat_s > 0
+                else None
+            )
+            backoff_s = 0.0
+
             try:
                 await hard_timeout(_consume(), timeout_s)
                 elapsed = loop.time() - run_start
@@ -454,7 +515,23 @@ async def run_agent(
                         label, last_reason, attempt + 1, max_attempts,
                         retry_backoff_s,
                     )
-                    await asyncio.sleep(retry_backoff_s)
+                    backoff_s = retry_backoff_s
+            finally:
+                # Cancel AND await, for the same reason _consume() explicitly
+                # aclose()s its generator: on timeout the attempt is cancelled
+                # fire-and-forget, and a heartbeat left pending would keep
+                # logging a dead attempt's counters into the next one (or past
+                # the end of the call). Awaiting makes the teardown ordered.
+                if heartbeat_task is not None:
+                    heartbeat_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await heartbeat_task
+
+            # Backoff sits outside the attempt so the heartbeat is already
+            # stopped: an "alive" line during the gap would report the failed
+            # attempt's turn count as if the run were still producing.
+            if backoff_s:
+                await asyncio.sleep(backoff_s)
     finally:
         if prompt_file:
             try:

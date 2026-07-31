@@ -172,6 +172,7 @@ class ModelClient(Protocol):
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
         effort: str | None = None,
+        timeout_s: float | None = None,
     ) -> ModelResponse: ...
 
 
@@ -215,12 +216,20 @@ class AgentSDKClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
         effort: str | None = None,
+        timeout_s: float | None = None,
     ) -> ModelResponse:
         """Send a single-turn query via the Agent SDK and return normalized text.
 
         *effort* is the second axis alongside *model*: forwarded to the SDK only
         when set (``run_agent`` omits the option entirely for ``None``), so an
         older SDK without the parameter keeps working.
+
+        *timeout_s* overrides the per-call hard ceiling for **this call only**;
+        ``None`` keeps the module default (``_SDK_CALL_TIMEOUT_S``, from
+        ``MULTIPLAI_SDK_CALL_TIMEOUT_S``). A caller that must escalate the
+        timeout for one oversized request among several concurrent ones needs
+        this: the module global is shared, so patching it under
+        ``asyncio.gather`` would change the ceiling for every in-flight call.
         """
         # max_tokens/temperature are accepted for interface parity but the SDK
         # uses session defaults — warn once if a caller relies on them (e.g.
@@ -255,7 +264,9 @@ class AgentSDKClient:
                 max_turns=_SDK_MAX_TURNS,
                 model=model,
                 effort=effort,
-                timeout_s=_SDK_CALL_TIMEOUT_S,
+                timeout_s=(
+                    _SDK_CALL_TIMEOUT_S if timeout_s is None else timeout_s
+                ),
                 max_attempts=_SDK_MAX_ATTEMPTS,
                 retry_backoff_s=_SDK_RETRY_BACKOFF_S,
                 prompt_file_fallback=False,
@@ -332,14 +343,23 @@ class AnthropicAPIClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
         effort: str | None = None,
+        timeout_s: float | None = None,
     ) -> ModelResponse:
         """Send a query via the Anthropic API and return a normalized response.
 
         *effort* is accepted for interface parity and ignored: reasoning effort
         is a Claude Code/Agent-SDK session knob, not a Messages API parameter.
+
+        *timeout_s* is likewise accepted for parity and ignored: it is the
+        Agent-SDK path's guard against a wedged CLI subprocess, and the HTTP
+        client here has its own transport timeouts. Ignoring it keeps a caller
+        that escalates the timeout for one large request working against either
+        backend instead of raising ``TypeError`` on the fallback client.
         """
         if effort is not None:
             logger.debug("AnthropicAPIClient ignores effort=%s (not a Messages API param)", effort)
+        if timeout_s is not None:
+            logger.debug("AnthropicAPIClient ignores timeout_s=%s (SDK-path guard)", timeout_s)
         client = self._ensure_client()
         response = await client.messages.create(
             model=model,
