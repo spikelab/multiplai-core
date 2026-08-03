@@ -23,7 +23,7 @@ classifiers = [
 # Loose ranges: this is a library, so exact pins would make it unsolvable
 # alongside any consumer (or sibling dep) that needs a different version.
 dependencies = [
-    "anthropic>=0.40,<1.0",
+    "anthropic>=0.120.2,<1.0",
     "pyyaml>=6.0",
 ]
 
@@ -44,14 +44,14 @@ dependencies = [
 # minor bump (0.1 -> 0.2) already shipped a breaking result-message parse
 # change. Without a cap, a downstream consumer that doesn't vendor our lock
 # could resolve a future 0.3.x/1.0 fresh and silently re-break the same way.
-sdk = ["claude-agent-sdk>=0.2.116,<0.3"]
+sdk = ["claude-agent-sdk>=0.2.128,<0.3"]
 # load_env() needs python-dotenv; without this extra it degrades to a no-op
 # with a warning.
 dotenv = ["python-dotenv>=1.0"]
 # packaging is a direct test dependency (tests/test_pyproject_sdk_floor.py
 # parses Requirement specs) — declared explicitly, not leaned on as a
 # transitive dep of pytest.
-dev = ["pytest>=8.0", "packaging>=24"]
+dev = ["pytest>=9.1.1", "packaging>=24"]
 
 [project.urls]
 Homepage = "https://github.com/spikelab/multiplai-core"
