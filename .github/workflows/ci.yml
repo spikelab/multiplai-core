@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       # `uv run` resolves the declared deps itself; --python pins the
       # interpreter so the matrix leg tests what it says it tests.
