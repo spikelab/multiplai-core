@@ -25,16 +25,38 @@ own drifting copy:
 
 ## Install
 
-Consumed as a git-URL dependency — no PyPI. In a script's PEP 723 header:
+Consumed as a git-URL dependency — no PyPI. Two shapes are supported; pick by
+whether you have a lockfile.
+
+**With a lockfile** (a uv workspace or any `uv.lock`-managed project) — declare
+it in `pyproject.toml` and let the lock record the commit:
+
+```toml
+[tool.uv.sources]
+multiplai-core = { git = "https://github.com/spikelab/multiplai-core", branch = "main" }
+```
+
+The lock is what freezes resolution, so nothing moves under you; you take a new
+version by running `uv lock --upgrade-package multiplai-core` and committing the
+result. Note that Dependabot does **not** bump git-sourced dependencies, so that
+step is deliberate rather than automatic. This is what
+[`multiplai-cc-mktplace`](https://github.com/spikelab/multiplai-cc-mktplace)
+does.
+
+**Without a lockfile** — a genuinely standalone one-file script — pin a tag in a
+PEP 723 header:
 
 ```python
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.8.1"]
+# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.13.0"]
 # ///
 ```
 
-Pin by **git tag** (`@v0.8.1`); cut a new tag rather than moving an existing one.
+Pin by **git tag** (`@v0.13.0`); cut a new tag rather than moving an existing
+one. Be aware that `uv run` re-resolves an inline dependency on **every**
+invocation, so this shape is a poor fit for anything latency-sensitive or run
+in bulk — that is exactly why the marketplace moved off it.
 
 Optional extras (append to the requirement, e.g. `multiplai-core[sdk] @ git+...@v0.8.1`):
 
@@ -51,8 +73,10 @@ run, so its availability is part of the plugins' contract with their users:
 - **This repository stays public.** Taking it private or deleting it would
   break every installed plugin; it will not happen casually.
 - **Release tags are immutable.** A `vX.Y.Z` tag is never moved, deleted, or
-  reused — what a PEP 723 pin resolved yesterday is what it resolves tomorrow.
-- Fixes ship as **new tags**; consumers upgrade by bumping their pin.
+  reused — what a pin resolved yesterday is what it resolves tomorrow. The same
+  holds for a commit recorded in a lockfile.
+- Fixes land on `main` and are tagged; consumers take them by bumping a pin or
+  re-locking. Nothing upgrades on its own, in either shape.
 
 (PyPI publication — which would also remove the GitHub-availability dependency
 and speed up first-run resolution — is under consideration; until then the
@@ -81,11 +105,13 @@ not re-exported at the top level, and the shape of `pricing.json`. Internals may
 change in any release, including a patch. If you need something that is not
 exported, ask for it to be exported rather than reaching in.
 
-**Which version should I pin?** Pin the **newest tag** when you add the
-dependency, and bump **deliberately, per consumer**, after reading the changelog
-entry for the version you are moving to. There is no floating `main` pin and no
-version range: every consumer names an exact, immutable tag, so nothing upgrades
-underneath you and each upgrade is a reviewable diff in the consuming repo.
+**Which version should I take?** If you pin a tag, pin the **newest** one when
+you add the dependency. Either way, move **deliberately, per consumer**, after
+reading the changelog entry for the version you are moving to. Neither shape
+floats: a tag is immutable and a lockfile records a commit, so nothing upgrades
+underneath you and every upgrade is a reviewable diff in the consuming repo.
+What a version *range* would give you — silent minor upgrades — is deliberately
+not on offer, because the pre-1.0 minor is the breaking axis (above).
 
 ## Usage
 

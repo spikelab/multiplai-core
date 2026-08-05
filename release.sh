@@ -4,10 +4,11 @@
 # multiplai-core, keeping the package version, the git tag, and the release
 # notes in agreement.
 #
-# Why this exists: every multiplai plugin resolves this library from GitHub at
-# an IMMUTABLE TAG in a PEP 723 header. Merging to `main` delivers nothing —
-# a tag is the unit of delivery, and a tag can never be moved or re-cut. So the
-# tag must be right the first time, which means three things must agree at the
+# Why this exists: this library is resolved from GitHub, never PyPI, and a
+# vX.Y.Z tag can never be moved or re-cut. A tag is a permanent, immutable
+# reference point — the thing a consumer pins to when it wants resolution
+# frozen, and the anchor the CHANGELOG section is written against. So the tag
+# must be right the first time, which means three things must agree at the
 # moment it is created:
 #
 #   src/multiplai_core/__init__.py::__version__   (hatch's single version source)
@@ -26,11 +27,11 @@
 # You cannot tag a failing test suite, and you cannot tag an undescribed change.
 # There is deliberately NO flag to skip either gate.
 #
-# What this script does NOT do: bump any consumer's pin. multiplai-container's
-# release.sh bumps the kit's CONTAINER_REF because it has exactly one consumer;
-# core has many, and the README is explicit that pins move deliberately, per
-# consumer, after reading the changelog. It prints a reminder of where they live
-# instead.
+# What this script does NOT do: touch any consumer. multiplai-container's
+# release.sh bumps the kit's CONTAINER_REF because it has exactly one consumer
+# and one pin; core's consumers each choose their own resolution strategy, so a
+# release here is never a push to anybody. It prints a reminder of who consumes
+# core and how, instead.
 #
 # Usage:
 #   ./release.sh <major|minor|patch>     # bump from __version__
@@ -220,20 +221,22 @@ if $DRY_RUN; then
 else
   step "Released $TAG"
 fi
-say "Consumers get it by bumping their own pin — deliberately, per consumer,"
-say "after reading the $NEW section of CHANGELOG.md. Nothing upgrades on its own."
+say "Nothing upgrades on its own — every consumer decides when to move."
 say ""
-say "This script does NOT bump pins. They live in:"
-say "  • multiplai-cc-mktplace — PEP 723 headers across plugin scripts"
-say "    (~20 files under plugins/*/scripts and plugins/*/skills/*/scripts):"
-say "      grep -rl 'multiplai-core @ git+' <cc-mktplace>/plugins"
-say "  • multiplai-cc-mktplace — the two vendored lockfiles of the heavyweight"
-say "    pipelines, which pin a commit as well as a tag:"
-say "      plugins/multiplai-dev/skills/buildme/scripts/uv.lock"
-say "      plugins/multiplai-research/skills/deep-research/scripts/uv.lock"
-say "  • multiplai-kit / multiplai-gui — any script or venv that installs core"
+say "Who consumes core, and how (verified 2026-08-05):"
+say "  • multiplai-cc-mktplace — the ONLY repo that installs core. It declares"
+say "    it UNPINNED and tracked from main, in one workspace member:"
+say "      plugins/multiplai-context/scripts/pyproject.toml  [tool.uv.sources]"
+say "    Resolution is frozen by the single root uv.lock, which records a"
+say "    COMMIT. So this tag is not what it picks up: it moves when someone"
+say "    runs, from that repo's root,"
+say "      uv lock --upgrade-package multiplai-core"
+say "    and commits the lock. Dependabot does not bump git-sourced deps, so"
+say "    that re-lock is a deliberate, manual act — a reviewable diff in a PR."
+say "  • multiplai-kit / multiplai-gui / multiplai-container — do NOT install"
+say "    core. They reference it in prose, or run mktplace's scripts through"
+say "    that repo's member dirs. Nothing to bump."
 say ""
-say "cc-mktplace has a test that keeps its own pins consistent"
-say "(plugins/multiplai-context/tests/test_core_pin_consistency.py) — a partial"
-say "bump there fails CI, so bump a repo's pins together."
-say "Each bump is a separate PR in the consuming repo."
+say "So what is the tag for? It is the permanent reference a future consumer"
+say "can pin to, and the anchor the $NEW CHANGELOG section is written against."
+say "It is not, today, how the fix reaches anyone."
