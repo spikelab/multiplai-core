@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.12.1] – 2026-08-05
+
 ### Changed
 
 - **`uv.lock` refreshed; no declared dependency range moved.** Notably
@@ -241,7 +243,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/spikelab/multiplai-core/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/spikelab/multiplai-core/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/spikelab/multiplai-core/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/spikelab/multiplai-core/compare/v0.9.0...v0.10.0
