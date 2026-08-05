@@ -18,6 +18,23 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Changed
+
+- **`uv.lock` refreshed; no declared dependency range moved.** Notably
+  `anthropic` 0.102.0 → 0.120.2, `claude-agent-sdk` 0.2.119 → 0.2.129 and
+  `cryptography` 49.0.0 → 50.0.0 (the last carries advisories). **Nothing to do
+  for a pin** — no export, signature or declared constraint changed, so this is
+  invisible to anyone resolving fresh; it matters only if you vendor our lock.
+- **Dependabot now runs with `versioning-strategy: increase-if-necessary`.** Its
+  default strategy had been rewriting the *declared* floors in
+  `pyproject.toml` to whatever it had just resolved — it proposed
+  `anthropic>=0.40` → `>=0.120.2` and moved the deliberately-chosen
+  `claude-agent-sdk>=0.2.116` floor to `>=0.2.128`. For a library those raised
+  floors are a real cost to consumers: they narrow what you can resolve
+  alongside us for no stated reason. `tests/test_pyproject_sdk_floor.py`
+  caught it, which is what that guard is for. Dependabot will now touch a
+  declared range only when a new version genuinely falls outside it.
+
 ## [0.12.0] – 2026-07-31
 
 ### Added

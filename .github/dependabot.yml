@@ -12,6 +12,16 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Refresh the LOCK, do not rewrite the declared ranges. Without this,
+    # Dependabot's default strategy raises every floor in pyproject.toml to
+    # whatever it just resolved — on 2026-08-04 it proposed
+    # `anthropic>=0.40` -> `>=0.120.2` and moved the deliberately-chosen
+    # `claude-agent-sdk>=0.2.116` floor to `>=0.2.128`. Both directly
+    # contradict this repo's dependency policy: loose ranges, because a
+    # library with exact-ish floors becomes unsolvable alongside a consumer
+    # that needs something older. `increase-if-necessary` only touches a
+    # declared range when the new version genuinely falls outside it.
+    versioning-strategy: "increase-if-necessary"
     groups:
       # One PR for the routine churn, so the noise stays reviewable. Security
       # updates are deliberately NOT grouped — Dependabot raises those
