@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.13.0] – 2026-08-05
+
 ### Added
 
 - **`multiplai_core.plugin_options`** — one place that reads Claude Code plugin
@@ -270,7 +272,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/spikelab/multiplai-core/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/spikelab/multiplai-core/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/spikelab/multiplai-core/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/spikelab/multiplai-core/compare/v0.10.0...v0.11.0
