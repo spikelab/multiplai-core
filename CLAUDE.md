@@ -5,16 +5,11 @@ plugin depends on: path resolution, config/`.env`/`multiplai.conf` loading,
 model + effort resolution, logging, cost ledger, the model client and the
 provider seam, and the single SDK agent-invocation path.
 
-**It is not on PyPI.** Every consumer resolves it **from GitHub at a pinned git
-tag** in a PEP 723 script header:
-
-```python
-# dependencies = ["multiplai-core @ git+https://github.com/spikelab/multiplai-core@v0.9.0"]
-```
-
-Read that sentence again before you edit `src/`. Those pins are on other
-people's machines, already resolved. This is the repo where a careless rename
-breaks installed plugins for users you cannot reach.
+**It is not on PyPI.** Every consumer resolves it **from GitHub**, and the
+resolved code lands on other people's machines as part of an installed plugin.
+This is the repo where a careless rename breaks installed plugins for users you
+cannot reach. Read the section on consumers below **before you edit `src/`** —
+it is short, and it is not what it used to be.
 
 ## The two rules that cannot be walked back
 
@@ -26,8 +21,12 @@ exactly what it resolved yesterday — that is a public promise in
 it. A bad release is fixed by cutting a **new** tag, never by re-pointing the
 old one. Same for the repo itself: it stays public.
 
-Corollary: **merging to `main` delivers nothing.** `main` is the releasable
-line; **tags are the unit of delivery.**
+What a tag is **not**, as of 2026-08-04: the unit of delivery. It used to be —
+every consumer named a tag in a PEP 723 header — and this file said so for
+months after it stopped being true. Today the only consumer tracks `main` and
+freezes resolution in a lockfile. A tag is now a **permanent reference point**
+(pinnable by anyone who wants one) and the **anchor a `CHANGELOG` section is
+written against**. See "Who consumes core" below for what actually delivers.
 
 ### 2. Removing or renaming an exported symbol is a breaking change
 
@@ -85,22 +84,52 @@ version source — `pyproject.toml` has no hand-written version string), commits
 tag with `git push --atomic`. Both gates also run in `--dry-run` (they are
 read-only); only the branch/clean/sync preflight is advisory there.
 
-## Where consumers pin — and why this script doesn't touch them
+## Who consumes core, and how — verified 2026-08-05
 
-`release.sh` deliberately does **not** bump any consumer's pin (unlike
-`multiplai-container/release.sh`, which has exactly one consumer). Core has
-many, and pins move **deliberately, per consumer**, after someone reads the
-changelog. Bumping them is a **separate PR in the consuming repo**:
+**One repo installs core: `multiplai-cc-mktplace`.** It declares it **unpinned,
+tracked from `main`**, in a single workspace member:
 
-- **`multiplai-cc-mktplace`** — PEP 723 headers across ~20 plugin scripts
-  (`plugins/*/scripts/`, `plugins/*/skills/*/scripts/`). It has a test,
-  `plugins/multiplai-context/tests/test_core_pin_consistency.py`, that fails on
-  a partial bump — so bump a repo's pins together.
-- **`multiplai-cc-mktplace`** — two vendored lockfiles, which pin a commit as
-  well as a tag:
-  `plugins/multiplai-dev/skills/buildme/scripts/uv.lock` and
-  `plugins/multiplai-research/skills/deep-research/scripts/uv.lock`.
-- **`multiplai-kit` / `multiplai-gui`** — any script or venv that installs core.
+```toml
+# plugins/multiplai-context/scripts/pyproject.toml
+[tool.uv.sources]
+multiplai-core = { git = "https://github.com/spikelab/multiplai-core", branch = "main" }
+```
+
+Resolution is frozen by **that repo's single root `uv.lock`, which records a
+commit**. So merging here does not reach anyone by itself, and neither does
+tagging. The fix travels when somebody runs, from the mktplace root:
+
+```bash
+uv lock --upgrade-package multiplai-core   # then commit the lock
+```
+
+Dependabot does not bump git-sourced dependencies, so that re-lock is a
+deliberate manual act — which is the point: it lands as a reviewable diff in a
+PR, with CI running against the new resolution.
+
+**`multiplai-kit`, `multiplai-gui` and `multiplai-container` do not install
+core.** They mention it in prose, or run mktplace's scripts through that repo's
+member directories. There is nothing in them to bump.
+
+### What this section used to say, and why it was wrong
+
+Until 2026-08-04 every consumer pinned a tag in a PEP 723 header, and this file
+described that world for months after it ended. If you have read an older copy —
+or `release.sh`'s output before this change — it will have told you to bump
+"~20 PEP 723 headers under `plugins/*/scripts`", "the two vendored lockfiles"
+(`buildme/scripts/uv.lock`, `deep-research/scripts/uv.lock`), and pointed at
+`plugins/multiplai-context/tests/test_core_pin_consistency.py` as the guard
+against a partial bump.
+
+**None of those exist.** The mktplace workspace consolidation deleted them: PEP
+723 blocks and nested lockfiles are now both *rejected* by that repo's
+`scripts/lint_workspace.py`, and the pin-consistency test went with them. Going
+looking for those files is a dead end, and it is the specific confusion this
+rewrite exists to stop.
+
+`release.sh` still deliberately does **not** touch any consumer.
+`multiplai-container/release.sh` bumps the kit's `CONTAINER_REF` because it has
+exactly one consumer and one pin; core's consumer chooses its own moment.
 
 ## Layout and tests
 
