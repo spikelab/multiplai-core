@@ -66,6 +66,15 @@ from .model_client import (
 # in the package namespace would shadow the `multiplai_core.paths` submodule.
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
 from .paths import Paths, get_paths
+from .plugin_options import (
+    OPTION_PREFIX,
+    option,
+    option_bool,
+    option_float,
+    option_int,
+    option_present,
+    option_var,
+)
 from .untrusted import (
     bracket_notice,
     contains_injection,
@@ -87,6 +96,14 @@ __all__ = [
     # paths
     "Paths",
     "get_paths",
+    # plugin options
+    "OPTION_PREFIX",
+    "option",
+    "option_bool",
+    "option_float",
+    "option_int",
+    "option_present",
+    "option_var",
     # config
     "load_config",
     "load_yaml",

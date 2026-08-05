@@ -19,6 +19,7 @@ from .agent_runner import (  # noqa: F401 — _summarize_stderr re-exported for 
     run_agent,
 )
 from .env import DEFAULT_PROVIDER, ModelSpec, parse_model_spec
+from .plugin_options import option
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +323,7 @@ class AnthropicAPIClient:
         if not api_key:
             raise ValueError(
                 "An API key is required for the Anthropic fallback client. "
-                "Set CLAUDE_PLUGIN_OPTION_anthropic_api_key or pass api_key directly."
+                "Set the anthropic_api_key plugin option or pass api_key directly."
             )
         self._api_key = api_key
         self._client = None  # lazily created on first query
@@ -392,7 +393,7 @@ def detect_client_type() -> str:
         import claude_agent_sdk  # noqa: F401
         return "AgentSDKClient"
     except ImportError:
-        key = os.environ.get("CLAUDE_PLUGIN_OPTION_anthropic_api_key", "")
+        key = option("anthropic_api_key")
         if key:
             return "AnthropicAPIClient"
         return "none (no SDK or API key)"
@@ -404,8 +405,8 @@ async def create_client(
     """Create a model client. Tries Agent SDK first, falls back to API key.
 
     Args:
-        api_key: Optional API key override. If not provided, reads from
-                 CLAUDE_PLUGIN_OPTION_anthropic_api_key env var.
+        api_key: Optional API key override. If not provided, reads the
+                 ``anthropic_api_key`` plugin option.
         component: Cost-ledger tag for this client's runs (SDK backend only;
                  e.g. "extraction", "dream").
 
@@ -423,11 +424,11 @@ async def create_client(
         pass
 
     # Fall back to API key
-    key = api_key or os.environ.get("CLAUDE_PLUGIN_OPTION_anthropic_api_key", "")
+    key = api_key or option("anthropic_api_key")
     if not key:
         raise RuntimeError(
             "Neither the Agent SDK nor an API key is available. "
-            "Install claude_agent_sdk or set CLAUDE_PLUGIN_OPTION_anthropic_api_key."
+            "Install claude_agent_sdk or set the anthropic_api_key plugin option."
         )
 
     logger.warning("Model client: Falling back to Anthropic API key authentication")

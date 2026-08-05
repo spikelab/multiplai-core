@@ -56,7 +56,7 @@ class TestPluginEnvResolution:
     def test_resolve_memory_dir_from_env(self, monkeypatch, reset_paths_cache):
         """Scenario: Resolve user-configured memory directory."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/home/user/custom-memory")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/home/user/custom-memory")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -65,7 +65,7 @@ class TestPluginEnvResolution:
     def test_resolve_diary_dir_from_env(self, monkeypatch, reset_paths_cache):
         """Scenario: Resolve user-configured diary directory."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_diary_dir", "/home/user/custom-diary")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DIARY_DIR", "/home/user/custom-diary")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -101,8 +101,8 @@ class TestStandaloneFallback:
     def test_workspace_dir_env_anchors_workspace_paths(
         self, clean_env, monkeypatch, reset_paths_cache,
     ):
-        """CLAUDE_PLUGIN_OPTION_workspace_dir anchors diary/now/learnings."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_workspace_dir", "/ws/proj")
+        """CLAUDE_PLUGIN_OPTION_WORKSPACE_DIR anchors diary/now/learnings."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_WORKSPACE_DIR", "/ws/proj")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -203,7 +203,7 @@ class TestDerivedPaths:
     def test_skill_state_dir_derived_from_data(self, monkeypatch, reset_paths_cache):
         """Scenario: skill state bucket lives under data_dir/skills/<name>."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_data_dir", "/data")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DATA_DIR", "/data")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -217,7 +217,7 @@ class TestDerivedPaths:
         """Scenario: first access creates the dir and a `*` .gitignore at data_dir."""
         data = tmp_path / "data"
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_data_dir", str(data))
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DATA_DIR", str(data))
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -235,7 +235,7 @@ class TestDerivedPaths:
         data.mkdir()
         (data / ".gitignore").write_text("custom\n", encoding="utf-8")
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_data_dir", str(data))
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DATA_DIR", str(data))
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -256,7 +256,7 @@ class TestDerivedPaths:
     ):
         """Scenario: per-day learnings file lives under learnings_dir."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_diary_dir", "/ws/.multiplai/captainslog")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DIARY_DIR", "/ws/.multiplai/captainslog")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -268,8 +268,8 @@ class TestDerivedPaths:
         )
 
     def test_learnings_dir_env_override(self, monkeypatch, reset_paths_cache):
-        """CLAUDE_PLUGIN_OPTION_learnings_dir overrides the default."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_learnings_dir", "/custom-learn")
+        """CLAUDE_PLUGIN_OPTION_LEARNINGS_DIR overrides the default."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_LEARNINGS_DIR", "/custom-learn")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -346,7 +346,7 @@ class TestOverridePrecedence:
     ):
         """Scenario: CLAUDE_PLUGIN_OPTION overrides default memory path."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/custom/mem")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/custom/mem")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -385,7 +385,7 @@ class TestPartialPluginConfig:
     ):
         """Scenario: Memory dir defaults to home when option is unset (no workspace)."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_memory_dir", raising=False)
+        monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", raising=False)
         monkeypatch.delenv("WORKSPACE", raising=False)
         from multiplai_core.paths import Paths
 
@@ -397,7 +397,7 @@ class TestPartialPluginConfig:
     ):
         """Scenario: Plugin data defaults to workspace/.multiplai/data regardless of plugin mode."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_workspace_dir", "/ws")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_WORKSPACE_DIR", "/ws")
         monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
         from multiplai_core.paths import Paths
 
@@ -419,7 +419,7 @@ class TestPathExpansion:
     def test_tilde_expansion_in_memory_dir(self, monkeypatch, reset_paths_cache):
         """Scenario: Tilde expansion in environment variable."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "~/my-memory")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "~/my-memory")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -431,7 +431,7 @@ class TestPathExpansion:
     def test_relative_path_resolved_to_absolute(self, monkeypatch, reset_paths_cache):
         """Scenario: Relative path in environment variable is resolved to absolute."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_diary_dir", "relative/diary")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DIARY_DIR", "relative/diary")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -483,8 +483,8 @@ class TestEmptyVars:
         assert p.plugin_root() == Path.home() / ".multiplai"
 
     def test_empty_memory_dir_uses_default(self, monkeypatch, reset_paths_cache):
-        """Scenario: Empty CLAUDE_PLUGIN_OPTION_memory_dir uses default (no workspace)."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "")
+        """Scenario: Empty CLAUDE_PLUGIN_OPTION_MEMORY_DIR uses default (no workspace)."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "")
         monkeypatch.delenv("WORKSPACE", raising=False)
         from multiplai_core.paths import Paths
 
@@ -506,7 +506,7 @@ class TestEmptyVars:
         self, monkeypatch, reset_paths_cache
     ):
         """Whitespace-only memory dir env var should use default (no workspace)."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "  \t  ")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "  \t  ")
         monkeypatch.delenv("WORKSPACE", raising=False)
         from multiplai_core.paths import Paths
 
@@ -530,12 +530,12 @@ class TestCachingAndImmutability:
         self, monkeypatch, reset_paths_cache
     ):
         """Scenario: Cached resolution survives env var mutation."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/first")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/first")
         from multiplai_core.paths import get_paths, _reset_cache
 
         _reset_cache()
         first = get_paths().memory_dir()
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/second")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/second")
         second = get_paths().memory_dir()
         assert first == second, (
             f"Cache broken: first={first}, second={second} after env mutation"
@@ -729,8 +729,8 @@ class TestEdgeCases:
         """When ALL four env vars are set, each is respected independently."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/root")
         monkeypatch.setenv("CLAUDE_PLUGIN_DATA", "/data")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/memory")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_diary_dir", "/diary")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/memory")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DIARY_DIR", "/diary")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -744,7 +744,7 @@ class TestEdgeCases:
         """Derived paths must use the resolved (not default) base dirs."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/custom-root")
         monkeypatch.setenv("CLAUDE_PLUGIN_DATA", "/custom-data")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/custom-mem")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/custom-mem")
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -763,11 +763,11 @@ class TestEdgeCases:
         """After _reset_cache(), next get_paths() resolves fresh from env."""
         from multiplai_core.paths import get_paths, _reset_cache
 
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/first")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/first")
         _reset_cache()
         first = get_paths().memory_dir()
 
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_memory_dir", "/second")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/second")
         _reset_cache()
         second = get_paths().memory_dir()
 
@@ -783,7 +783,7 @@ class TestEdgeCases:
         """Without any env vars, all paths fall back to ~/.multiplai/.
 
         Workspace data only diverges from $HOME when
-        CLAUDE_PLUGIN_OPTION_workspace_dir is set.
+        CLAUDE_PLUGIN_OPTION_WORKSPACE_DIR is set.
         """
         from multiplai_core.paths import Paths
 
@@ -808,8 +808,8 @@ class TestEdgeCases:
         assert p.learnings_file("2026-01-01") == home_base / "learnings" / "2026-01-01.md"
 
     def test_empty_diary_env_var_uses_default(self, monkeypatch, reset_paths_cache):
-        """Empty CLAUDE_PLUGIN_OPTION_diary_dir falls back to ~/.multiplai/diary (no workspace)."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_diary_dir", "")
+        """Empty CLAUDE_PLUGIN_OPTION_DIARY_DIR falls back to ~/.multiplai/diary (no workspace)."""
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DIARY_DIR", "")
         monkeypatch.delenv("WORKSPACE", raising=False)
         from multiplai_core.paths import Paths
 

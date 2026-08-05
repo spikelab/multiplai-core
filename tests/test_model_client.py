@@ -609,7 +609,7 @@ class TestCreateClientFactory:
             asyncio.run(_test())
 
     def test_reads_api_key_from_env(self, monkeypatch):
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_anthropic_api_key", "sk-env-key")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY", "sk-env-key")
         with patch.dict(sys.modules, {"claude_agent_sdk": None}):
             from multiplai_core.model_client import create_client, AnthropicAPIClient
 
@@ -620,7 +620,7 @@ class TestCreateClientFactory:
             asyncio.run(_test())
 
     def test_raises_when_no_sdk_no_key(self, monkeypatch):
-        monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_anthropic_api_key", raising=False)
+        monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY", raising=False)
         with patch.dict(sys.modules, {"claude_agent_sdk": None}):
             from multiplai_core.model_client import create_client
 

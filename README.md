@@ -14,6 +14,7 @@ own drifting copy:
 | Module | Purpose |
 |---|---|
 | `multiplai_core.paths` | Path-resolver cascade: `CLAUDE_PLUGIN_OPTION_*` → workspace → `CLAUDE_PLUGIN_DATA` → `~/.multiplai`. |
+| `multiplai_core.plugin_options` | Reads plugin `userConfig` options under the name the harness exports (`CLAUDE_PLUGIN_OPTION_<KEY>`, key **uppercased**). Pass the bare option name. |
 | `multiplai_core.config` | YAML/JSON load-save, memory-file reads, atomic session-state I/O. |
 | `multiplai_core.env` | `.env` discovery/loading, `multiplai.conf` parsing, model/effort ceiling resolution, provider-qualified `ModelSpec`s. |
 | `multiplai_core.text` | `extract_json()` — pull a JSON object/array out of a model response. |

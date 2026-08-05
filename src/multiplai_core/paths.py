@@ -8,7 +8,7 @@ Resolution order:
     1. Plugin env var (``CLAUDE_PLUGIN_ROOT``, ``CLAUDE_PLUGIN_DATA``,
        ``CLAUDE_PLUGIN_OPTION_*``) — expanded and resolved to absolute.
     2. Workspace-scoped fallback rooted at ``$WORKSPACE/.multiplai/`` (or
-       ``CLAUDE_PLUGIN_OPTION_workspace_dir/.multiplai/``).
+       the ``workspace_dir`` plugin option's ``.multiplai/``).
     3. Hardcoded standalone fallback rooted at ``~/.multiplai/``.
 """
 
@@ -16,6 +16,8 @@ import dataclasses
 import os
 import threading
 from pathlib import Path
+
+from .plugin_options import option
 
 
 _lock = threading.Lock()
@@ -29,7 +31,7 @@ def _explicit_workspace_base() -> Path | None:
     """Workspace ``.multiplai/`` root *if explicitly configured*, else None.
 
     Resolution:
-      1. ``CLAUDE_PLUGIN_OPTION_workspace_dir`` if set.
+      1. The ``workspace_dir`` plugin option if set.
       2. ``WORKSPACE`` env var (set by the container launcher) — lets
          scripts invoked outside the plugin hook mechanism resolve
          workspace paths correctly.
@@ -37,7 +39,7 @@ def _explicit_workspace_base() -> Path | None:
     Returns ``None`` when neither is set, so callers can distinguish a
     configured workspace from the pure-standalone fallback.
     """
-    env = _env("CLAUDE_PLUGIN_OPTION_workspace_dir")
+    env = option("workspace_dir")
     if env:
         return Path(env).expanduser().resolve() / ".multiplai"
     workspace = _env("WORKSPACE")
@@ -60,7 +62,7 @@ def _workspace_base() -> Path:
     with its own data tree.
 
     Override any individual directory via the matching
-    ``CLAUDE_PLUGIN_OPTION_{diary,now,learnings}_dir`` env var.
+    ``{diary,now,learnings}_dir`` plugin option.
     """
     return _explicit_workspace_base() or _STANDALONE_BASE
 
@@ -158,12 +160,12 @@ class Paths:
         # at (anchoring there split runtime state away from the workspace).
         # CLAUDE_PLUGIN_DATA is kept only as a managed fallback for installs
         # with no configured workspace. Resolution:
-        #   1. CLAUDE_PLUGIN_OPTION_data_dir   (explicit override)
+        #   1. the `data_dir` option        (explicit override)
         #   2. <explicit workspace>/.multiplai/data
         #   3. CLAUDE_PLUGIN_DATA              (managed dir; no workspace)
         #   4. ~/.multiplai/data              (pure standalone)
         explicit_ws = _explicit_workspace_base()
-        opt_data = _env("CLAUDE_PLUGIN_OPTION_data_dir")
+        opt_data = option("data_dir")
         if opt_data:
             data_dir = Path(opt_data).expanduser().resolve()
         elif explicit_ws is not None:
@@ -174,24 +176,24 @@ class Paths:
             data_dir = _STANDALONE_BASE / "data"
 
         # User-data dirs share the same workspace fallback hierarchy:
-        #   1. CLAUDE_PLUGIN_OPTION_<name>_dir (specific override)
-        #   2. CLAUDE_PLUGIN_OPTION_workspace_dir/.multiplai/<name>
+        #   1. the `<name>_dir` option        (specific override)
+        #   2. the `workspace_dir` option's .multiplai/<name>
         #   3. $WORKSPACE/.multiplai/<name>
         #   4. ~/.multiplai/<name> (pure standalone)
         memory_dir = _resolve_env_path(
-            _env("CLAUDE_PLUGIN_OPTION_memory_dir"),
+            option("memory_dir"),
             workspace_base / "memory",
         )
         diary_dir = _resolve_env_path(
-            _env("CLAUDE_PLUGIN_OPTION_diary_dir"),
+            option("diary_dir"),
             workspace_base / "diary",
         )
         now_dir = _resolve_env_path(
-            _env("CLAUDE_PLUGIN_OPTION_now_dir"),
+            option("now_dir"),
             diary_dir.parent / "now",
         )
         learnings_dir = _resolve_env_path(
-            _env("CLAUDE_PLUGIN_OPTION_learnings_dir"),
+            option("learnings_dir"),
             diary_dir.parent / "learnings",
         )
 

@@ -18,6 +18,33 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`multiplai_core.plugin_options`** — one place that reads Claude Code plugin
+  `userConfig` values under the name the harness actually exports. Exports
+  `option`, `option_bool`, `option_int`, `option_float`, `option_present`,
+  `option_var` and `OPTION_PREFIX`. Callers pass the **bare option name**
+  (`option("enable_skills")`); the module uppercases it, because Claude Code
+  exports `CLAUDE_PLUGIN_OPTION_<KEY>` with `<KEY>` **uppercased**
+  ([plugins reference](https://code.claude.com/docs/en/plugins-reference.md)).
+  Malformed values log a warning and yield the caller's default — these run
+  inside hooks and must never raise.
+
+### Fixed
+
+- **Plugin options were read in the wrong case and therefore never read at
+  all.** `paths.py` (`workspace_dir`, `data_dir`, `memory_dir`, `diary_dir`,
+  `now_dir`, `learnings_dir`) and `model_client.py` (`anthropic_api_key`) all
+  looked up `CLAUDE_PLUGIN_OPTION_<lowercase key>`, which the harness never
+  sets, so every one of them silently fell through to its fallback.
+  **What you gain:** these options take effect for the first time. **What to
+  check before moving your pin:** if you were relying on the fallback path
+  (`WORKSPACE`, `CLAUDE_PLUGIN_DATA`, `~/.multiplai`) while *also* having one of
+  these options configured, the option now wins. Cascade order and defaults are
+  otherwise unchanged — only the variable name consulted changed. There is
+  deliberately **no lowercase fallback**; a regression test fails the build if a
+  lowercase read reappears anywhere in `src/`.
+
 ## [0.12.1] – 2026-08-05
 
 ### Changed
