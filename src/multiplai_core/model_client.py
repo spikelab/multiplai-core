@@ -16,6 +16,7 @@ from typing import Awaitable, Callable, Protocol, runtime_checkable
 from .agent_runner import (  # noqa: F401 — _summarize_stderr re-exported for compat
     AgentRunError,
     _summarize_stderr,
+    deny_list,
     run_agent,
 )
 from .env import CURRENT_MODEL, DEFAULT_PROVIDER, ModelSpec, parse_model_spec
@@ -86,15 +87,10 @@ def _env_float(name: str, default: float) -> float:
 
 
 _SDK_CALL_TIMEOUT_S = _env_float("MULTIPLAI_SDK_CALL_TIMEOUT_S", 600.0)
-_DISALLOWED_TOOLS = [
-    # mutation / execution
-    "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
-    "Task", "Agent", "AskUserQuestion", "SlashCommand", "ExitPlanMode",
-    # read / network / meta — closes the prompt-injection exfiltration chain
-    # (untrusted input steering an auto-approved Read → WebFetch of a secret)
-    "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch",
-    "Skill",
-]
+# This client opens no tools, so the deny-list is the whole tool universe.
+# Derived, not duplicated: agent_runner.TOOL_UNIVERSE is the single home for
+# the list (it has to be, since run_agent now defaults to it).
+_DISALLOWED_TOOLS = deny_list(None)
 _NO_TOOLS_SUFFIX = (
     "\n\nAll information you need is already provided in this message. Do NOT "
     "use any tools, skills, subagents, or tool search, and do NOT ask "

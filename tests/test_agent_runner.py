@@ -11,10 +11,12 @@ import pytest
 
 from multiplai_core.agent_runner import (
     MAX_PROMPT_BYTES,
+    TOOL_UNIVERSE,
     AgentRunError,
     AgentRunResult,
     AgentRunTimeout,
     AgentUsage,
+    deny_list,
     run_agent,
 )
 
@@ -222,18 +224,102 @@ class TestOptionsIsolation:
             _run(run_agent("hi", effort="low"))
         assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["effort"] == "low"
 
-    def test_disallowed_tools_omitted_by_default_and_forwarded_when_set(self):
+    def test_default_denies_the_whole_tool_universe(self):
+        """No tool args at all must mean no tools — the fail-closed default."""
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("hi"))
-            assert (
-                "disallowed_tools"
-                not in mock_sdk.ClaudeAgentOptions.call_args.kwargs
-            )
+        denied = mock_sdk.ClaudeAgentOptions.call_args.kwargs["disallowed_tools"]
+        assert denied == list(TOOL_UNIVERSE)
+        for tool in ("Bash", "Read", "Write", "WebFetch", "ToolSearch"):
+            assert tool in denied
+
+    def test_allow_list_denies_the_complement(self):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", allowed_tools=["WebFetch"]))
+        denied = mock_sdk.ClaudeAgentOptions.call_args.kwargs["disallowed_tools"]
+        assert "WebFetch" not in denied
+        for tool in ("Bash", "Read", "Write", "WebSearch"):
+            assert tool in denied
+
+    def test_explicit_empty_deny_list_is_an_opt_out(self):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", disallowed_tools=[]))
+        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs[
+            "disallowed_tools"
+        ] == []
+
+    def test_explicit_deny_list_forwarded_verbatim(self):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("hi", disallowed_tools=["Bash"]))
-            assert mock_sdk.ClaudeAgentOptions.call_args.kwargs[
-                "disallowed_tools"
-            ] == ["Bash"]
+        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs[
+            "disallowed_tools"
+        ] == ["Bash"]
+
+    def test_deny_list_helper_complements(self):
+        assert deny_list(None) == list(TOOL_UNIVERSE)
+        assert deny_list([]) == list(TOOL_UNIVERSE)
+        assert "Read" not in deny_list(["Read"])
+        assert deny_list(["NotATool"]) == list(TOOL_UNIVERSE)
+
+    def test_base_tool_set_is_the_allow_list(self):
+        """`tools` is the real boundary: it sets which tools exist at all.
+
+        Unlike the deny-list it needs no enumeration to be correct, so this is
+        what holds when TOOL_UNIVERSE goes stale against a newer CLI.
+        """
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", allowed_tools=["WebFetch"]))
+        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["tools"] == [
+            "WebFetch"
+        ]
+
+    def test_no_tools_call_gets_an_empty_base_set(self):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi"))
+        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["tools"] == []
+
+    def test_explicit_deny_list_opt_out_still_bounds_the_base_set(self):
+        """`disallowed_tools=[]` opts out of layer two, never out of layer one.
+
+        Otherwise the documented escape hatch would quietly restore the full
+        built-in tool set — the exact fail-open this change exists to remove.
+        """
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", disallowed_tools=[]))
+        kwargs = mock_sdk.ClaudeAgentOptions.call_args.kwargs
+        assert kwargs["disallowed_tools"] == []
+        assert kwargs["tools"] == []
+
+    def test_universe_names_the_tools_that_carry_the_risk(self):
+        """Pin specific names, not the list against itself.
+
+        A test comparing the deny-list to TOOL_UNIVERSE passes no matter what
+        is missing from it. These are the capabilities the fix exists to
+        remove — execution, egress, and deferred execution — so removing any
+        of them should break a test.
+        """
+        for tool in (
+            "Bash", "REPL",                      # execution
+            "WebFetch", "Artifact", "SendMessage",  # egress
+            "TaskCreate", "CronCreate", "Workflow",  # deferred execution
+            "Read", "Write", "Edit",             # local files
+            "ToolSearch", "Skill",               # loading tools back in
+        ):
+            assert tool in TOOL_UNIVERSE, tool
+
+    def test_unknown_tool_name_is_logged(self, caplog):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with caplog.at_level(logging.WARNING):
+                _run(run_agent("hi", allowed_tools=["Websearch"]))
+        assert "Websearch" in caplog.text
 
     def test_system_prompt_and_model_forwarded(self):
         mock_sdk = _make_mock_sdk()
@@ -459,6 +545,21 @@ class TestPromptFileFallback:
         assert mock_sdk.query.call_args.kwargs["prompt"] == big_prompt
         opts_kwargs = mock_sdk.ClaudeAgentOptions.call_args.kwargs
         assert "Read" not in opts_kwargs["allowed_tools"]
+
+    def test_fallback_read_survives_the_default_deny_list(self):
+        """The deny-list is computed after the fallback opens Read.
+
+        Otherwise the fail-closed default would deny the very tool the
+        big-prompt workaround depends on, and every large call would break.
+        """
+        big_prompt = "x" * (MAX_PROMPT_BYTES + 1)
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent(big_prompt))
+        opts_kwargs = mock_sdk.ClaudeAgentOptions.call_args.kwargs
+        assert "Read" in opts_kwargs["allowed_tools"]
+        assert "Read" not in opts_kwargs["disallowed_tools"]
+        assert "Bash" in opts_kwargs["disallowed_tools"]
 
     def test_small_prompt_untouched(self):
         mock_sdk = _make_mock_sdk()

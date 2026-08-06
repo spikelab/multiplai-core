@@ -32,6 +32,47 @@ not backfilled; their contents are recoverable from `git log`.
   **This changes behaviour for every caller that omits `model=`, so it must ship
   in a `0.x.0` minor — never a patch.** See README → "Versioning and what a bump
   means".
+- **`run_agent` is now fail-closed on tools.** `disallowed_tools=None` (the
+  default) used to forward *nothing*, so under `permission_mode=
+  "bypassPermissions"` every caller that did not pass a deny-list ran with the
+  full tool set present and auto-approved — `Bash`, `Read`, `Write`, `WebFetch`
+  included. Callers that feed untrusted text (fetched web pages, emails, logs)
+  through `run_agent` were one injected instruction away from an auto-approved
+  exfiltration chain.
+
+  `allowed_tools` is now forwarded as the SDK's **`tools`** — the *base set* of
+  tools that exist at all, which replaces the built-in set rather than adding
+  to it — and paired with `disallowed_tools=deny_list(allowed_tools)` as a
+  second layer. So a call naming no tools now runs with no tools, and a call
+  naming `WebFetch` gets `WebFetch` and nothing else.
+
+  **What you must change:** nothing, if you already pass `allowed_tools` for
+  every tool you use — that is the supported way to open a tool and it keeps
+  working. If you relied on the old behavior (tools available without naming
+  them), name them in `allowed_tools`. `disallowed_tools=[]` opts out of the
+  deny-list layer only; the base set still bounds the run to `allowed_tools`.
+  There is deliberately no way to ask for the full built-in tool set back.
+
+### Added
+
+- **`multiplai_core.deny_list(allowed_tools)` and `TOOL_UNIVERSE`** — the
+  complement helper and the tool list behind the deny-list layer, exported so
+  consumers can compute the same list instead of copying it.
+  `model_client._DISALLOWED_TOOLS` is now derived from it (`deny_list(None)`),
+  so there is exactly one copy of the list in the repo.
+
+  `TOOL_UNIVERSE` is a **tuple** (it is shared mutable state otherwise) and is
+  **best-effort, not a safety floor** — `tools` is what makes the boundary a
+  guarantee. It was re-derived on 2026-08-06 from the CLI's own generated
+  schema list and grew from 18 names to 50, adding the egress tools
+  (`Artifact`, `SendMessage`, `PushNotification`, `RemoteTrigger`), the
+  deferred-execution tools (`Task*`, `Cron*`, `Workflow`, `ScheduleWakeup`,
+  `Monitor`), `REPL`, `MultiEdit`, `NotebookRead`, `TodoWrite` and the MCP
+  resource tools. The command to re-derive it is in the source comment.
+
+- **A warning when `allowed_tools` names a tool outside `TOOL_UNIVERSE`** —
+  either a typo (previously silent: the tool simply never appeared and the
+  model improvised around it) or a tool newer than the list.
 
 ## [0.13.0] – 2026-08-05
 
