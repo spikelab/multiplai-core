@@ -29,6 +29,10 @@ not backfilled; their contents are recoverable from `git log`.
   you relied on the old default, set `MULTIPLAI_MODEL=claude-sonnet-4-6` or pass
   `model=` at the call site.
 
+  **This changes behaviour for every caller that omits `model=`, so it must ship
+  in a `0.x.0` minor — never a patch.** See README → "Versioning and what a bump
+  means".
+
 ## [0.13.0] – 2026-08-05
 
 ### Added

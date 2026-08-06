@@ -503,8 +503,12 @@ class TestAnthropicAPIClient:
 
     def test_default_model_sent_to_api(self):
         """WHEN query() is called without explicit model kwarg
-        THEN the request uses the current sonnet as default."""
-        from multiplai_core.env import CURRENT_MODEL
+        THEN the request uses DEFAULT_MODEL.
+
+        Asserting the literal ID here would only duplicate what
+        ``env.CURRENT_MODEL`` already says — and a stale duplicate is how the
+        default drifted a generation behind that table in the first place.
+        """
         from multiplai_core.model_client import AnthropicAPIClient, DEFAULT_MODEL
 
         mock_text_block = MagicMock()
@@ -526,7 +530,6 @@ class TestAnthropicAPIClient:
                 await client.query("sys", [])
                 call_kwargs = mock_async_client.messages.create.call_args
                 assert call_kwargs.kwargs["model"] == DEFAULT_MODEL
-                assert call_kwargs.kwargs["model"] == CURRENT_MODEL["sonnet"]
 
             asyncio.run(_test())
 
