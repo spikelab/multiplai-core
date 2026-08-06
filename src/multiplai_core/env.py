@@ -175,7 +175,7 @@ def resolve_model(requested: str, ceiling: str | None = None) -> str:
     Ceiling comes from *ceiling* or ``MULTIPLAI_MODEL`` (default sonnet).
     """
     if ceiling is None:
-        ceiling = os.environ.get("MULTIPLAI_MODEL", "claude-sonnet-4-6")
+        ceiling = os.environ.get("MULTIPLAI_MODEL", CURRENT_MODEL["sonnet"])
     if _tier(requested) > _tier(ceiling):
         log.info("Model ceiling: %s → %s", requested, ceiling)
         return ceiling

@@ -503,7 +503,8 @@ class TestAnthropicAPIClient:
 
     def test_default_model_sent_to_api(self):
         """WHEN query() is called without explicit model kwarg
-        THEN the request uses 'claude-sonnet-4-6' as default."""
+        THEN the request uses the current sonnet as default."""
+        from multiplai_core.env import CURRENT_MODEL
         from multiplai_core.model_client import AnthropicAPIClient, DEFAULT_MODEL
 
         mock_text_block = MagicMock()
@@ -525,7 +526,7 @@ class TestAnthropicAPIClient:
                 await client.query("sys", [])
                 call_kwargs = mock_async_client.messages.create.call_args
                 assert call_kwargs.kwargs["model"] == DEFAULT_MODEL
-                assert call_kwargs.kwargs["model"] == "claude-sonnet-4-6"
+                assert call_kwargs.kwargs["model"] == CURRENT_MODEL["sonnet"]
 
             asyncio.run(_test())
 
