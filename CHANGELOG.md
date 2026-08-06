@@ -32,6 +32,29 @@ not backfilled; their contents are recoverable from `git log`.
   **This changes behaviour for every caller that omits `model=`, so it must ship
   in a `0.x.0` minor — never a patch.** See README → "Versioning and what a bump
   means".
+- **`run_agent` is now fail-closed on tools.** `disallowed_tools=None` (the
+  default) used to forward *nothing*, so under `permission_mode=
+  "bypassPermissions"` every caller that did not pass a deny-list ran with the
+  full tool set present and auto-approved — `Bash`, `Read`, `Write`, `WebFetch`
+  included. Callers that feed untrusted text (fetched web pages, emails, logs)
+  through `run_agent` were one injected instruction away from an auto-approved
+  exfiltration chain. The default is now `deny_list(allowed_tools)`: everything
+  the allow-list did not explicitly open is denied.
+
+  **What you must change:** nothing, if you already pass `allowed_tools` for
+  every tool you use — that is the supported way to open a tool and it keeps
+  working. If you relied on the old behavior (tools available without naming
+  them), name them in `allowed_tools`, or pass `disallowed_tools=[]` to opt out
+  of the deny-list deliberately. An explicitly passed `disallowed_tools`
+  (including `[]`) is still forwarded verbatim.
+
+### Added
+
+- **`multiplai_core.deny_list(allowed_tools)` and `TOOL_UNIVERSE`** — the
+  complement helper and the authoritative tool list behind the new default, now
+  exported so consumers can compute or extend the same deny-list instead of
+  copying it. `model_client._DISALLOWED_TOOLS` is now derived from it
+  (`deny_list(None)`), so there is exactly one copy of the list in the repo.
 
 ## [0.13.0] – 2026-08-05
 

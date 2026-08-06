@@ -77,6 +77,36 @@ _STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
 _HEARTBEAT_ENV = "MULTIPLAI_AGENT_HEARTBEAT_S"
 _HEARTBEAT_DEFAULT_S = 60.0
 
+# Every tool a run could otherwise reach. Under permission_mode
+# ="bypassPermissions" ``allowed_tools`` is only an allow-list: it adds nothing
+# to the deny side, so every default tool stays present AND auto-approved.
+# Removing a tool takes ``disallowed_tools``, so this list is the safety floor —
+# callers routinely feed UNTRUSTED text (fetched web pages, emails, logs)
+# through run_agent, and an injected instruction in that text would otherwise
+# get an auto-approved Read → WebFetch to exfiltrate local secrets, or a Bash
+# to do worse. ToolSearch and Skill are denied too, or a deferred tool could be
+# loaded back in. This is the authoritative copy; model_client derives from it.
+TOOL_UNIVERSE = [
+    # mutation / execution
+    "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
+    "Task", "Agent", "AskUserQuestion", "SlashCommand", "ExitPlanMode",
+    # read / network / meta — closes the prompt-injection exfiltration chain
+    # (untrusted input steering an auto-approved Read → WebFetch of a secret)
+    "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch",
+    "Skill",
+]
+
+
+def deny_list(allowed_tools: list[str] | None) -> list[str]:
+    """Return the deny-list complement of ``allowed_tools``.
+
+    With no allowed tools this is the full ``TOOL_UNIVERSE`` — the fail-closed
+    default. With an allow-list it is everything else, so opening ``WebFetch``
+    opens exactly ``WebFetch`` and nothing that rides along with it.
+    """
+    opened = set(allowed_tools or ())
+    return [t for t in TOOL_UNIVERSE if t not in opened]
+
 
 def _env_float(name: str, default: float) -> float:
     """Parse a float env var, falling back to the default on garbage.
@@ -281,9 +311,12 @@ async def run_agent(
             ``prompt_file_fallback`` is on, it is written to a temp file and
             the agent is directed to Read it (E2BIG workaround, no data loss).
         allowed_tools: Tool allow-list; ``None``/``[]`` means a no-tools text
-            call. Note allowed_tools is only an allow-list under
-            bypassPermissions — pass ``disallowed_tools`` to actually remove
-            tools (see model_client._DISALLOWED_TOOLS for the rationale).
+            call. Under bypassPermissions this alone removes nothing, so it is
+            paired with a deny-list — see ``disallowed_tools``.
+        disallowed_tools: Tools to remove. Defaults to ``deny_list(
+            allowed_tools)``: everything in ``TOOL_UNIVERSE`` that the
+            allow-list did not open (fail-closed). Pass a list to override,
+            including ``[]`` to deliberately deny nothing.
         effort: Reasoning effort; forwarded to the SDK only when set, so old
             SDK versions without the option keep working.
         env: Extra env vars merged over the isolation baseline.
@@ -390,8 +423,15 @@ async def run_agent(
                 },
                 stderr=_on_stderr,
             )
-            if disallowed_tools is not None:
-                opts_kwargs["disallowed_tools"] = list(disallowed_tools)
+            # Fail-closed: no explicit deny-list means deny everything the
+            # allow-list did not open. Computed from effective_tools, not the
+            # raw argument, so the big-prompt tempfile fallback's added "Read"
+            # stays reachable. An explicitly passed list (including []) is
+            # forwarded verbatim — a caller can still opt out deliberately.
+            opts_kwargs["disallowed_tools"] = (
+                deny_list(effective_tools) if disallowed_tools is None
+                else list(disallowed_tools)
+            )
             if effort is not None:
                 opts_kwargs["effort"] = effort
             options = sdk.ClaudeAgentOptions(**opts_kwargs)
