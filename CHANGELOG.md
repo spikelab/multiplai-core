@@ -18,6 +18,21 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Changed
+
+- **`model_client.DEFAULT_MODEL` and the default `MULTIPLAI_MODEL` ceiling now
+  follow `env.CURRENT_MODEL["sonnet"]`** instead of the literal
+  `claude-sonnet-4-6`. `CURRENT_MODEL` had already moved to `claude-sonnet-5`;
+  these two defaults had not, so every caller that omitted `model=` — the whole
+  extraction/dream/catalogs path — silently ran a generation behind and paid the
+  older model's rate. Callers that pass an explicit `model=` are unaffected. If
+  you relied on the old default, set `MULTIPLAI_MODEL=claude-sonnet-4-6` or pass
+  `model=` at the call site.
+
+  **This changes behaviour for every caller that omits `model=`, so it must ship
+  in a `0.x.0` minor — never a patch.** See README → "Versioning and what a bump
+  means".
+
 ## [0.13.0] – 2026-08-05
 
 ### Added

@@ -41,7 +41,12 @@ class TestResolveModel:
         assert resolve_model("claude-opus-4") == "claude-haiku-4-5"
 
     def test_default_ceiling_sonnet(self):
-        assert resolve_model("claude-opus-4") == "claude-sonnet-4-6"
+        # The invariant is "the ceiling is the CURRENT sonnet", not a literal
+        # ID — a dated ID pinned here is how the ceiling drifted a generation
+        # behind CURRENT_MODEL in the first place.
+        from multiplai_core.env import CURRENT_MODEL
+
+        assert resolve_model("claude-opus-4") == CURRENT_MODEL["sonnet"]
 
 
 class TestResolveEffort:

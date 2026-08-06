@@ -18,12 +18,14 @@ from .agent_runner import (  # noqa: F401 — _summarize_stderr re-exported for 
     _summarize_stderr,
     run_agent,
 )
-from .env import DEFAULT_PROVIDER, ModelSpec, parse_model_spec
+from .env import CURRENT_MODEL, DEFAULT_PROVIDER, ModelSpec, parse_model_spec
 from .plugin_options import option
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# Kept aligned with env.CURRENT_MODEL["sonnet"] — that table is the one place a
+# dated ID lives, and this default drifted a generation behind it.
+DEFAULT_MODEL = CURRENT_MODEL["sonnet"]
 DEFAULT_MAX_TOKENS = 4096
 
 # The bundled CLI intermittently exits 1 (verified recurring). One bounded
