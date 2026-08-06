@@ -77,24 +77,62 @@ _STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
 _HEARTBEAT_ENV = "MULTIPLAI_AGENT_HEARTBEAT_S"
 _HEARTBEAT_DEFAULT_S = 60.0
 
-# Every tool a run could otherwise reach. Under permission_mode
-# ="bypassPermissions" ``allowed_tools`` is only an allow-list: it adds nothing
-# to the deny side, so every default tool stays present AND auto-approved.
-# Removing a tool takes ``disallowed_tools``, so this list is the safety floor —
-# callers routinely feed UNTRUSTED text (fetched web pages, emails, logs)
-# through run_agent, and an injected instruction in that text would otherwise
-# get an auto-approved Read → WebFetch to exfiltrate local secrets, or a Bash
-# to do worse. ToolSearch and Skill are denied too, or a deferred tool could be
-# loaded back in. This is the authoritative copy; model_client derives from it.
-TOOL_UNIVERSE = [
+# Under permission_mode="bypassPermissions" ``allowed_tools`` is only an
+# allow-list: it adds nothing to the deny side, so every default tool stays
+# present AND auto-approved. Callers routinely feed UNTRUSTED text (fetched web
+# pages, emails, logs) through run_agent, and an injected instruction in that
+# text would otherwise get an auto-approved Read → WebFetch to exfiltrate local
+# secrets, or a Bash to do worse.
+#
+# There are two ways to shut that off, and this module uses BOTH:
+#
+# 1. ``tools`` (the CLI's ``--tools``) sets the *base set* — the tools that
+#    exist at all. It replaces the built-in set rather than adding to it, so
+#    ``tools=[]`` is "no tools" with no list to keep up to date. This is the
+#    real guarantee, and it is why TOOL_UNIVERSE going stale is no longer a
+#    security question.
+# 2. ``disallowed_tools`` — the complement of the allow-list, below. Belt and
+#    braces: it is what still holds if a CLI ever ignores ``--tools``, and it
+#    is the only lever on a tool that is somehow present anyway.
+#
+# TOOL_UNIVERSE is therefore a best-effort enumeration, not a safety floor.
+# Treat it as such: adding a name makes the second layer tighter, forgetting
+# one no longer opens a hole. Derived 2026-08-06 from the CLI's own generated
+# schema list (``@anthropic-ai/claude-code/sdk-tools.d.ts``, CLI 2.1.221) plus
+# the harness-only names that file does not carry (Skill, ToolSearch,
+# SlashCommand, BashOutput, KillShell, Task). Re-derive it on a CLI bump:
+#
+#   grep -oE '^export (type|interface) [A-Za-z]+Input' sdk-tools.d.ts \
+#     | sed 's/.* //;s/Input$//' | sort -u
+#
+# (That file names schemas, not tools, so FileRead/FileEdit/FileWrite appear
+# there as the schemas behind Read/Edit/Write.)
+TOOL_UNIVERSE = (
     # mutation / execution
     "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
-    "Task", "Agent", "AskUserQuestion", "SlashCommand", "ExitPlanMode",
+    "MultiEdit", "REPL", "Task", "Agent", "AskUserQuestion", "SlashCommand",
+    "ExitPlanMode", "EnterPlanMode", "TodoWrite",
     # read / network / meta — closes the prompt-injection exfiltration chain
     # (untrusted input steering an auto-approved Read → WebFetch of a secret)
-    "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch",
-    "Skill",
-]
+    "Read", "NotebookRead", "Grep", "Glob", "LS", "WebFetch", "WebSearch",
+    "ToolSearch", "Skill",
+    # egress: each of these can carry text off the machine, which makes them
+    # exfiltration channels every bit as much as WebFetch
+    "Artifact", "SendMessage", "PushNotification", "RemoteTrigger",
+    "SendFeedback",
+    # background / scheduled execution — a denied Bash is worth little if the
+    # run can queue work that gets one later
+    "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop",
+    "TaskOutput", "Workflow", "ScheduleWakeup", "Monitor",
+    "CronCreate", "CronDelete", "CronList",
+    # MCP: separately contained by strict-mcp-config + setting_sources=[] (see
+    # the options below), listed so the deny-list does not depend on that.
+    "Mcp", "ListMcpResources", "ReadMcpResource", "ReadMcpResourceDir",
+    "RefreshMcpTools",
+    # remaining harness surface
+    "EnterWorktree", "ExitWorktree", "ReportFindings", "ProposeSkills",
+    "Projects", "ClaudeDesign", "ShowOnboardingRolePicker",
+)
 
 
 def deny_list(allowed_tools: list[str] | None) -> list[str]:
@@ -103,6 +141,10 @@ def deny_list(allowed_tools: list[str] | None) -> list[str]:
     With no allowed tools this is the full ``TOOL_UNIVERSE`` — the fail-closed
     default. With an allow-list it is everything else, so opening ``WebFetch``
     opens exactly ``WebFetch`` and nothing that rides along with it.
+
+    This is the *second* of the two layers described above. The first —
+    ``tools``, the base set — is what makes the guarantee independent of this
+    list being complete.
     """
     opened = set(allowed_tools or ())
     return [t for t in TOOL_UNIVERSE if t not in opened]
@@ -312,11 +354,16 @@ async def run_agent(
             the agent is directed to Read it (E2BIG workaround, no data loss).
         allowed_tools: Tool allow-list; ``None``/``[]`` means a no-tools text
             call. Under bypassPermissions this alone removes nothing, so it is
-            paired with a deny-list — see ``disallowed_tools``.
-        disallowed_tools: Tools to remove. Defaults to ``deny_list(
-            allowed_tools)``: everything in ``TOOL_UNIVERSE`` that the
-            allow-list did not open (fail-closed). Pass a list to override,
-            including ``[]`` to deliberately deny nothing.
+            also forwarded as the SDK's ``tools`` (the *base set* of tools that
+            exist at all) and paired with a deny-list — see
+            ``disallowed_tools``. Names outside ``TOOL_UNIVERSE`` are passed
+            through but logged as a warning.
+        disallowed_tools: Tools to remove, as a second layer under the base
+            set. Defaults to ``deny_list(allowed_tools)``: everything in
+            ``TOOL_UNIVERSE`` that the allow-list did not open. Pass a list to
+            override, including ``[]`` to deliberately deny nothing — note this
+            opts out of the *second* layer only; ``tools`` still bounds the run
+            to the allow-list.
         effort: Reasoning effort; forwarded to the SDK only when set, so old
             SDK versions without the option keep working.
         env: Extra env vars merged over the isolation baseline.
@@ -377,6 +424,20 @@ async def run_agent(
         max_turns = max(max_turns, _PROMPT_FILE_MIN_TURNS)
         run_env["CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"] = _PROMPT_FILE_READ_TOKENS
 
+    # A name outside TOOL_UNIVERSE is either a tool added since the list was
+    # last derived, or a typo. Both are worth a line in the log: the typo case
+    # otherwise fails silently — the tool is never available and the model
+    # improvises around a capability it was told it has. Warn, don't raise;
+    # TOOL_UNIVERSE is best-effort (see its comment) and must not be able to
+    # block a legitimate call.
+    unknown = [t for t in effective_tools if t not in TOOL_UNIVERSE]
+    if unknown:
+        logger.warning(
+            "run_agent [%s]: allowed_tools names not in TOOL_UNIVERSE: %s — "
+            "typo, or a tool added since the list was derived",
+            label, ", ".join(sorted(unknown)),
+        )
+
     logger.info(
         "START run_agent [%s] prompt=%d bytes tools=%s max_turns=%d model=%s "
         "timeout=%.0fs attempts=%d",
@@ -409,6 +470,12 @@ async def run_agent(
 
             opts_kwargs: dict = dict(
                 allowed_tools=effective_tools,
+                # The base set of tools that exist at all, NOT an addition to
+                # the built-in set — this is the lever that makes the tool
+                # boundary a guarantee instead of a list someone maintains.
+                # `[]` becomes `--tools ""`, i.e. no tools whatsoever, which
+                # is the right default for the text-only calls that dominate.
+                tools=list(effective_tools),
                 max_turns=max_turns,
                 permission_mode="bypassPermissions",
                 system_prompt=system_prompt,
