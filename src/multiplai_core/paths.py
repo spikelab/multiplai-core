@@ -10,8 +10,12 @@ Resolution order:
     2. Workspace-scoped fallback rooted at ``$WORKSPACE/.multiplai/`` (or
        the ``workspace_dir`` plugin option's ``.multiplai/``).
     3. The nearest ancestor ``.multiplai/`` marker directory, walking up
-       from ``$CLAUDE_PROJECT_DIR`` or the cwd.
+       from an absolute ``$CLAUDE_PROJECT_DIR``. **Never from the cwd**, and
+       never ``$HOME`` itself.
     4. Hardcoded standalone fallback rooted at ``~/.multiplai/``.
+
+``data_dir`` ranks ``CLAUDE_PLUGIN_DATA`` *above* step 3 — see
+:meth:`Paths.resolve` for why that one exception exists.
 
 ``memory_dir`` is additionally the first of an ordered list of **memory
 banks** — see :mod:`multiplai_core.banks` and :meth:`Paths.memory_banks`.
@@ -59,15 +63,28 @@ def _discovered_workspace_base() -> Path | None:
     sub-projects that all belong to one workspace (the reason
     :func:`_workspace_base` refuses cwd as a fallback), and a cwd-rooted walk
     would additionally make resolution depend on where a test or a script
-    happened to be run from. No ``CLAUDE_PROJECT_DIR`` means no discovery.
+    happened to be run from. No ``CLAUDE_PROJECT_DIR`` means no discovery —
+    and a *relative* ``CLAUDE_PROJECT_DIR`` means no discovery either, because
+    ``Path(".").resolve()`` re-introduces the cwd through the back door and
+    would resolve, during development, against whatever directory a test
+    happened to run in.
+
+    ``$HOME`` itself does not satisfy the marker test. ``~/.multiplai`` is the
+    standalone fallback layout, not a discovered workspace: treating it as one
+    would silently relocate ``data_dir`` for every plain install whose session
+    happens to be rooted under the home directory, which is the common case
+    rather than an edge case.
 
     Deliberately ranked *below* both explicit signals and above the
     standalone fallback: an explicit ``workspace_dir`` or ``WORKSPACE`` still
-    wins, so nothing that works today changes. Only the case that previously
-    fell through to ``~/.multiplai`` is affected.
+    wins. It is also ranked *below* ``CLAUDE_PLUGIN_DATA`` for ``data_dir``
+    specifically — see :meth:`Paths.resolve` — so an install with a managed
+    data dir keeps it.
     """
     start = _env("CLAUDE_PROJECT_DIR")
     if not start:
+        return None
+    if not Path(start).expanduser().is_absolute():
         return None
     try:
         current = Path(start).expanduser().resolve()
@@ -75,31 +92,32 @@ def _discovered_workspace_base() -> Path | None:
         return None
     home = Path.home()
     for _ in range(_MARKER_MAX_DEPTH):
+        if current == home:
+            break
         marker = current / ".multiplai"
         try:
             if marker.is_dir():
                 return marker
         except OSError:
             return None
-        if current == current.parent or current == home:
+        if current == current.parent:
             break
         current = current.parent
     return None
 
 
-def _explicit_workspace_base() -> Path | None:
-    """Workspace ``.multiplai/`` root *if discoverable*, else None.
+def _configured_workspace_base() -> Path | None:
+    """Workspace ``.multiplai/`` root from an **explicit** setting, else None.
 
     Resolution:
       1. The ``workspace_dir`` plugin option if set.
       2. ``WORKSPACE`` env var (set by the container launcher) — lets
          scripts invoked outside the plugin hook mechanism resolve
          workspace paths correctly.
-      3. The nearest ancestor ``.multiplai/`` marker directory
-         (:func:`_discovered_workspace_base`).
 
-    Returns ``None`` when none of the three answer, so callers can
-    distinguish a located workspace from the pure-standalone fallback.
+    Kept separate from :func:`_discovered_workspace_base` because the two rank
+    differently against ``CLAUDE_PLUGIN_DATA``: somebody *said* where the
+    workspace is, versus we *found* something that looks like one.
     """
     env = option("workspace_dir")
     if env:
@@ -107,7 +125,19 @@ def _explicit_workspace_base() -> Path | None:
     workspace = _env("WORKSPACE")
     if workspace:
         return Path(workspace).expanduser().resolve() / ".multiplai"
-    return _discovered_workspace_base()
+    return None
+
+
+def _explicit_workspace_base() -> Path | None:
+    """Workspace ``.multiplai/`` root *if locatable at all*, else None.
+
+    :func:`_configured_workspace_base` first, then the nearest ancestor
+    ``.multiplai/`` marker directory (:func:`_discovered_workspace_base`).
+
+    Returns ``None`` when none of the three answer, so callers can
+    distinguish a located workspace from the pure-standalone fallback.
+    """
+    return _configured_workspace_base() or _discovered_workspace_base()
 
 
 def _workspace_base() -> Path:
@@ -222,18 +252,32 @@ class Paths:
         # at (anchoring there split runtime state away from the workspace).
         # CLAUDE_PLUGIN_DATA is kept only as a managed fallback for installs
         # with no configured workspace. Resolution:
-        #   1. the `data_dir` option        (explicit override)
-        #   2. <explicit workspace>/.multiplai/data
-        #   3. CLAUDE_PLUGIN_DATA              (managed dir; no workspace)
-        #   4. ~/.multiplai/data              (pure standalone)
-        explicit_ws = _explicit_workspace_base()
+        #   1. the `data_dir` option           (explicit override)
+        #   2. <configured workspace>/.multiplai/data
+        #   3. CLAUDE_PLUGIN_DATA              (managed dir; no said workspace)
+        #   4. <discovered workspace>/.multiplai/data
+        #   5. ~/.multiplai/data               (pure standalone)
+        #
+        # Steps 3 and 4 are in that order deliberately, and it is the one
+        # ranking in this function that is not simply "most explicit first".
+        # A *discovered* workspace is an inference from a marker directory; a
+        # managed data dir is a fact about the install. Ranking discovery
+        # above it would move data_dir — and with it venv_dir, catalogs_dir,
+        # logs and dream state — for every plugin install that has a managed
+        # data dir and no WORKSPACE, orphaning an already-bootstrapped venv
+        # and catalog set. Discovery exists to rescue the case that fell
+        # through to ~/.multiplai, and that case is step 5, not step 3.
+        configured_ws = _configured_workspace_base()
+        discovered_ws = _discovered_workspace_base()
         opt_data = option("data_dir")
         if opt_data:
             data_dir = Path(opt_data).expanduser().resolve()
-        elif explicit_ws is not None:
-            data_dir = explicit_ws / "data"
+        elif configured_ws is not None:
+            data_dir = configured_ws / "data"
         elif env_data:
             data_dir = Path(env_data).expanduser().resolve()
+        elif discovered_ws is not None:
+            data_dir = discovered_ws / "data"
         else:
             data_dir = _STANDALONE_BASE / "data"
 

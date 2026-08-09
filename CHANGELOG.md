@@ -24,8 +24,13 @@ not backfilled; their contents are recoverable from `git log`.
   ordered list of memory corpora. New exports: `MemoryBank`, `load_banks`,
   `personal_bank`, `bank_ref`, `split_bank_ref`, `parse_bank_ref`,
   `PERSONAL_BANK`, `PERSONAL_MODE`, `BANK_MODES`, `DEFAULT_SHARED_MODE`,
-  `BANKS_FILENAME`; new accessors `Paths.memory_banks()` and
+  `BANKS_FILENAME`, `is_bank_name`; new accessors `Paths.memory_banks()` and
   `Paths.memory_banks_file()`.
+
+  `is_bank_name(name)` is exported deliberately: a consumer's write floor has to
+  answer "is this ref's first segment a bank name?" with exactly the same answer
+  this module gives, and a re-declared copy of the regex is a copy that can
+  drift.
 
   **Nothing changes for a consumer that does not configure a bank.** With no
   `memory-banks.yaml`, `Paths.memory_banks()` returns exactly one bank named
@@ -45,6 +50,37 @@ not backfilled; their contents are recoverable from `git log`.
   parse and always at least `personal`, so a typo can neither add a bank nor
   break a session.
 
+  Three enforcement rules are worth knowing before you configure one, because
+  each is a refusal you might otherwise read as a bug:
+
+  - **`name: personal` relocates the corpus; it does not declare one.** The
+    entry is honoured only if `path:` names a directory that already exists and
+    no shared bank covers, and it can never change the bank's `mode`, `remote`
+    or trust flags. Anything else keeps the configured `memory_dir`. The reason
+    is that `is_shared` is `False` for this bank *by name alone*, so a config
+    line that relocated it freely would point the trusted corpus at somebody
+    else's repo — injected unfenced, written directly.
+  - **No two banks may overlap**, in either direction, including two banks that
+    resolve to the same directory by different routes. The check runs once over
+    the fully-resolved list *after* parsing, so its answer does not depend on
+    the order entries were written in, and every path is `resolve()`d so a
+    symlinked `.multiplai/` cannot hide a nested bank. Where a directory is
+    claimed by both a trusted and an untrusted bank, the untrusted bank wins.
+  - **`MemoryBank` refuses to exist in a self-contradicting state.**
+    `MemoryBank(name="team", mode="rw")` and
+    `dataclasses.replace(shared, name="personal")` now raise `ValueError`, and
+    `MemoryBank.file()` raises unless given a bare filename (it used to accept
+    an absolute path, which `Path.__truediv__` treats as a total override).
+    `load_banks` remains the only trusted factory and cannot produce any of
+    these; the guard is for hand-built banks in consumer code.
+
+  One behavioural note on refs: `split_bank_ref` lower-cases the bank segment
+  (so `Team/dev.md` reaches a bank configured as `team` instead of resolving
+  nowhere), and a ref whose bank segment is *empty* — `"/dev.md"`, `"//dev.md"`
+  — now names **no** bank rather than `personal`. If you relied on `"/dev.md"`
+  meaning `dev.md`, it is now a refusal; that spelling bypassed the
+  bare-basename check consumers apply to `"dev.md"` itself.
+
 ### Changed
 
 - **Workspace discovery now walks up to the nearest `.multiplai/` marker.**
@@ -55,13 +91,31 @@ not backfilled; their contents are recoverable from `git log`.
   a launcher exported `WORKSPACE` — a plugin installed on plain Claude Code
   inside an existing workspace previously wrote to `~/.multiplai` instead.
 
-  **Explicit configuration still wins**, so nothing that resolves today changes:
-  `workspace_dir` and `WORKSPACE` are both checked first, and only the case that
-  previously fell through to `~/.multiplai` is affected. The walk is bounded
-  (12 levels, stops at `$HOME`) and **never starts from the cwd** — Claude
-  shifts cwd between sub-projects of one workspace, so a cwd-rooted walk would
-  make resolution depend on where a script happened to be run from. If you test
-  against `Paths`, scrub `CLAUDE_PROJECT_DIR` alongside `WORKSPACE`.
+  **Explicit configuration still wins:** `workspace_dir` and `WORKSPACE` are
+  both checked first. Two things are worth stating precisely, because the
+  obvious reading of "only the fallback case is affected" is not quite right:
+
+  - **`data_dir` ranks `CLAUDE_PLUGIN_DATA` *above* discovery** — the one place
+    in this resolver that is not simply "most explicit first". A managed data
+    dir is a fact about the install; a discovered marker is an inference. If
+    discovery outranked it, `data_dir` — and with it `venv_dir`,
+    `catalogs_dir`, logs and dream state — would move for **every** plugin
+    install that has a managed data dir and no `WORKSPACE`, orphaning an
+    already-bootstrapped venv and catalog set. Discovery exists to rescue the
+    case that fell through to `~/.multiplai`, and that is the *last* step, not
+    the `CLAUDE_PLUGIN_DATA` one. `memory_dir`, `diary_dir`, `now_dir` and
+    `learnings_dir` do follow a discovered workspace — that is the point of the
+    change, and none of them is runtime state.
+  - **`$HOME` itself does not satisfy the marker test.** `~/.multiplai` is the
+    standalone fallback layout, not a discovered workspace; counting it would
+    fire for any session rooted at the home directory with no closer marker.
+
+  The walk is bounded (12 levels, stops before `$HOME`) and **never starts from
+  the cwd** — Claude shifts cwd between sub-projects of one workspace, so a
+  cwd-rooted walk would make resolution depend on where a script happened to be
+  run from. A **relative** `CLAUDE_PROJECT_DIR` (`.`, `..`) is therefore
+  ignored rather than resolved, since resolving it re-introduces the cwd. If you
+  test against `Paths`, scrub `CLAUDE_PROJECT_DIR` alongside `WORKSPACE`.
 
 - **`model_client.DEFAULT_MODEL` and the default `MULTIPLAI_MODEL` ceiling now
   follow `env.CURRENT_MODEL["sonnet"]`** instead of the literal
