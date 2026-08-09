@@ -9,7 +9,14 @@ Resolution order:
        ``CLAUDE_PLUGIN_OPTION_*``) — expanded and resolved to absolute.
     2. Workspace-scoped fallback rooted at ``$WORKSPACE/.multiplai/`` (or
        the ``workspace_dir`` plugin option's ``.multiplai/``).
-    3. Hardcoded standalone fallback rooted at ``~/.multiplai/``.
+    3. The nearest ancestor ``.multiplai/`` marker directory, walking up
+       from ``$CLAUDE_PROJECT_DIR`` or the cwd.
+    4. Hardcoded standalone fallback rooted at ``~/.multiplai/``.
+
+``memory_dir`` is additionally the first of an ordered list of **memory
+banks** — see :mod:`multiplai_core.banks` and :meth:`Paths.memory_banks`.
+With no bank configuration the list is exactly that one directory, so every
+consumer of ``memory_dir`` is unaffected.
 """
 
 import dataclasses
@@ -17,6 +24,7 @@ import os
 import threading
 from pathlib import Path
 
+from .banks import BANKS_FILENAME, MemoryBank, load_banks
 from .plugin_options import option
 
 
@@ -27,17 +35,71 @@ _cached_paths: "Paths | None" = None
 _STANDALONE_BASE = Path.home() / ".multiplai"
 
 
+# How far up the tree the marker search walks before giving up. Bounded so a
+# hook started deep inside a monorepo cannot spend its budget stat-ing its way
+# to ``/`` on a cold network filesystem.
+_MARKER_MAX_DEPTH = 12
+
+
+def _discovered_workspace_base() -> Path | None:
+    """Nearest ancestor ``.multiplai/`` of ``$CLAUDE_PROJECT_DIR``, or None.
+
+    Walks up from ``$CLAUDE_PROJECT_DIR`` — the harness's own notion of where
+    the session is rooted — and returns the first ``.multiplai/`` directory
+    found.
+
+    This exists to break the coupling that made the workspace knowable only
+    because the container launcher exported ``WORKSPACE``: a plugin installed
+    on a plain Claude Code with no launcher had no way to find the workspace
+    it was plainly sitting inside, and silently wrote to ``~/.multiplai``
+    instead. The marker is the same directory the data already lives in, so
+    discovery cannot point somewhere that is not already a workspace.
+
+    **The start point is never the cwd.** Claude routinely shifts cwd into
+    sub-projects that all belong to one workspace (the reason
+    :func:`_workspace_base` refuses cwd as a fallback), and a cwd-rooted walk
+    would additionally make resolution depend on where a test or a script
+    happened to be run from. No ``CLAUDE_PROJECT_DIR`` means no discovery.
+
+    Deliberately ranked *below* both explicit signals and above the
+    standalone fallback: an explicit ``workspace_dir`` or ``WORKSPACE`` still
+    wins, so nothing that works today changes. Only the case that previously
+    fell through to ``~/.multiplai`` is affected.
+    """
+    start = _env("CLAUDE_PROJECT_DIR")
+    if not start:
+        return None
+    try:
+        current = Path(start).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    home = Path.home()
+    for _ in range(_MARKER_MAX_DEPTH):
+        marker = current / ".multiplai"
+        try:
+            if marker.is_dir():
+                return marker
+        except OSError:
+            return None
+        if current == current.parent or current == home:
+            break
+        current = current.parent
+    return None
+
+
 def _explicit_workspace_base() -> Path | None:
-    """Workspace ``.multiplai/`` root *if explicitly configured*, else None.
+    """Workspace ``.multiplai/`` root *if discoverable*, else None.
 
     Resolution:
       1. The ``workspace_dir`` plugin option if set.
       2. ``WORKSPACE`` env var (set by the container launcher) — lets
          scripts invoked outside the plugin hook mechanism resolve
          workspace paths correctly.
+      3. The nearest ancestor ``.multiplai/`` marker directory
+         (:func:`_discovered_workspace_base`).
 
-    Returns ``None`` when neither is set, so callers can distinguish a
-    configured workspace from the pure-standalone fallback.
+    Returns ``None`` when none of the three answer, so callers can
+    distinguish a located workspace from the pure-standalone fallback.
     """
     env = option("workspace_dir")
     if env:
@@ -45,7 +107,7 @@ def _explicit_workspace_base() -> Path | None:
     workspace = _env("WORKSPACE")
     if workspace:
         return Path(workspace).expanduser().resolve() / ".multiplai"
-    return None
+    return _discovered_workspace_base()
 
 
 def _workspace_base() -> Path:
@@ -266,6 +328,32 @@ class Paths:
         ``cwd`` onto a stable project name. Optional — absent means defaults.
         """
         return self.diary_dir.parent / "project-map.yaml"
+
+    def memory_banks_file(self) -> Path:
+        """Bank declarations (YAML) at the workspace ``.multiplai/`` root.
+
+        Sits beside ``project-map.yaml`` for the same reason: it describes the
+        *workspace*, not the runtime, so it belongs in the tracked tree rather
+        than the git-ignored data bucket. Optional — absent means one bank.
+        Override with the ``memory_banks_file`` plugin option.
+        """
+        override = option("memory_banks_file")
+        if override:
+            return Path(override).expanduser().resolve()
+        return self.diary_dir.parent / BANKS_FILENAME
+
+    def memory_banks(self) -> tuple[MemoryBank, ...]:
+        """The ordered memory banks, ``personal`` first and always present.
+
+        With no ``memory-banks.yaml`` this is exactly one bank at
+        :attr:`memory_dir` — the pre-banks world, unchanged. Resolved on each
+        call rather than cached on the frozen instance so that subscribing to
+        a bank takes effect on the next hook run rather than the next
+        process; the file is a few lines and the read is not on a hot path.
+        """
+        return load_banks(
+            memory_dir=self.memory_dir, config_path=self.memory_banks_file()
+        )
 
     def learnings_file(self, date_str: str | None = None) -> Path:
         """Per-day structured learnings file ``learnings_dir/{YYYY-MM-DD}.md``.

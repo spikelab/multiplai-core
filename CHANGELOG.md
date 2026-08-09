@@ -18,7 +18,50 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **Memory banks — `multiplai_core.banks`.** `memory_dir` is now the first of an
+  ordered list of memory corpora. New exports: `MemoryBank`, `load_banks`,
+  `personal_bank`, `bank_ref`, `split_bank_ref`, `parse_bank_ref`,
+  `PERSONAL_BANK`, `PERSONAL_MODE`, `BANK_MODES`, `DEFAULT_SHARED_MODE`,
+  `BANKS_FILENAME`; new accessors `Paths.memory_banks()` and
+  `Paths.memory_banks_file()`.
+
+  **Nothing changes for a consumer that does not configure a bank.** With no
+  `memory-banks.yaml`, `Paths.memory_banks()` returns exactly one bank named
+  `personal` at today's `memory_dir`, and `memory_dir` itself is untouched — so
+  every existing call site keeps working with no edit. That equivalence is
+  asserted by a test that sets no configuration at all.
+
+  What a consumer gains: a declared list of corpora with a trust flag on each.
+  `MemoryBank.is_shared` is the single question a rendering path should ask
+  before injecting content (shared bank content is authored by other people and
+  belongs in an `<untrusted-content>` fence), and `accepts_direct_writes` is
+  `True` for the personal bank and nothing else, in any configuration —
+  a config asking for `mode: rw` on a shared bank is coerced to `propose`
+  (contribute by pull request) and warns. Banks are declared in
+  `<workspace>/.multiplai/memory-banks.yaml`, beside `project-map.yaml`;
+  a malformed, unreadable, or partly-invalid file yields the banks it could
+  parse and always at least `personal`, so a typo can neither add a bank nor
+  break a session.
+
 ### Changed
+
+- **Workspace discovery now walks up to the nearest `.multiplai/` marker.**
+  `Paths` resolution gains a third step between `$WORKSPACE` and the
+  `~/.multiplai` standalone fallback: if `$CLAUDE_PROJECT_DIR` is set, its
+  nearest ancestor containing a `.multiplai/` directory becomes the workspace
+  base. This removes the coupling that made the workspace knowable only because
+  a launcher exported `WORKSPACE` — a plugin installed on plain Claude Code
+  inside an existing workspace previously wrote to `~/.multiplai` instead.
+
+  **Explicit configuration still wins**, so nothing that resolves today changes:
+  `workspace_dir` and `WORKSPACE` are both checked first, and only the case that
+  previously fell through to `~/.multiplai` is affected. The walk is bounded
+  (12 levels, stops at `$HOME`) and **never starts from the cwd** — Claude
+  shifts cwd between sub-projects of one workspace, so a cwd-rooted walk would
+  make resolution depend on where a script happened to be run from. If you test
+  against `Paths`, scrub `CLAUDE_PROJECT_DIR` alongside `WORKSPACE`.
 
 - **`model_client.DEFAULT_MODEL` and the default `MULTIPLAI_MODEL` ceiling now
   follow `env.CURRENT_MODEL["sonnet"]`** instead of the literal
