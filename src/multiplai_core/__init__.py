@@ -16,6 +16,20 @@ from .agent_runner import (
     run_agent,
 )
 from .aio import hard_timeout, swallow_task_result
+from .banks import (
+    BANKS_FILENAME,
+    BANK_MODES,
+    DEFAULT_SHARED_MODE,
+    PERSONAL_BANK,
+    PERSONAL_MODE,
+    MemoryBank,
+    bank_ref,
+    is_bank_name,
+    load_banks,
+    parse_bank_ref,
+    personal_bank,
+    split_bank_ref,
+)
 from .config import (
     load_config,
     load_yaml,
@@ -100,6 +114,19 @@ __all__ = [
     # paths
     "Paths",
     "get_paths",
+    # memory banks
+    "BANKS_FILENAME",
+    "BANK_MODES",
+    "DEFAULT_SHARED_MODE",
+    "PERSONAL_BANK",
+    "PERSONAL_MODE",
+    "MemoryBank",
+    "bank_ref",
+    "is_bank_name",
+    "load_banks",
+    "parse_bank_ref",
+    "personal_bank",
+    "split_bank_ref",
     # plugin options
     "OPTION_PREFIX",
     "option",

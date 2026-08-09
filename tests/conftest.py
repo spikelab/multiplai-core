@@ -6,10 +6,20 @@ import pytest
 
 
 def _scrub_plugin_env(monkeypatch):
-    """Remove ambient CLAUDE_PLUGIN_* / WORKSPACE so the workspace-anchored
-    path resolver can't pick up the real host environment."""
+    """Remove ambient CLAUDE_PLUGIN_* / WORKSPACE / CLAUDE_PROJECT_DIR so the
+    workspace-anchored path resolver can't pick up the real host environment.
+
+    ``CLAUDE_PROJECT_DIR`` joined this list when marker-based workspace
+    discovery did: a leaked value would let the resolver walk up to a real
+    ``.multiplai/`` on the developer's machine and point tests at a live
+    corpus.
+    """
     for key in list(os.environ):
-        if key.startswith("CLAUDE_PLUGIN") or key == "WORKSPACE":
+        if (
+            key.startswith("CLAUDE_PLUGIN")
+            or key == "WORKSPACE"
+            or key == "CLAUDE_PROJECT_DIR"
+        ):
             monkeypatch.delenv(key, raising=False)
 
 
