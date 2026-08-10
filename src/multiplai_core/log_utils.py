@@ -37,8 +37,17 @@ import logging
 import os
 import re
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Wall-clock reference for "how long has this process been alive". Bound at
+# import of *this* module, which every hook imports before it does any work, so
+# the gap between process exec and this line is the interpreter start plus a
+# handful of imports — the cost we want attributed to startup, not to the hook
+# body. Monotonic: immune to clock steps mid-run.
+_PROCESS_T0 = time.monotonic()
 
 _LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -473,3 +482,144 @@ def log_event(
     except Exception:
         # Observability must never break the thing it observes.
         pass
+
+
+# ---------------------------------------------------------------------------
+# Hook timing
+# ---------------------------------------------------------------------------
+# Why this exists, concretely (2026-08-10): a UserPromptSubmit hook was killed
+# at its 30s ceiling and the prompt lost its injected context. The logs said
+# nothing at all — not "slow", not "failed", *nothing* — because every hook's
+# first log line came after the work it was doing. A killed process cannot
+# report its own death, so the only way to learn where the budget went is to
+# have written a line down *before* spending it.
+#
+# So the contract is two lines per run, and the pair is the diagnostic:
+#
+#   HOOK_ENTRY hook=<name> startup_ms=<n>
+#   HOOK_EXIT  hook=<name> status=ok ms=<n> startup_ms=<n> stages=a:12,b:4400
+#
+# An ENTRY with no matching EXIT is a hook that died mid-run — killed by the
+# harness timeout, OOM, or a hard crash. That orphan is the signal; without the
+# ENTRY line there is nothing to notice. `log_doctor --hooks` reads exactly
+# this pair (see ``scripts/log_doctor.py`` in multiplai-cc-mktplace).
+
+# Stage names are embedded in a comma/colon-delimited field, so a name carrying
+# either delimiter would corrupt the record for every downstream parser.
+_STAGE_NAME_SANITIZE = re.compile(r"[,:=\s]+")
+
+
+class HookRun:
+    """Timing recorder for one hook invocation. Created by :func:`hook_run`.
+
+    Stage timings accumulate *by name*: calling ``stage("router")`` twice adds
+    both elapsed times together and counts one stage, which is what you want
+    for a loop and is never wrong for a single pass.
+    """
+
+    def __init__(self, name: str, logger: logging.Logger) -> None:
+        self.name = name
+        self._logger = logger
+        self._t0 = time.monotonic()
+        self._stages: dict[str, float] = {}
+        self._fields: dict[str, object] = {}
+
+    @contextmanager
+    def stage(self, name: str):
+        """Time a named phase of the hook.
+
+        Never suppresses an exception: a stage that raises still records its
+        elapsed time, so the EXIT line shows how far the run got before it
+        failed.
+        """
+        key = _STAGE_NAME_SANITIZE.sub("_", name.strip()) or "unnamed"
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            elapsed = (time.monotonic() - started) * 1000.0
+            self._stages[key] = self._stages.get(key, 0.0) + elapsed
+
+    def note(self, **fields: object) -> None:
+        """Attach key=value facts to the EXIT line (e.g. ``injected=3``).
+
+        Values are rendered with ``str()`` and stripped of the field
+        delimiters, so anything is safe to pass.
+        """
+        for key, value in fields.items():
+            safe_key = _STAGE_NAME_SANITIZE.sub("_", str(key))
+            safe_value = _STAGE_NAME_SANITIZE.sub("_", str(value))
+            self._fields[safe_key] = safe_value
+
+    @property
+    def elapsed_ms(self) -> float:
+        """Milliseconds since this run started (excludes process startup)."""
+        return (time.monotonic() - self._t0) * 1000.0
+
+    def _stages_field(self) -> str:
+        return ",".join(
+            f"{key}:{value:.0f}" for key, value in self._stages.items()
+        )
+
+
+@contextmanager
+def hook_run(
+    name: str,
+    logger: logging.Logger,
+    *,
+    session_id: str | None = None,
+):
+    """Bracket a hook's work with an ENTRY line and an EXIT line.
+
+    Wrap the *whole* body of a hook's ``main()``, as early as the session id is
+    known — everything before the ENTRY line is invisible to this and shows up
+    only in ``startup_ms``.
+
+    Args:
+        name: The hook's component name, matching its log file
+            (``context_manager``, ``session_start``, …).
+        logger: The component logger from :func:`setup_logging`.
+        session_id: Recorded on the EXIT line so a slow run is traceable to the
+            session that paid for it. The line prefix already carries it when
+            ``setup_logging`` was given one; this is for the JSONL-free case.
+
+    Yields:
+        A :class:`HookRun` for per-stage timing (``run.stage("router")``) and
+        extra facts (``run.note(injected=3)``).
+
+    The instrumentation never raises and never swallows: an exception in the
+    body is logged as ``status=error`` and re-raised unchanged.
+    """
+    run = HookRun(name, logger)
+    startup_ms = (run._t0 - _PROCESS_T0) * 1000.0
+    try:
+        logger.info("HOOK_ENTRY hook=%s startup_ms=%.0f", name, startup_ms)
+    except Exception:
+        pass
+
+    status = "ok"
+    try:
+        yield run
+    except BaseException as exc:
+        # BaseException, not Exception: SystemExit is how a hook normally ends
+        # (sys.exit(0) after emitting its payload), and a KeyboardInterrupt or
+        # a cancelled run is exactly the case where the EXIT line matters most.
+        status = "ok" if isinstance(exc, SystemExit) and not exc.code else "error"
+        raise
+    finally:
+        try:
+            parts = [
+                f"HOOK_EXIT hook={name}",
+                f"status={status}",
+                f"ms={run.elapsed_ms:.0f}",
+                f"startup_ms={startup_ms:.0f}",
+            ]
+            if session_id:
+                parts.append(f"session={session_id[:8]}")
+            stages = run._stages_field()
+            if stages:
+                parts.append(f"stages={stages}")
+            parts.extend(f"{k}={v}" for k, v in run._fields.items())
+            logger.info(" ".join(parts))
+        except Exception:
+            pass

@@ -402,3 +402,142 @@ def test_setup_logging_truncates_oversized_hook_errors(logs_dir):
     log_utils.setup_logging(_unique("truncator"))
 
     assert err_log.stat().st_size <= log_utils._ERROR_LOG_MAX_BYTES
+
+
+# --------------------------------------------------------------------------
+# hook_run
+# --------------------------------------------------------------------------
+
+
+def _lines(logs_dir, name):
+    return (logs_dir / f"{name}.log").read_text().splitlines()
+
+
+def test_hook_run_writes_entry_before_the_body(logs_dir):
+    """The ENTRY line must be on disk while the body is still running.
+
+    This is the whole point: a hook killed mid-body leaves the ENTRY behind.
+    """
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger):
+        during = _lines(logs_dir, name)
+
+    assert any("HOOK_ENTRY" in line for line in during)
+    assert not any("HOOK_EXIT" in line for line in during)
+
+
+def test_hook_run_exit_reports_ok_and_duration(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger, session_id="abcdef1234567890"):
+        pass
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert f"hook={name}" in exit_line
+    assert "status=ok" in exit_line
+    assert re.search(r"\bms=\d+", exit_line)
+    assert re.search(r"\bstartup_ms=\d+", exit_line)
+    assert "session=abcdef12" in exit_line
+    assert "session=abcdef1234567890" not in exit_line
+
+
+def test_hook_run_records_stage_timings(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger) as run:
+        with run.stage("router"):
+            pass
+        with run.stage("assemble"):
+            pass
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    stages = re.search(r"stages=(\S+)", exit_line).group(1)
+    assert [s.split(":")[0] for s in stages.split(",")] == ["router", "assemble"]
+
+
+def test_hook_run_accumulates_a_repeated_stage(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger) as run:
+        for _ in range(3):
+            with run.stage("chunk"):
+                pass
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert re.search(r"stages=chunk:\d+(\s|$)", exit_line)
+
+
+def test_hook_run_sanitizes_delimiters_in_names_and_notes(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger) as run:
+        with run.stage("read stdin: phase,one"):
+            pass
+        run.note(picked="a,b:c")
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    # Field structure survives: each space-separated token is at most one '='.
+    for token in exit_line.split("HOOK_EXIT ", 1)[1].split():
+        assert token.count("=") <= 1
+    assert "read_stdin_phase_one" in exit_line
+    assert "picked=a_b_c" in exit_line
+
+
+def test_hook_run_marks_errors_and_reraises(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with pytest.raises(ValueError):
+        with log_utils.hook_run(name, logger) as run:
+            with run.stage("router"):
+                raise ValueError("boom")
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "status=error" in exit_line
+    # The stage that failed still reports how long it ran before failing.
+    assert "stages=router:" in exit_line
+
+
+def test_hook_run_treats_clean_sys_exit_as_ok(logs_dir):
+    """Hooks end with sys.exit(0) after emitting their payload."""
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with pytest.raises(SystemExit):
+        with log_utils.hook_run(name, logger):
+            raise SystemExit(0)
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "status=ok" in exit_line
+
+
+def test_hook_run_treats_nonzero_sys_exit_as_error(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with pytest.raises(SystemExit):
+        with log_utils.hook_run(name, logger):
+            raise SystemExit(2)
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "status=error" in exit_line
+
+
+def test_hook_run_survives_a_broken_logger(logs_dir):
+    """Observability must never break the thing it observes."""
+
+    class Exploding(logging.Logger):
+        def info(self, *a, **k):
+            raise RuntimeError("logger is down")
+
+    logger = Exploding("exploding")
+    with log_utils.hook_run("whatever", logger) as run:
+        with run.stage("s"):
+            pass
+        run.note(k=1)

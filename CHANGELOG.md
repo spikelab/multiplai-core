@@ -20,6 +20,24 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Added
 
+- **`hook_run()` — two log lines that make a killed hook diagnosable.** New
+  `hook_run(name, logger, *, session_id=None)` context manager and the `HookRun`
+  it yields (`run.stage("router")`, `run.note(injected=3)`). Wrapping a hook's
+  `main()` writes `HOOK_ENTRY hook=… startup_ms=…` **before** the body runs and
+  `HOOK_EXIT hook=… status=… ms=… stages=a:12,b:4400` after it.
+
+  Why you would move a pin for this: when the harness kills a hook at its
+  timeout, the process cannot log its own death — so a hook whose first log line
+  comes after its work leaves *no trace at all*. This happened on 2026-08-10: a
+  `UserPromptSubmit` hook was killed at 30 s, the prompt lost its injected
+  context, and the component log had zero lines for that session. With
+  `hook_run`, an `ENTRY` with no matching `EXIT` is the tombstone, and
+  `startup_ms` separates interpreter/import cost from the hook body.
+
+  Additive and self-defending: it never raises (a broken logger is swallowed),
+  never suppresses (an exception is logged `status=error` and re-raised), and
+  reads a clean `SystemExit` as success, which is how hooks normally end.
+
 - **`thinking` pass-through on the model path.** New keyword-only
   `thinking: dict | None = None` on `run_agent`, on the `ModelClient.query`
   protocol, and on both clients. Forwarded verbatim only when set, so passing
