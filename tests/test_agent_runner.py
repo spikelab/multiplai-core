@@ -224,6 +224,29 @@ class TestOptionsIsolation:
             _run(run_agent("hi", effort="low"))
         assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["effort"] == "low"
 
+    def test_thinking_omitted_when_none(self):
+        """An old SDK has no `thinking` option — passing nothing must not add it."""
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi"))
+        assert "thinking" not in mock_sdk.ClaudeAgentOptions.call_args.kwargs
+
+    def test_thinking_forwarded_verbatim_when_set(self):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", thinking={"type": "disabled"}))
+        kwargs = mock_sdk.ClaudeAgentOptions.call_args.kwargs
+        assert kwargs["thinking"] == {"type": "disabled"}
+
+    def test_thinking_and_effort_are_independent(self):
+        """Both knobs travel together; neither implies nor suppresses the other."""
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", effort="low", thinking={"type": "disabled"}))
+        kwargs = mock_sdk.ClaudeAgentOptions.call_args.kwargs
+        assert kwargs["effort"] == "low"
+        assert kwargs["thinking"] == {"type": "disabled"}
+
     def test_default_denies_the_whole_tool_universe(self):
         """No tool args at all must mean no tools — the fail-closed default."""
         mock_sdk = _make_mock_sdk()

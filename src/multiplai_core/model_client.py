@@ -171,6 +171,7 @@ class ModelClient(Protocol):
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
         effort: str | None = None,
+        thinking: dict | None = None,
         timeout_s: float | None = None,
     ) -> ModelResponse: ...
 
@@ -215,6 +216,7 @@ class AgentSDKClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
         effort: str | None = None,
+        thinking: dict | None = None,
         timeout_s: float | None = None,
     ) -> ModelResponse:
         """Send a single-turn query via the Agent SDK and return normalized text.
@@ -222,6 +224,11 @@ class AgentSDKClient:
         *effort* is the second axis alongside *model*: forwarded to the SDK only
         when set (``run_agent`` omits the option entirely for ``None``), so an
         older SDK without the parameter keeps working.
+
+        *thinking* is forwarded the same way. ``{"type": "disabled"}`` is the
+        latency lever: measured 18.4 s → 2.9 s on a cold no-tools call
+        (2026-08-09), which is what makes this client usable from inside a hook
+        budget. It trades reasoning depth for wall time — see ``run_agent``.
 
         *timeout_s* overrides the per-call hard ceiling for **this call only**;
         ``None`` keeps the module default (``_SDK_CALL_TIMEOUT_S``, from
@@ -263,6 +270,7 @@ class AgentSDKClient:
                 max_turns=_SDK_MAX_TURNS,
                 model=model,
                 effort=effort,
+                thinking=thinking,
                 timeout_s=(
                     _SDK_CALL_TIMEOUT_S if timeout_s is None else timeout_s
                 ),
@@ -342,12 +350,18 @@ class AnthropicAPIClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 1.0,
         effort: str | None = None,
+        thinking: dict | None = None,
         timeout_s: float | None = None,
     ) -> ModelResponse:
         """Send a query via the Anthropic API and return a normalized response.
 
         *effort* is accepted for interface parity and ignored: reasoning effort
         is a Claude Code/Agent-SDK session knob, not a Messages API parameter.
+
+        *thinking*, unlike *effort*, **is** a Messages API parameter, so it is
+        forwarded rather than ignored — a caller that disables thinking to fit a
+        latency budget gets the same behaviour on either backend. Omitted from
+        the request entirely when ``None`` so the API default stands.
 
         *timeout_s* is likewise accepted for parity and ignored: it is the
         Agent-SDK path's guard against a wedged CLI subprocess, and the HTTP
@@ -360,13 +374,16 @@ class AnthropicAPIClient:
         if timeout_s is not None:
             logger.debug("AnthropicAPIClient ignores timeout_s=%s (SDK-path guard)", timeout_s)
         client = self._ensure_client()
-        response = await client.messages.create(
+        create_kwargs: dict = dict(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             system=cacheable_system(system),
             messages=messages,
         )
+        if thinking is not None:
+            create_kwargs["thinking"] = thinking
+        response = await client.messages.create(**create_kwargs)
         # Concatenate every text block, matching AgentSDKClient's behavior — a
         # response whose text is split around thinking/citation/search blocks
         # must not be truncated to its first segment. An empty content list

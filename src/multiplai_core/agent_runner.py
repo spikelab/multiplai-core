@@ -337,6 +337,7 @@ async def run_agent(
     max_turns: int = 1,
     model: str | None = None,
     effort: str | None = None,
+    thinking: dict | None = None,
     cwd: str | Path | None = None,
     env: dict[str, str] | None = None,
     timeout_s: float = 600.0,
@@ -366,6 +367,13 @@ async def run_agent(
             to the allow-list.
         effort: Reasoning effort; forwarded to the SDK only when set, so old
             SDK versions without the option keep working.
+        thinking: Extended-thinking config, forwarded verbatim to the SDK and
+            only when set (same old-SDK tolerance as ``effort``). The case that
+            motivated it is ``{"type": "disabled"}``: measured 2026-08-09, a
+            cold no-tools call drops 18.4 s → 2.9 s with thinking off, which is
+            the difference between fitting a hook budget and not. Latency, not
+            quality, is what this knob buys — leave it ``None`` for work where
+            reasoning depth matters.
         env: Extra env vars merged over the isolation baseline.
         timeout_s: Hard wall-clock ceiling per attempt (``hard_timeout`` — a
             wedged CLI subprocess can block ``asyncio.wait_for`` forever).
@@ -501,6 +509,8 @@ async def run_agent(
             )
             if effort is not None:
                 opts_kwargs["effort"] = effort
+            if thinking is not None:
+                opts_kwargs["thinking"] = thinking
             options = sdk.ClaudeAgentOptions(**opts_kwargs)
 
             chunks: list[str] = []

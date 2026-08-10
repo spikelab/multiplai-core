@@ -20,6 +20,23 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Added
 
+- **`thinking` pass-through on the model path.** New keyword-only
+  `thinking: dict | None = None` on `run_agent`, on the `ModelClient.query`
+  protocol, and on both clients. Forwarded verbatim only when set, so passing
+  nothing behaves exactly as before and an older `claude-agent-sdk` without the
+  option keeps working (same tolerance as `effort`).
+
+  Why you would move a pin for this: `thinking={"type": "disabled"}` takes a
+  cold single-turn SDK call from **18.4 s to 2.9 s** (measured 2026-08-09). If
+  you call a model from inside a Claude Code hook, that is the difference
+  between fitting the budget and being killed mid-call. It buys latency by
+  giving up reasoning depth — do not set it on work where the answer's quality
+  matters more than its arrival time.
+
+  Note the asymmetry with `effort`, which `AnthropicAPIClient` ignores because
+  it is an Agent-SDK session knob: `thinking` *is* a Messages API parameter, so
+  that client forwards it too and both backends behave the same way.
+
 - **Memory banks — `multiplai_core.banks`.** `memory_dir` is now the first of an
   ordered list of memory corpora. New exports: `MemoryBank`, `load_banks`,
   `personal_bank`, `bank_ref`, `split_bank_ref`, `parse_bank_ref`,
