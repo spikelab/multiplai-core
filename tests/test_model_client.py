@@ -107,6 +107,11 @@ class TestModelClientInterface:
         assert "model" in param_names
         assert "max_tokens" in param_names
         assert "temperature" in param_names
+        assert "effort" in param_names
+        # Both clients must accept `thinking`, or a caller that disables
+        # thinking to fit a latency budget gets a TypeError the moment
+        # create_client() falls back to the other backend.
+        assert "thinking" in param_names
 
 
 class TestAgentSDKClient:
@@ -181,6 +186,41 @@ class TestAgentSDKClient:
                 # prompt before forwarding it to the SDK.
                 assert opts.system_prompt == "system prompt" + _NO_TOOLS_SUFFIX
                 assert opts.model == "claude-opus-4-20250514"
+
+            asyncio.run(_test())
+
+    def test_query_relays_thinking_through_run_agent_to_options(self):
+        """The whole point of the parameter: it must survive the two hops.
+
+        AgentSDKClient.query does not touch ClaudeAgentOptions itself — it calls
+        run_agent, which builds them. A test that only checked the client's own
+        signature would pass while the value was dropped in between.
+        """
+        mock_sdk = _make_mock_sdk(["ok"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            from multiplai_core.model_client import AgentSDKClient
+            client = AgentSDKClient()
+
+            async def _test():
+                await client.query(
+                    "sys",
+                    [{"role": "user", "content": "test"}],
+                    thinking={"type": "disabled"},
+                )
+                opts = mock_sdk.query.call_args.kwargs["options"]
+                assert opts.thinking == {"type": "disabled"}
+
+            asyncio.run(_test())
+
+    def test_query_omits_thinking_by_default(self):
+        mock_sdk = _make_mock_sdk(["ok"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            from multiplai_core.model_client import AgentSDKClient
+            client = AgentSDKClient()
+
+            async def _test():
+                await client.query("sys", [{"role": "user", "content": "test"}])
+                assert "thinking" not in mock_sdk.ClaudeAgentOptions.call_args.kwargs
 
             asyncio.run(_test())
 
@@ -557,6 +597,66 @@ class TestAnthropicAPIClient:
                 await client.query("sys", [])
                 call_kwargs = mock_async_client.messages.create.call_args
                 assert call_kwargs.kwargs["max_tokens"] == 4096
+
+            asyncio.run(_test())
+
+    def test_thinking_omitted_from_request_when_none(self):
+        """Not passing `thinking` must leave the API default in force.
+
+        Sending `thinking=None` explicitly is not the same thing as omitting the
+        key, so assert on the key's absence rather than its value.
+        """
+        from multiplai_core.model_client import AnthropicAPIClient
+
+        mock_text_block = MagicMock()
+        mock_text_block.text = "response"
+        mock_api_response = MagicMock()
+        mock_api_response.content = [mock_text_block]
+
+        mock_async_client = MagicMock()
+        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
+
+        mock_anthropic = MagicMock()
+        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            client = AnthropicAPIClient("sk-test-key")
+            client._client = None
+
+            async def _test():
+                await client.query("sys", [])
+                assert "thinking" not in mock_async_client.messages.create.call_args.kwargs
+
+            asyncio.run(_test())
+
+    def test_thinking_forwarded_to_api_when_set(self):
+        """`thinking` IS a Messages API param, so unlike `effort` it is forwarded.
+
+        This asymmetry is deliberate and worth pinning: `effort` is an Agent-SDK
+        session knob this client can only ignore, while `thinking` reaches the
+        API, so both backends behave the same way for the same argument.
+        """
+        from multiplai_core.model_client import AnthropicAPIClient
+
+        mock_text_block = MagicMock()
+        mock_text_block.text = "response"
+        mock_api_response = MagicMock()
+        mock_api_response.content = [mock_text_block]
+
+        mock_async_client = MagicMock()
+        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
+
+        mock_anthropic = MagicMock()
+        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            client = AnthropicAPIClient("sk-test-key")
+            client._client = None
+
+            async def _test():
+                await client.query("sys", [], thinking={"type": "disabled"})
+                kwargs = mock_async_client.messages.create.call_args.kwargs
+                assert kwargs["thinking"] == {"type": "disabled"}
 
             asyncio.run(_test())
 
