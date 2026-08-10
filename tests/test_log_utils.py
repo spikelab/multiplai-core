@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -25,6 +26,7 @@ def logs_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "data"))
     _reset_cache()
     log_utils._swept = False
+    log_utils._STARTUP_MS = None
     monkeypatch.delenv("MULTIPLAI_LOG_RETENTION_DAYS", raising=False)
     yield tmp_path / "data" / "logs"
     _reset_cache()
@@ -504,14 +506,18 @@ def test_hook_run_marks_errors_and_reraises(logs_dir):
     assert "stages=router:" in exit_line
 
 
-def test_hook_run_treats_clean_sys_exit_as_ok(logs_dir):
-    """Hooks end with sys.exit(0) after emitting their payload."""
+@pytest.mark.parametrize("code", [0, None, False])
+def test_hook_run_treats_clean_sys_exit_as_ok(logs_dir, code):
+    """Hooks end with sys.exit(0) after emitting their payload.
+
+    ``None`` and ``False`` are here because CPython exits 0 for both.
+    """
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
     with pytest.raises(SystemExit):
         with log_utils.hook_run(name, logger):
-            raise SystemExit(0)
+            raise SystemExit(code)
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=ok" in exit_line
@@ -533,11 +539,163 @@ def test_hook_run_survives_a_broken_logger(logs_dir):
     """Observability must never break the thing it observes."""
 
     class Exploding(logging.Logger):
-        def info(self, *a, **k):
+        def handle(self, *a, **k):
+            raise RuntimeError("logger is down")
+
+        def makeRecord(self, *a, **k):
+            raise RuntimeError("logger is down")
+
+        def log(self, *a, **k):
             raise RuntimeError("logger is down")
 
     logger = Exploding("exploding")
+    body_ran = False
     with log_utils.hook_run("whatever", logger) as run:
         with run.stage("s"):
-            pass
+            body_ran = True
         run.note(k=1)
+
+    # The body completed and no logging failure escaped the context manager.
+    assert body_ran
+
+
+def test_hook_run_entry_carries_session_and_pid(logs_dir):
+    """The ENTRY line is all a killed run leaves — it must be attributable."""
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger, session_id="abcdef1234567890"):
+        pass
+
+    entry = [ln for ln in _lines(logs_dir, name) if "HOOK_ENTRY" in ln][0]
+    assert "session=abcdef12" in entry
+    assert f"pid={os.getpid()}" in entry
+
+
+def test_hook_run_writes_both_lines_when_level_suppresses_info(logs_dir, monkeypatch):
+    """MULTIPLAI_LOG_LEVEL=WARNING must not erase the pair.
+
+    A level that hides the tombstone produces the exact zero-lines symptom
+    hook_run exists to diagnose.
+    """
+    monkeypatch.setenv("MULTIPLAI_LOG_LEVEL", "WARNING")
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger):
+        pass
+
+    lines = _lines(logs_dir, name)
+    assert any("HOOK_ENTRY" in ln for ln in lines)
+    assert any("HOOK_EXIT" in ln for ln in lines)
+
+
+def test_hook_run_error_names_the_exception_and_reaches_the_error_sink(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with pytest.raises(ValueError):
+        with log_utils.hook_run(name, logger):
+            raise ValueError("boom")
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "status=error" in exit_line
+    assert "err=ValueError" in exit_line
+
+    # The shared ERROR+ sink is where someone greps for failures.
+    shared = (logs_dir / "hook-errors.log").read_text()
+    assert "HOOK_EXIT" in shared and "err=ValueError" in shared
+
+
+def test_hook_run_ok_exit_stays_out_of_the_error_sink(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger):
+        pass
+
+    shared = logs_dir / "hook-errors.log"
+    assert not shared.exists() or "HOOK_EXIT" not in shared.read_text()
+
+
+@pytest.mark.parametrize("code", ["", "boom"])
+def test_hook_run_treats_falsy_nonzero_sys_exit_as_error(logs_dir, code):
+    """A falsy-but-nonzero payload is a failed hook.
+
+    Verified against CPython: ``sys.exit("")`` exits 1 (the message goes to
+    stderr, empty or not), so a truthiness test would call it ok. ``False``
+    is not in this list — it exits 0, and ``code in (None, 0)`` matches that.
+    """
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with pytest.raises(SystemExit):
+        with log_utils.hook_run(name, logger):
+            raise SystemExit(code)
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "status=error" in exit_line
+
+
+def test_hook_run_note_cannot_shadow_a_reserved_field(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger) as run:
+        run.note(status="degraded", ms=999, outcome="injected")
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    tail = exit_line.split("HOOK_EXIT ", 1)[1]
+    assert tail.count(" status=") == 1
+    assert tail.count(" ms=") == 1
+    assert "note_status=degraded" in tail
+    assert "note_ms=999" in tail
+    assert "outcome=injected" in tail
+
+
+def test_hook_run_startup_ms_does_not_grow_across_runs(logs_dir):
+    """startup_ms describes the process, not how long ago it started."""
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger):
+        pass
+    time.sleep(0.05)
+    with log_utils.hook_run(name, logger):
+        pass
+
+    values = [
+        float(re.search(r"\bstartup_ms=(\d+)", ln).group(1))
+        for ln in _lines(logs_dir, name)
+        if "HOOK_ENTRY" in ln
+    ]
+    assert len(values) == 2
+    assert values[0] == values[1]
+
+
+def test_hook_run_still_writes_an_exit_when_the_line_cannot_be_built(logs_dir):
+    """An instrumentation failure must not forge a killed-hook tombstone."""
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger) as run:
+        # Corrupt the recorder so building the stages field raises.
+        run._stages = {"router": object()}
+
+    lines = _lines(logs_dir, name)
+    assert any("HOOK_ENTRY" in ln for ln in lines)
+    exit_line = [ln for ln in lines if "HOOK_EXIT" in ln][0]
+    assert "err=instrumentation_failure" in exit_line
+
+
+def test_hook_run_sanitizes_the_hook_name(logs_dir):
+    name = _unique("hookrun")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run("context manager=x", logger):
+        pass
+
+    entry = [ln for ln in _lines(logs_dir, name) if "HOOK_ENTRY" in ln][0]
+    assert "hook=context_manager_x" in entry
+    for token in entry.split("HOOK_ENTRY ", 1)[1].split():
+        assert token.count("=") <= 1
