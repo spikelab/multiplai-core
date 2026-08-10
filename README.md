@@ -19,7 +19,7 @@ own drifting copy:
 | `multiplai_core.env` | `.env` discovery/loading, `multiplai.conf` parsing, model/effort ceiling resolution, provider-qualified `ModelSpec`s. |
 | `multiplai_core.text` | `extract_json()` — pull a JSON object/array out of a model response. |
 | `multiplai_core.aio` | `hard_timeout()` and async task helpers. |
-| `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, dated rotation, retention. |
+| `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, dated rotation, retention. `hook_run(name, logger)` / `HookRun` — ENTRY/EXIT timing pair that makes a killed hook diagnosable. |
 | `multiplai_core.model_client` | `create_client()` — Agent SDK first, Anthropic API fallback — plus the [provider seam](#provider-seam) (`create_client_for`, `register_provider`). |
 | `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting). |
 

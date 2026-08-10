@@ -57,6 +57,8 @@ from .env import (
 )
 from .text import extract_json
 from .log_utils import (
+    HookRun,
+    hook_run,
     log_event,
     resolve_level,
     retention_days,
@@ -145,6 +147,8 @@ __all__ = [
     # logging
     "setup_logging",
     "log_event",
+    "hook_run",
+    "HookRun",
     "resolve_level",
     "retention_days",
     # model client

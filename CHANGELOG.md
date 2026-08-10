@@ -20,6 +20,50 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Added
 
+- **`hook_run()` — two log lines that make a killed hook diagnosable.** New
+  `hook_run(name, logger, *, session_id=None)` context manager and the `HookRun`
+  it yields (`run.stage("router")`, `run.note(injected=3)`). Wrapping a hook's
+  `main()` writes `HOOK_ENTRY hook=… pid=… startup_ms=… session=…` **before** the
+  body runs and `HOOK_EXIT hook=… status=… ms=… startup_ms=… pid=… session=…
+  stages=a:12,b:4400` after it.
+
+  Why you would move a pin for this: when the harness kills a hook at its
+  timeout, the process cannot log its own death — so a hook whose first log line
+  comes after its work leaves *no trace at all*. This happened on 2026-08-10: a
+  `UserPromptSubmit` hook was killed at 30 s, the prompt lost its injected
+  context, and the component log had zero lines for that session. With
+  `hook_run`, an `ENTRY` with no matching `EXIT` is the tombstone, and
+  `startup_ms` separates interpreter/import cost from the hook body.
+
+  Additive and self-defending: it never raises (a broken logger is swallowed),
+  never suppresses (an exception is logged `status=error err=<type>` and
+  re-raised), and reads a clean `SystemExit` as success, which is how hooks
+  normally end.
+
+  Four properties a consumer's parser can rely on:
+
+  - **Both lines are written regardless of `MULTIPLAI_LOG_LEVEL`.** They go to
+    the component log through the same level-independent principle as
+    `log_event()` — a level that hides the tombstone would produce the exact
+    zero-lines symptom this exists to diagnose. Level still governs the other
+    sinks, so an `EXIT` with `status=error` also lands in the shared
+    `hook-errors.log`, and a routine one does not.
+  - **Pair on `(hook, session, pid)`.** Concurrent runs of the same hook append
+    to one log; `pid=` is what tells two interleaved runs apart. `session=` is
+    on the `ENTRY` line too — that is the line a killed run leaves behind.
+  - **`startup_ms` is measured once per process** from the kernel's process
+    start time (`/proc/self/stat`, falling back to module import time where
+    that is unavailable). A second `hook_run` in the same process reports the
+    same value rather than accumulating uptime.
+  - **The record format owns `hook`, `status`, `ms`, `startup_ms`, `session`,
+    `stages`, `pid` and `err`.** A `note()` using one of those keys is emitted
+    prefixed `note_`, so a line never carries two `status=` tokens.
+
+  Known limit, stated so nobody reads more into a silent log than is there: a
+  run killed *before* Python reaches `hook_run()` — during interpreter start,
+  `uv` resolution, or imports — writes no line at all. Detecting that needs a
+  marker written outside the process, by the launcher.
+
 - **`thinking` pass-through on the model path.** New keyword-only
   `thinking: dict | None = None` on `run_agent`, on the `ModelClient.query`
   protocol, and on both clients. Forwarded verbatim only when set, so passing
