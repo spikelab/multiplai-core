@@ -17,9 +17,10 @@ Every invocation always gets the isolation/hardening bundle:
 - ``permission_mode="bypassPermissions"`` — these are unattended subprocesses;
   callers that need a safety boundary gate BEFORE calling (buildme's
   ``--trust-repo``) or constrain tools (``allowed_tools``/``disallowed_tools``).
-- ``setting_sources=[]`` + ``extra_args={"setting-sources": ""}`` — both are
-  required; without them the child inherits parent settings/hooks and spawns
-  runaway subagents (verified 2026-04-20).
+- ``setting_sources=[]`` + ``extra_args={"setting-sources": ""}`` — the
+  second is deliberately redundant on the pinned SDK (belt-and-braces; see
+  the inline comment). Without the isolation the child inherits parent
+  settings/hooks and spawns runaway subagents (verified 2026-04-20).
 - ``debug-to-stderr`` — forces the CLI to emit diagnosable stderr (the SDK
   hardcodes ProcessError stderr to "Check stderr output for details").
   ``_safe_query`` is mandatory while this is on: the CLI emits internal
@@ -497,6 +498,9 @@ async def run_agent(
                 cwd=str(cwd) if cwd is not None else str(_hook_session_dir()),
                 setting_sources=[],
                 extra_args={
+                    # Deliberately redundant: the pinned SDK already emits
+                    # --setting-sources= from setting_sources=[] (verified on
+                    # 0.2.129); kept as belt-and-braces against a regression.
                     "setting-sources": "",
                     "debug-to-stderr": None,
                     "strict-mcp-config": None,
