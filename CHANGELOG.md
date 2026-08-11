@@ -234,6 +234,16 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Fixed
 
+- **`plugin_options.option_var` (and every accessor built on it) now raises
+  `ValueError` on a key that cannot name an environment variable.** A key
+  containing `-`, `.`, a space, or a leading digit builds a
+  `CLAUDE_PLUGIN_OPTION_<KEY>` name the harness never exports, so every read
+  silently returned the default forever. The raise is deliberate where value
+  parsing stays tolerant: a bad key is developer error caught by tests, not
+  user config. If a consumer passes such a key today, that call site was
+  already dead — rename the key in `plugin.json` to `[A-Za-z_][A-Za-z0-9_]*`
+  form.
+
 - **`run_agent` no longer leaks a raw `TypeError` when the installed
   `claude-agent-sdk` rejects an option.** `ClaudeAgentOptions(**kwargs)` sat
   outside the per-attempt error handling, so a signature mismatch (an older
