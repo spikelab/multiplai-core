@@ -232,6 +232,16 @@ not backfilled; their contents are recoverable from `git log`.
   either a typo (previously silent: the tool simply never appeared and the
   model improvised around it) or a tool newer than the list.
 
+### Fixed
+
+- **`run_agent`'s `_HOOK_CHILD_SESSION` guard can no longer be cleared by a
+  caller's `env`.** The child env was built `{"_HOOK_CHILD_SESSION": "1",
+  **env}`, so `env={"_HOOK_CHILD_SESSION": ""}` (or any override) disabled the
+  fork-bomb guard that stops hooks from re-firing inside SDK child sessions.
+  The guard is now merged last and always wins. No caller passed an override
+  in this repo or its consumer; if yours did, it was getting an unguarded
+  child, which is the bug.
+
 ## [0.13.0] – 2026-08-05
 
 ### Added

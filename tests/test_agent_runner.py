@@ -205,6 +205,15 @@ class TestOptionsIsolation:
         assert opts.env["FOO"] == "bar"
         assert opts.env["_HOOK_CHILD_SESSION"] == "1"
 
+    def test_caller_env_cannot_clear_the_child_session_guard(self):
+        """The fork-bomb guard is merged last: a caller's env must not be
+        able to blank or override ``_HOOK_CHILD_SESSION``."""
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", env={"_HOOK_CHILD_SESSION": ""}))
+        opts = mock_sdk.query.call_args.kwargs["options"]
+        assert opts.env["_HOOK_CHILD_SESSION"] == "1"
+
     def test_cwd_override(self, tmp_path):
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):

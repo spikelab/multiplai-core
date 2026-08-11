@@ -374,7 +374,9 @@ async def run_agent(
             the difference between fitting a hook budget and not. Latency, not
             quality, is what this knob buys — leave it ``None`` for work where
             reasoning depth matters.
-        env: Extra env vars merged over the isolation baseline.
+        env: Extra env vars for the child. ``_HOOK_CHILD_SESSION`` always
+            wins over this mapping — a caller cannot clear the fork-bomb
+            guard.
         timeout_s: Hard wall-clock ceiling per attempt (``hard_timeout`` — a
             wedged CLI subprocess can block ``asyncio.wait_for`` forever).
         max_attempts: Total attempts; >1 turns the bundled CLI's intermittent
@@ -404,7 +406,10 @@ async def run_agent(
     result_cls = _sdk_class(sdk, "ResultMessage")
 
     effective_tools = list(allowed_tools or [])
-    run_env: dict[str, str] = {"_HOOK_CHILD_SESSION": "1", **(env or {})}
+    # Guard merged LAST so a caller's env can never clear it: the reversed
+    # order ({guard, **env}) let env={"_HOOK_CHILD_SESSION": ""} disable the
+    # fork-bomb guard.
+    run_env: dict[str, str] = {**(env or {}), "_HOOK_CHILD_SESSION": "1"}
     prompt_file: str | None = None
 
     prompt_bytes = len(prompt.encode("utf-8"))
