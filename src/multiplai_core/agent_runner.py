@@ -17,9 +17,10 @@ Every invocation always gets the isolation/hardening bundle:
 - ``permission_mode="bypassPermissions"`` — these are unattended subprocesses;
   callers that need a safety boundary gate BEFORE calling (buildme's
   ``--trust-repo``) or constrain tools (``allowed_tools``/``disallowed_tools``).
-- ``setting_sources=[]`` + ``extra_args={"setting-sources": ""}`` — both are
-  required; without them the child inherits parent settings/hooks and spawns
-  runaway subagents (verified 2026-04-20).
+- ``setting_sources=[]`` + ``extra_args={"setting-sources": ""}`` — the
+  second is deliberately redundant on the pinned SDK (belt-and-braces; see
+  the inline comment). Without the isolation the child inherits parent
+  settings/hooks and spawns runaway subagents (verified 2026-04-20).
 - ``debug-to-stderr`` — forces the CLI to emit diagnosable stderr (the SDK
   hardcodes ProcessError stderr to "Check stderr output for details").
   ``_safe_query`` is mandatory while this is on: the CLI emits internal
@@ -374,7 +375,9 @@ async def run_agent(
             the difference between fitting a hook budget and not. Latency, not
             quality, is what this knob buys — leave it ``None`` for work where
             reasoning depth matters.
-        env: Extra env vars merged over the isolation baseline.
+        env: Extra env vars for the child. ``_HOOK_CHILD_SESSION`` always
+            wins over this mapping — a caller cannot clear the fork-bomb
+            guard.
         timeout_s: Hard wall-clock ceiling per attempt (``hard_timeout`` — a
             wedged CLI subprocess can block ``asyncio.wait_for`` forever).
         max_attempts: Total attempts; >1 turns the bundled CLI's intermittent
@@ -404,7 +407,10 @@ async def run_agent(
     result_cls = _sdk_class(sdk, "ResultMessage")
 
     effective_tools = list(allowed_tools or [])
-    run_env: dict[str, str] = {"_HOOK_CHILD_SESSION": "1", **(env or {})}
+    # Guard merged LAST so a caller's env can never clear it: the reversed
+    # order ({guard, **env}) let env={"_HOOK_CHILD_SESSION": ""} disable the
+    # fork-bomb guard.
+    run_env: dict[str, str] = {**(env or {}), "_HOOK_CHILD_SESSION": "1"}
     prompt_file: str | None = None
 
     prompt_bytes = len(prompt.encode("utf-8"))
@@ -492,6 +498,9 @@ async def run_agent(
                 cwd=str(cwd) if cwd is not None else str(_hook_session_dir()),
                 setting_sources=[],
                 extra_args={
+                    # Deliberately redundant: the pinned SDK already emits
+                    # --setting-sources= from setting_sources=[] (verified on
+                    # 0.2.129); kept as belt-and-braces against a regression.
                     "setting-sources": "",
                     "debug-to-stderr": None,
                     "strict-mcp-config": None,
@@ -511,7 +520,18 @@ async def run_agent(
                 opts_kwargs["effort"] = effort
             if thinking is not None:
                 opts_kwargs["thinking"] = thinking
-            options = sdk.ClaudeAgentOptions(**opts_kwargs)
+            # A TypeError here is a signature mismatch with the installed SDK
+            # — deterministic, so retrying cannot help. Convert it immediately
+            # to honor the documented Raises contract (AgentRunError/
+            # AgentRunTimeout only) instead of letting a raw TypeError escape.
+            try:
+                options = sdk.ClaudeAgentOptions(**opts_kwargs)
+            except TypeError as e:
+                raise AgentRunError(
+                    f"run_agent [{label}] claude-agent-sdk rejected the "
+                    f"constructed options (SDK signature mismatch): {e}",
+                    reason=f"ClaudeAgentOptions rejected: {e}",
+                ) from e
 
             chunks: list[str] = []
             files_changed: list[str] = []

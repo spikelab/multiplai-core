@@ -232,6 +232,35 @@ not backfilled; their contents are recoverable from `git log`.
   either a typo (previously silent: the tool simply never appeared and the
   model improvised around it) or a tool newer than the list.
 
+### Fixed
+
+- **`plugin_options.option_var` (and every accessor built on it) now raises
+  `ValueError` on a key that cannot name an environment variable.** A key
+  containing `-`, `.`, a space, or a leading digit builds a
+  `CLAUDE_PLUGIN_OPTION_<KEY>` name the harness never exports, so every read
+  silently returned the default forever. The raise is deliberate where value
+  parsing stays tolerant: a bad key is developer error caught by tests, not
+  user config. If a consumer passes such a key today, that call site was
+  already dead — rename the key in `plugin.json` to `[A-Za-z_][A-Za-z0-9_]*`
+  form.
+
+- **`run_agent` no longer leaks a raw `TypeError` when the installed
+  `claude-agent-sdk` rejects an option.** `ClaudeAgentOptions(**kwargs)` sat
+  outside the per-attempt error handling, so a signature mismatch (an older
+  SDK without `tools`, `effort`, or `thinking`) escaped as `TypeError` —
+  violating the documented contract that `run_agent` raises only
+  `AgentRunError`/`AgentRunTimeout`, and bypassing every caller's
+  `except AgentRunError`. It now raises `AgentRunError` carrying the
+  original `TypeError` text.
+
+- **`run_agent`'s `_HOOK_CHILD_SESSION` guard can no longer be cleared by a
+  caller's `env`.** The child env was built `{"_HOOK_CHILD_SESSION": "1",
+  **env}`, so `env={"_HOOK_CHILD_SESSION": ""}` (or any override) disabled the
+  fork-bomb guard that stops hooks from re-firing inside SDK child sessions.
+  The guard is now merged last and always wins. No caller passed an override
+  in this repo or its consumer; if yours did, it was getting an unguarded
+  child, which is the bug.
+
 ## [0.13.0] – 2026-08-05
 
 ### Added

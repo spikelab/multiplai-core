@@ -15,13 +15,18 @@ falls back to its default and the feature simply never runs.
 There is deliberately **no lowercase fallback**. Accepting both cases would
 keep a dead name alive as though it meant something.
 
-Parsing is tolerant by design: a malformed value logs a warning and yields the
-caller's default. These accessors run inside hooks, and a bad config value must
-never crash one.
+Parsing is tolerant by design: a malformed *value* logs a warning and yields
+the caller's default. These accessors run inside hooks, and a bad config value
+must never crash one. A malformed *key* is different — it is developer error
+in code, not user config, and it raises ``ValueError``: a key that cannot
+round-trip through an environment-variable name (``-``, ``.``, spaces) would
+otherwise silently read the default forever. Tests catch the raise; the hook
+entry points already fail open.
 """
 
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,11 @@ OPTION_PREFIX = "CLAUDE_PLUGIN_OPTION_"
 _TRUE = frozenset({"true", "1", "yes", "on"})
 _FALSE = frozenset({"false", "0", "no", "off"})
 
+# The shapes that survive the plugin.json key -> uppercase -> env var
+# round-trip. Anything else (a `-`, a `.`, a leading digit) builds a name the
+# harness never exports, so every read silently returns the default forever.
+_VALID_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
 
 def option_var(name: str) -> str:
     """Return the environment-variable name the harness exports for *name*.
@@ -47,7 +57,18 @@ def option_var(name: str) -> str:
     ``option_var("enable_skills") == "CLAUDE_PLUGIN_OPTION_ENABLE_SKILLS"``.
     Use this when you need the variable itself (to set it in a test harness or
     a subprocess environment) rather than its value.
+
+    Raises:
+        ValueError: *name* does not match ``[A-Za-z_][A-Za-z0-9_]*`` and so
+            cannot name an option the harness delivers. Developer error, not
+            user config — see the module docstring.
     """
+    if not _VALID_KEY.fullmatch(name):
+        raise ValueError(
+            f"invalid plugin option key {name!r}: must match "
+            f"[A-Za-z_][A-Za-z0-9_]* to round-trip through the "
+            f"{OPTION_PREFIX}<KEY> environment variable"
+        )
     return f"{OPTION_PREFIX}{name.upper()}"
 
 

@@ -33,6 +33,24 @@ class TestOptionVar:
     def test_prefix_constant_matches(self):
         assert option_var("x") == f"{OPTION_PREFIX}X"
 
+    @pytest.mark.parametrize(
+        "bad",
+        ["enable-skills", "enable.skills", "", "1skills", "en able", "skills!"],
+    )
+    def test_invalid_key_shape_raises(self, bad):
+        """A key that cannot round-trip through an env-var name would silently
+        read the default forever — developer error, so it raises."""
+        with pytest.raises(ValueError, match="invalid plugin option key"):
+            option_var(bad)
+
+    def test_accessors_propagate_the_key_validation(self):
+        with pytest.raises(ValueError, match="invalid plugin option key"):
+            option("enable-skills")
+        with pytest.raises(ValueError, match="invalid plugin option key"):
+            option_bool("enable-skills", False)
+        with pytest.raises(ValueError, match="invalid plugin option key"):
+            option_present("enable-skills")
+
 
 class TestOption:
     def test_resolves_the_uppercase_variable(self, monkeypatch):
