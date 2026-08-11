@@ -516,7 +516,18 @@ async def run_agent(
                 opts_kwargs["effort"] = effort
             if thinking is not None:
                 opts_kwargs["thinking"] = thinking
-            options = sdk.ClaudeAgentOptions(**opts_kwargs)
+            # A TypeError here is a signature mismatch with the installed SDK
+            # — deterministic, so retrying cannot help. Convert it immediately
+            # to honor the documented Raises contract (AgentRunError/
+            # AgentRunTimeout only) instead of letting a raw TypeError escape.
+            try:
+                options = sdk.ClaudeAgentOptions(**opts_kwargs)
+            except TypeError as e:
+                raise AgentRunError(
+                    f"run_agent [{label}] claude-agent-sdk rejected the "
+                    f"constructed options (SDK signature mismatch): {e}",
+                    reason=f"ClaudeAgentOptions rejected: {e}",
+                ) from e
 
             chunks: list[str] = []
             files_changed: list[str] = []

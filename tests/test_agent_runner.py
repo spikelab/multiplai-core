@@ -393,6 +393,21 @@ class TestUnknownMessageSkip:
 
 
 class TestFailures:
+    def test_options_signature_mismatch_raises_agent_run_error(self):
+        """A TypeError from ClaudeAgentOptions (SDK signature mismatch) must
+        surface as AgentRunError per the Raises contract, never escape raw."""
+        mock_sdk = _make_mock_sdk()
+        mock_sdk.ClaudeAgentOptions = MagicMock(
+            side_effect=TypeError("unexpected keyword argument 'tools'")
+        )
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(
+                AgentRunError, match="unexpected keyword argument 'tools'"
+            ) as exc:
+                _run(run_agent("hi"))
+        assert not isinstance(exc.value, AgentRunTimeout)
+        assert isinstance(exc.value.__cause__, TypeError)
+
     def test_error_wrapped_with_stderr_tail_and_partial(self):
         class _PartialThenFail:
             def __init__(self):

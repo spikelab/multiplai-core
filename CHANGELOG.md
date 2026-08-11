@@ -234,6 +234,15 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Fixed
 
+- **`run_agent` no longer leaks a raw `TypeError` when the installed
+  `claude-agent-sdk` rejects an option.** `ClaudeAgentOptions(**kwargs)` sat
+  outside the per-attempt error handling, so a signature mismatch (an older
+  SDK without `tools`, `effort`, or `thinking`) escaped as `TypeError` —
+  violating the documented contract that `run_agent` raises only
+  `AgentRunError`/`AgentRunTimeout`, and bypassing every caller's
+  `except AgentRunError`. It now raises `AgentRunError` carrying the
+  original `TypeError` text.
+
 - **`run_agent`'s `_HOOK_CHILD_SESSION` guard can no longer be cleared by a
   caller's `env`.** The child env was built `{"_HOOK_CHILD_SESSION": "1",
   **env}`, so `env={"_HOOK_CHILD_SESSION": ""}` (or any override) disabled the
