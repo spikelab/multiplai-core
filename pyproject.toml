@@ -23,7 +23,7 @@ classifiers = [
 # Loose ranges: this is a library, so exact pins would make it unsolvable
 # alongside any consumer (or sibling dep) that needs a different version.
 dependencies = [
-    "anthropic>=0.40,<1.0",
+    "anthropic>=0.121.0,<1.0",
     "pyyaml>=6.0",
 ]
 
