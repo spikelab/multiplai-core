@@ -144,6 +144,23 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Changed
 
+- **The `[sdk]` extra now requires `claude-agent-sdk>=0.2.139` (was
+  `>=0.2.116`).** `run_agent` forwards `thinking` into
+  `ClaudeAgentOptions(**opts_kwargs)`, and an SDK without that field raises
+  `TypeError` on every call that sets it. The floor moves that failure from
+  runtime to install time, where a resolver can refuse.
+
+  Why you would move a pin for this: it lets you delete any code that detects
+  the gap at runtime. Two plugins had grown a probe that inspects signatures
+  before deciding whether to pass `thinking`, plus a warning naming a fix the
+  person reading it could not perform. With the floor in place, an install
+  either has the field or does not resolve, so the probe has nothing to decide.
+
+  What you must change: nothing, if you resolve fresh — 0.2.139 is the newest
+  release (2026-08-14). If you pin `claude-agent-sdk` yourself below 0.2.139,
+  `multiplai-core[sdk]` will no longer solve alongside it. The `<0.3` ceiling is
+  unchanged.
+
 - **Workspace discovery now walks up to the nearest `.multiplai/` marker.**
   `Paths` resolution gains a third step between `$WORKSPACE` and the
   `~/.multiplai` standalone fallback: if `$CLAUDE_PROJECT_DIR` is set, its

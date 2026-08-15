@@ -34,17 +34,27 @@ dependencies = [
 # explicitly. Without it, AgentSDKClient degrades to the API backend, which
 # needs an API key.
 #
-# Floor is >=0.2.116: the 0.1.x line misparses the terminal result message
-# emitted by modern Claude CLIs (>=2.x), raising the notorious
-# `Claude Code returned an error result: success` after a full generation.
-# The retry wrapper can't help — it's deterministic. Matches the floor pinned
-# by multiplai-kit / multiplai-gui so all SDK consumers resolve compatibly.
+# Floor is >=0.2.139, raised from >=0.2.116 on 2026-08-15. `run_agent` forwards
+# `thinking` into `ClaudeAgentOptions(**opts_kwargs)`; an SDK without that field
+# raises TypeError on every call that sets it, so consumers were detecting the
+# gap at runtime instead. A floor moves that to install time, where a resolver
+# can refuse. 0.2.139 (2026-08-14) is the newest release and carries the field
+# (`types.py` → `ClaudeAgentOptions.thinking`); which release first added it was
+# never pinned down, and there is no reason to resolve older.
+#
+# The original >=0.2.116 reason still holds underneath: the 0.1.x line misparses
+# the terminal result message emitted by modern Claude CLIs (>=2.x), raising the
+# notorious `Claude Code returned an error result: success` after a full
+# generation, deterministically, so the retry wrapper cannot help.
+#
+# Keep this floor aligned with multiplai-kit (`requirements.txt`) and
+# multiplai-gui (`hub/pyproject.toml`) so all SDK consumers resolve compatibly.
 #
 # Ceiling is <0.3: claude-agent-sdk is a fast-moving 0.x package where a single
 # minor bump (0.1 -> 0.2) already shipped a breaking result-message parse
 # change. Without a cap, a downstream consumer that doesn't vendor our lock
 # could resolve a future 0.3.x/1.0 fresh and silently re-break the same way.
-sdk = ["claude-agent-sdk>=0.2.116,<0.3"]
+sdk = ["claude-agent-sdk>=0.2.139,<0.3"]
 # load_env() needs python-dotenv; without this extra it degrades to a no-op
 # with a warning.
 dotenv = ["python-dotenv>=1.0"]

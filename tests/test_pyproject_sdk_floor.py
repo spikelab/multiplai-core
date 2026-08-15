@@ -2,7 +2,9 @@
 
 This project exists because a minor claude-agent-sdk bump (0.1 -> 0.2) shipped a
 breaking result-message parse change. The [sdk] extra must therefore:
-  - floor at >=0.2.116 (below that, terminal result messages misparse), and
+  - floor at >=0.2.139 (below that, ClaudeAgentOptions may lack `thinking`,
+    which run_agent forwards unconditionally; below 0.2.116, terminal result
+    messages also misparse), and
   - cap below <0.3 (a fresh 0.3.x/1.0 resolve could re-break the same class of
     failure for consumers that don't vendor our lock).
 
@@ -31,14 +33,16 @@ def test_sdk_floor_and_cap():
     req = _sdk_requirement()
     spec = req.specifier
 
-    # Floor: pre-0.2.116 misparses the terminal result message.
+    # Floor: pre-0.2.139 may lack ClaudeAgentOptions.thinking, which run_agent
+    # forwards unconditionally — a TypeError on every call that sets it.
+    assert not spec.contains("0.2.138"), "sdk floor must exclude 0.2.138"
+    assert spec.contains("0.2.139"), "sdk floor must admit 0.2.139"
+
+    # The older reason still holds underneath: pre-0.2.116 misparses the
+    # terminal result message, and the whole 0.1.x line is broken.
     assert not spec.contains("0.2.115"), "sdk floor must exclude 0.2.115"
     assert not spec.contains("0.1.0"), "sdk floor must exclude the 0.1.x line"
-    assert spec.contains("0.2.116"), "sdk floor must admit 0.2.116"
 
     # Cap: a future minor could reintroduce the breaking parse change.
     assert not spec.contains("0.3.0"), "sdk must cap below 0.3"
     assert not spec.contains("1.0.0"), "sdk must cap below 0.3 (excludes 1.0)"
-
-    # The resolved version we ship in uv.lock must satisfy the constraint.
-    assert spec.contains("0.2.119"), "current resolved version must satisfy the spec"
