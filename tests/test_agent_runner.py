@@ -9,6 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from conftest import (
+    _FakeAssistantMessage,
+    _FakeResultMessage,
+    _FakeTextBlock,
+    _FakeToolUseBlock,
+    _make_mock_sdk,
+)
 from multiplai_core.agent_runner import (
     MAX_PROMPT_BYTES,
     TOOL_UNIVERSE,
@@ -19,77 +26,6 @@ from multiplai_core.agent_runner import (
     deny_list,
     run_agent,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fake SDK message/block types (real classes so isinstance() works)
-# ---------------------------------------------------------------------------
-
-
-class _FakeTextBlock:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-
-class _FakeToolUseBlock:
-    def __init__(self, name: str, input: dict) -> None:
-        self.name = name
-        self.input = input
-
-
-class _FakeAssistantMessage:
-    def __init__(self, blocks: list) -> None:
-        self.content = blocks
-
-
-class _FakeResultMessage:
-    def __init__(self, usage: dict | None = None, cost: float = 0.0) -> None:
-        self.usage = usage or {}
-        self.total_cost_usd = cost
-
-
-def _make_mock_sdk(
-    messages: list | None = None,
-    *,
-    fail: Exception | None = None,
-    stderr_lines: list[str] | None = None,
-    with_extras: bool = True,
-) -> MagicMock:
-    """Build a mock ``claude_agent_sdk`` module.
-
-    ``with_extras=False`` omits ToolUseBlock/ResultMessage to simulate an old
-    SDK — the runner must degrade gracefully.
-    """
-    if messages is None:
-        messages = [_FakeAssistantMessage([_FakeTextBlock("default text")])]
-
-    mock = MagicMock()
-    mock.AssistantMessage = _FakeAssistantMessage
-    mock.TextBlock = _FakeTextBlock
-    if with_extras:
-        mock.ToolUseBlock = _FakeToolUseBlock
-        mock.ResultMessage = _FakeResultMessage
-
-    def _options_ctor(**kwargs):
-        stderr_cb = kwargs.get("stderr")
-        if stderr_cb and stderr_lines:
-            for line in stderr_lines:
-                stderr_cb(line)
-        opts = MagicMock()
-        for k, v in kwargs.items():
-            setattr(opts, k, v)
-        return opts
-
-    mock.ClaudeAgentOptions = MagicMock(side_effect=_options_ctor)
-
-    async def _agen(prompt, options):
-        if fail is not None:
-            raise fail
-        for m in messages:
-            yield m
-
-    mock.query = MagicMock(side_effect=_agen)
-    return mock
 
 
 def _run(coro):
@@ -493,10 +429,7 @@ class TestFailures:
 class TestTimeout:
     @staticmethod
     def _hanging_sdk() -> MagicMock:
-        mock = MagicMock()
-        mock.AssistantMessage = _FakeAssistantMessage
-        mock.TextBlock = _FakeTextBlock
-        mock.ClaudeAgentOptions = MagicMock(side_effect=lambda **kw: MagicMock())
+        mock = _make_mock_sdk()
         closed = {"cancelled": False}
 
         async def _agen(prompt, options):
@@ -528,10 +461,7 @@ class TestTimeout:
 
     def test_timeout_then_recovery_within_retry_budget(self):
         state = {"calls": 0}
-        mock = MagicMock()
-        mock.AssistantMessage = _FakeAssistantMessage
-        mock.TextBlock = _FakeTextBlock
-        mock.ClaudeAgentOptions = MagicMock(side_effect=lambda **kw: MagicMock())
+        mock = _make_mock_sdk()
 
         async def _agen(prompt, options):
             state["calls"] += 1
@@ -631,10 +561,7 @@ class TestHeartbeat:
     @staticmethod
     def _slow_sdk(delay: float) -> MagicMock:
         """SDK that emits text, then stalls *delay* seconds before finishing."""
-        mock = MagicMock()
-        mock.AssistantMessage = _FakeAssistantMessage
-        mock.TextBlock = _FakeTextBlock
-        mock.ClaudeAgentOptions = MagicMock(side_effect=lambda **kw: MagicMock())
+        mock = _make_mock_sdk()
 
         async def _agen(prompt, options):
             yield _FakeAssistantMessage([_FakeTextBlock("hello")])
@@ -729,6 +656,8 @@ class TestHeartbeat:
         assert _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S) == 5.0
         monkeypatch.setenv(_HEARTBEAT_ENV, "not-a-number")
         assert _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S) == 60.0
+        monkeypatch.setenv(_HEARTBEAT_ENV, "")
+        assert _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S) == 60.0
 
 
 class TestCostLedgerTap:
@@ -736,8 +665,8 @@ class TestCostLedgerTap:
     never break the run."""
 
     @pytest.fixture(autouse=True)
-    def _tmp_workspace(self, monkeypatch, tmp_path, reset_paths_cache):
-        monkeypatch.setenv("WORKSPACE", str(tmp_path))
+    def _tmp_workspace(self, tmp_workspace):
+        pass
 
     def _result_message(self):
         return _FakeResultMessage(

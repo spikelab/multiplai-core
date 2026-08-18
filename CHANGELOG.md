@@ -161,6 +161,32 @@ not backfilled; their contents are recoverable from `git log`.
   `multiplai-core[sdk]` will no longer solve alongside it. The `<0.3` ceiling is
   unchanged.
 
+- **`import multiplai_core` no longer imports `asyncio` (lazy submodules).**
+  The asyncio-heavy modules — `agent_runner`, `aio`, `model_client` — are now
+  imported lazily via PEP 562. Every exported name still resolves through
+  `from multiplai_core import X` exactly as before, and
+  `multiplai_core.agent_runner` attribute access still works after a bare
+  `import multiplai_core`; the import just happens on first use. Measured on
+  the dev tree: package import drops ~35 ms → ~19 ms, which is real money
+  inside a hook budget that only needs `get_paths()` / `option()` /
+  `log_event()`. **What you must change:** nothing — unless you relied on
+  `import multiplai_core` alone having already imported those submodules as a
+  side effect (e.g. checking `sys.modules`), which was never documented.
+
+- **Internal simplification pass — no public API or behavior change.** One
+  shared `_env_float` (model_client now imports agent_runner's), one
+  atomic-write helper in `config`, one merge-or-rename helper in `log_utils`
+  (rotation now streams via `shutil.copyfileobj` instead of slurping the old
+  log into memory), the workspace-base cascade in `paths.resolve()` computed
+  once instead of walking the marker discovery twice, `extract_json` rebuilt
+  on `json.JSONDecoder.raw_decode` (unbalanced-JSON failures now raise
+  `json.JSONDecodeError` — still a `ValueError`, message text differs),
+  single-pass breaker replacement in `untrusted.defang`, and assorted dead
+  code removed (`model_client._DISALLOWED_TOOLS` no-op restatement,
+  `env._EFFORT_TIERS` alias, an unreachable guard in `log_utils`). A failed
+  `write_session_state` also no longer leaves a stale `session_state.json.tmp`
+  behind — the cleanup `save_yaml` already had now applies to both writers.
+
 - **Workspace discovery now walks up to the nearest `.multiplai/` marker.**
   `Paths` resolution gains a third step between `$WORKSPACE` and the
   `~/.multiplai` standalone fallback: if `$CLAUDE_PROJECT_DIR` is set, its

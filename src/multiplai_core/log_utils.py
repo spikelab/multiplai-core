@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import time
 from contextlib import contextmanager
@@ -106,9 +107,11 @@ def _truncate_oversized(path: Path, max_bytes: int = _ERROR_LOG_MAX_BYTES) -> No
 
 
 def _get_logs_dir() -> Path:
-    """Get logs directory from path resolver (imported lazily)."""
+    """Logs directory from the path resolver (imported lazily), created."""
     from .paths import get_paths
-    return _pytest_guard(get_paths().logs_dir())
+    logs_dir = _pytest_guard(get_paths().logs_dir())
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return logs_dir
 
 
 # Per-process redirect target when the pytest guard trips (one dir, so all
@@ -177,30 +180,39 @@ def resolve_level() -> int:
     return _LEVELS.get(name, logging.INFO)
 
 
-def _rotate_dated(base: Path) -> None:
+def _merge_or_rename(src: Path, target: Path) -> None:
+    """Move *src* to *target*, appending (streamed) if *target* exists.
+
+    The append case covers two processes crossing midnight: the stale
+    content is merged rather than lost.
+    """
+    if target.exists():
+        with src.open("rb") as s, target.open("ab") as d:
+            shutil.copyfileobj(s, d)
+        src.unlink()
+    else:
+        src.rename(target)
+
+
+def _rotate_dated(base: Path, today: str | None = None) -> None:
     """Archive *base* to ``<stem>-<its-day>.<ext>`` if it predates today.
 
     The day a file's content belongs to is taken from its mtime (UTC).
     A non-existent or empty file, or one already written today, is left
-    untouched. If the dated target already exists (e.g. two processes
-    crossing midnight), the stale content is appended rather than lost.
-    Best-effort: never raises.
+    untouched. Best-effort: never raises.
     """
     try:
-        if not base.exists() or base.stat().st_size == 0:
+        st = base.stat()
+        if st.st_size == 0:
             return
         file_day = datetime.fromtimestamp(
-            base.stat().st_mtime, timezone.utc
+            st.st_mtime, timezone.utc
         ).strftime("%Y-%m-%d")
-        if file_day == _utc_today():
+        if file_day == (today or _utc_today()):
             return
-        target = base.with_name(f"{base.stem}-{file_day}{base.suffix}")
-        if target.exists():
-            with base.open("rb") as src, target.open("ab") as dst:
-                dst.write(src.read())
-            base.unlink()
-        else:
-            base.rename(target)
+        _merge_or_rename(
+            base, base.with_name(f"{base.stem}-{file_day}{base.suffix}")
+        )
     except OSError:
         pass
 
@@ -219,14 +231,8 @@ def _sweep_logs(logs_dir: Path, days: int) -> None:
             m = _REJECTED_RE.match(f.name)
             if not m:
                 continue
-            target = f.with_name(f"{m['base']}-{m['date']}.log")
             try:
-                if target.exists():
-                    with f.open("rb") as src, target.open("ab") as dst:
-                        dst.write(src.read())
-                    f.unlink()
-                else:
-                    f.rename(target)
+                _merge_or_rename(f, f.with_name(f"{m['base']}-{m['date']}.log"))
             except OSError:
                 pass
 
@@ -245,6 +251,19 @@ def _sweep_logs(logs_dir: Path, days: int) -> None:
         pass
 
 
+def _sweep_once(logs_dir: Path) -> None:
+    """Run the directory sweep (migrate + prune) at most once per process."""
+    global _swept
+    if not _swept:
+        _swept = True
+        _sweep_logs(logs_dir, retention_days())
+
+
+def _short_session(session_id: str | None) -> str:
+    """First 8 chars of the session id, or ``--------`` when unknown."""
+    return (session_id or "")[:8] or "--------"
+
+
 class _StandardFormatter(logging.Formatter):
     """Emit ``[ts] [component] [session:xxxxxxxx] LEVEL: message``.
 
@@ -258,8 +277,7 @@ class _StandardFormatter(logging.Formatter):
         self.set_session(session_id)
 
     def set_session(self, session_id: str | None) -> None:
-        sid = (session_id or "")[:8]
-        self._sid = sid if sid else "--------"
+        self._sid = _short_session(session_id)
 
     def format(self, record: logging.LogRecord) -> str:
         ts = datetime.fromtimestamp(record.created, timezone.utc).strftime(
@@ -372,7 +390,6 @@ def setup_logging(
 
     try:
         logs_dir = _get_logs_dir()
-        logs_dir.mkdir(parents=True, exist_ok=True)
 
         file_handler = _DatedRotatingFileHandler(logs_dir / f"{name}.log")
         file_handler.setLevel(resolved)
@@ -402,10 +419,7 @@ def setup_logging(
                 if handler not in pkg_logger.handlers:
                     pkg_logger.addHandler(handler)
 
-        global _swept
-        if not _swept:
-            _swept = True
-            _sweep_logs(logs_dir, retention_days())
+        _sweep_once(logs_dir)
     except Exception:
         logger.debug("Could not set up file logging", exc_info=True)
 
@@ -444,15 +458,15 @@ def log_event(
     """
     try:
         logs_dir = _get_logs_dir()
-        logs_dir.mkdir(parents=True, exist_ok=True)
 
         log_path = logs_dir / "activity.log"
         jsonl_path = logs_dir / "activity.jsonl"
-        _rotate_dated(log_path)
-        _rotate_dated(jsonl_path)
+        today = _utc_today()
+        _rotate_dated(log_path, today)
+        _rotate_dated(jsonl_path, today)
 
         now = datetime.now(timezone.utc)
-        sid = (session_id or "")[:8] or "--------"
+        sid = _short_session(session_id)
 
         # The human line is the message, verbatim — a clean sentence the
         # call site is responsible for making self-contained. Structured
@@ -481,10 +495,7 @@ def log_event(
         with jsonl_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, default=str) + "\n")
 
-        global _swept
-        if not _swept:
-            _swept = True
-            _sweep_logs(logs_dir, retention_days())
+        _sweep_once(logs_dir)
     except Exception:
         # Observability must never break the thing it observes.
         pass
@@ -553,7 +564,7 @@ def _startup_ms() -> float:
     global _STARTUP_MS
     if _STARTUP_MS is not None:
         return _STARTUP_MS
-    _STARTUP_MS = (time.monotonic() - _PROCESS_T0) * 1000.0
+    value = (time.monotonic() - _PROCESS_T0) * 1000.0
     try:
         stat = Path("/proc/self/stat").read_text(encoding="ascii", errors="replace")
         # Field 22 (1-indexed) is starttime, in clock ticks since boot. Field 2
@@ -565,10 +576,11 @@ def _startup_ms() -> float:
         )
         elapsed = (uptime - start_ticks / os.sysconf("SC_CLK_TCK")) * 1000.0
         if elapsed >= 0:
-            _STARTUP_MS = elapsed
+            value = elapsed
     except Exception:
         pass
-    return _STARTUP_MS
+    _STARTUP_MS = value
+    return value
 
 
 def _emit_hook_line(logger: logging.Logger, level: int, message: str) -> None:
@@ -591,11 +603,7 @@ def _emit_hook_line(logger: logging.Logger, level: int, message: str) -> None:
     except Exception:
         return
     delivered = False
-    try:
-        handlers = list(logger.handlers)
-    except Exception:
-        handlers = []
-    for handler in handlers:
+    for handler in list(logger.handlers):
         try:
             if isinstance(handler, _DatedRotatingFileHandler):
                 handler.handle(record)

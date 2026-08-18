@@ -79,9 +79,11 @@ def resolve_model_rates(model: str) -> tuple[dict, bool]:
     stripped = _DATE_SUFFIX.sub("", model)
     if stripped in models:
         return models[stripped], False
-    prefix_matches = [k for k in models if model.startswith(k)]
-    if prefix_matches:
-        return models[max(prefix_matches, key=len)], False
+    best_prefix = max(
+        (k for k in models if model.startswith(k)), key=len, default=None
+    )
+    if best_prefix is not None:
+        return models[best_prefix], False
     return pricing["fallback"], True
 
 

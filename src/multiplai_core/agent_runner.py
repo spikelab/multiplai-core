@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import logging
 import os
 import tempfile
@@ -154,13 +155,11 @@ def deny_list(allowed_tools: list[str] | None) -> list[str]:
 def _env_float(name: str, default: float) -> float:
     """Parse a float env var, falling back to the default on garbage.
 
-    A deliberate private copy of ``model_client``'s helper of the same name
-    (private there, and not part of the exported surface): importing it would
-    make the runner depend on the client, which is backwards — the client is
-    built on the runner.
+    The single definition — ``model_client`` imports it from here (the
+    client is built on the runner, so this direction cannot cycle).
 
-    Read at **call** time here, not import time, so a caller or test can set
-    the knob per run.
+    This module reads it at **call** time, not import time, so a caller or
+    test can set the knob per run.
     """
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
@@ -238,10 +237,7 @@ def _summarize_stderr(error_lines: list[str], recent_lines: list[str]) -> str:
     lines when the CLI emitted no error-level output.
     """
     if error_lines:
-        deduped: list[str] = []
-        for line in error_lines:
-            if not deduped or deduped[-1] != line:
-                deduped.append(line)
+        deduped = [line for line, _ in itertools.groupby(error_lines)]
         return "\n".join(deduped[-_STDERR_MAX_ERROR_LINES:])
     return "\n".join(recent_lines[-_STDERR_RING_LINES:])
 
@@ -534,6 +530,7 @@ async def run_agent(
                 ) from e
 
             chunks: list[str] = []
+            text_bytes = 0  # running UTF-8 size of chunks, for log lines
             files_changed: list[str] = []
             turns = 0
             usage = AgentUsage()
@@ -545,7 +542,7 @@ async def run_agent(
                 # `async for` does not deterministically close its generator
                 # on cancellation — the CLI subprocess would linger until GC
                 # while a retry spawns a second one.
-                nonlocal turns, usage, session_id
+                nonlocal turns, usage, session_id, text_bytes
                 gen = _safe_query(sdk, prompt=prompt, options=options)
                 try:
                     async for message in gen:
@@ -554,6 +551,7 @@ async def run_agent(
                             for block in message.content:
                                 if text_cls and isinstance(block, text_cls):
                                     chunks.append(block.text)
+                                    text_bytes += len(block.text.encode("utf-8"))
                                 elif tool_use_cls and isinstance(block, tool_use_cls):
                                     if block.name in ("Write", "Edit"):
                                         fp = (getattr(block, "input", None) or {}).get(
@@ -593,8 +591,7 @@ async def run_agent(
                         "run_agent [%s] alive %.0fs attempt=%d/%d turns=%d "
                         "text=%d bytes",
                         label, loop.time() - hb_start, attempt_no + 1,
-                        max_attempts, turns,
-                        sum(len(c.encode("utf-8")) for c in chunks),
+                        max_attempts, turns, text_bytes,
                     )
 
             heartbeat_s = _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S)
@@ -611,8 +608,7 @@ async def run_agent(
                 logger.info(
                     "DONE run_agent [%s] attempt=%d/%d turns=%d text=%d bytes "
                     "files_changed=%d elapsed=%.1fs",
-                    label, attempt + 1, max_attempts, turns,
-                    sum(len(c.encode("utf-8")) for c in chunks),
+                    label, attempt + 1, max_attempts, turns, text_bytes,
                     len(files_changed), elapsed,
                 )
                 if any_attempt_failed:

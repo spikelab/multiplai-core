@@ -61,7 +61,7 @@ def _discovered_workspace_base() -> Path | None:
 
     **The start point is never the cwd.** Claude routinely shifts cwd into
     sub-projects that all belong to one workspace (the reason
-    :func:`_workspace_base` refuses cwd as a fallback), and a cwd-rooted walk
+    :meth:`Paths.resolve` refuses cwd as a workspace fallback), and a cwd-rooted walk
     would additionally make resolution depend on where a test or a script
     happened to be run from. No ``CLAUDE_PROJECT_DIR`` means no discovery —
     and a *relative* ``CLAUDE_PROJECT_DIR`` means no discovery either, because
@@ -121,42 +121,11 @@ def _configured_workspace_base() -> Path | None:
     """
     env = option("workspace_dir")
     if env:
-        return Path(env).expanduser().resolve() / ".multiplai"
+        return _abs(env) / ".multiplai"
     workspace = _env("WORKSPACE")
     if workspace:
-        return Path(workspace).expanduser().resolve() / ".multiplai"
+        return _abs(workspace) / ".multiplai"
     return None
-
-
-def _explicit_workspace_base() -> Path | None:
-    """Workspace ``.multiplai/`` root *if locatable at all*, else None.
-
-    :func:`_configured_workspace_base` first, then the nearest ancestor
-    ``.multiplai/`` marker directory (:func:`_discovered_workspace_base`).
-
-    Returns ``None`` when none of the three answer, so callers can
-    distinguish a located workspace from the pure-standalone fallback.
-    """
-    return _configured_workspace_base() or _discovered_workspace_base()
-
-
-def _workspace_base() -> Path:
-    """Workspace-scoped ``.multiplai/`` root.
-
-    Diary, learnings, and per-project ``now`` files are workspace
-    data: there should be one ``.multiplai/`` per workspace, not one
-    per ``cwd`` (Claude routinely shifts ``cwd`` into sub-projects
-    that all belong to the same workspace).
-
-    Falls back to ``~/.multiplai/`` when no workspace is configured so
-    a fresh install still writes somewhere sensible. We deliberately do
-    NOT use ``cwd`` as a fallback — it would pollute every sub-project
-    with its own data tree.
-
-    Override any individual directory via the matching
-    ``{diary,now,learnings}_dir`` plugin option.
-    """
-    return _explicit_workspace_base() or _STANDALONE_BASE
 
 
 class CallablePath(type(Path())):
@@ -200,14 +169,14 @@ def _ensure_data_gitignore(data_dir: Path) -> None:
         pass
 
 
-def _resolve_env_path(value: str, fallback: Path) -> Path:
-    """Return an absolute ``Path`` from *value*, or *fallback* if empty.
+def _abs(value: str) -> Path:
+    """Tilde-expand *value* and resolve it to an absolute ``Path``."""
+    return Path(value).expanduser().resolve()
 
-    Non-empty values are tilde-expanded and resolved to absolute form.
-    """
-    if value:
-        return Path(value).expanduser().resolve()
-    return fallback
+
+def _resolve_env_path(value: str, fallback: Path) -> Path:
+    """Return an absolute ``Path`` from *value*, or *fallback* if empty."""
+    return _abs(value) if value else fallback
 
 
 @dataclasses.dataclass(frozen=True)
@@ -243,7 +212,16 @@ class Paths:
         is_plugin = bool(env_root)
 
         plugin_root = _resolve_env_path(env_root, _STANDALONE_BASE)
-        workspace_base = _workspace_base()
+
+        # Workspace-scoped `.multiplai/` root: explicit configuration first,
+        # then the discovered ancestor marker, then `~/.multiplai/` so a
+        # fresh install still writes somewhere sensible. Deliberately never
+        # the cwd — diary/now/learnings are workspace data (one `.multiplai/`
+        # per workspace, not per cwd), and a cwd fallback would pollute every
+        # sub-project with its own data tree.
+        configured_ws = _configured_workspace_base()
+        discovered_ws = _discovered_workspace_base()
+        workspace_base = configured_ws or discovered_ws or _STANDALONE_BASE
 
         # Data dir holds runtime state: logs, catalogs, venv, dream state.
         # Whenever a workspace is explicitly configured it stays inside
@@ -267,11 +245,9 @@ class Paths:
         # data dir and no WORKSPACE, orphaning an already-bootstrapped venv
         # and catalog set. Discovery exists to rescue the case that fell
         # through to ~/.multiplai, and that case is step 5, not step 3.
-        configured_ws = _configured_workspace_base()
-        discovered_ws = _discovered_workspace_base()
         opt_data = option("data_dir")
         if opt_data:
-            data_dir = Path(opt_data).expanduser().resolve()
+            data_dir = _abs(opt_data)
         elif configured_ws is not None:
             data_dir = configured_ws / "data"
         elif env_data:
@@ -332,6 +308,16 @@ class Paths:
     # Derived path accessors
     # ------------------------------------------------------------------
 
+    def _workspace_root(self) -> Path:
+        """The workspace ``.multiplai/`` root the user-data dirs hang off.
+
+        Defined as ``diary_dir.parent`` — the one rule for where workspace-
+        level files (``project-map.yaml``, ``memory-banks.yaml``) sit. Note
+        the consequence: overriding only the ``diary_dir`` option relocates
+        everything derived from this root.
+        """
+        return self.diary_dir.parent
+
     def logs_dir(self) -> Path:
         """Plugin log files directory."""
         return self.data_dir / "logs"
@@ -371,7 +357,7 @@ class Paths:
         the workspace base). Read by ``lib.project_identity`` to map a session
         ``cwd`` onto a stable project name. Optional — absent means defaults.
         """
-        return self.diary_dir.parent / "project-map.yaml"
+        return self._workspace_root() / "project-map.yaml"
 
     def memory_banks_file(self) -> Path:
         """Bank declarations (YAML) at the workspace ``.multiplai/`` root.
@@ -381,10 +367,9 @@ class Paths:
         than the git-ignored data bucket. Optional — absent means one bank.
         Override with the ``memory_banks_file`` plugin option.
         """
-        override = option("memory_banks_file")
-        if override:
-            return Path(override).expanduser().resolve()
-        return self.diary_dir.parent / BANKS_FILENAME
+        return _resolve_env_path(
+            option("memory_banks_file"), self._workspace_root() / BANKS_FILENAME
+        )
 
     def memory_banks(self) -> tuple[MemoryBank, ...]:
         """The ordered memory banks, ``personal`` first and always present.

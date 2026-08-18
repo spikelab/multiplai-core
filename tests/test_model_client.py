@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 import logging
-import os
 import sys
 import types
 from pathlib import Path
@@ -13,18 +12,16 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Helpers for mocking claude_agent_sdk.query() (async generator)
+# Mock harnesses — shared with test_agent_runner via conftest; this module's
+# convenience shape is "one AssistantMessage carrying one TextBlock per text".
 # ---------------------------------------------------------------------------
 
-
-class _FakeTextBlock:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-
-class _FakeAssistantMessage:
-    def __init__(self, blocks: list) -> None:
-        self.content = blocks
+from conftest import (
+    _FakeAssistantMessage,
+    _FakeTextBlock,
+    _make_mock_sdk as _make_full_mock_sdk,
+    _mock_anthropic,
+)
 
 
 def _make_mock_sdk(
@@ -33,39 +30,14 @@ def _make_mock_sdk(
     fail: Exception | None = None,
     stderr_lines: list[str] | None = None,
 ) -> MagicMock:
-    """Build a mock ``claude_agent_sdk`` module.
-
-    ``self._sdk.query(prompt=..., options=...)`` must be an async generator
-    yielding ``AssistantMessage`` objects whose ``.content`` is a list of
-    ``TextBlock``. The mock also exposes the types used by ``isinstance()``
-    checks and can simulate CLI stderr via the ``stderr`` options callback.
-    """
+    """Mock ``claude_agent_sdk`` yielding one message with *texts* as blocks."""
     if texts is None:
         texts = ["default text"]
-
-    mock = MagicMock()
-    mock.AssistantMessage = _FakeAssistantMessage
-    mock.TextBlock = _FakeTextBlock
-
-    def _options_ctor(**kwargs):
-        stderr_cb = kwargs.get("stderr")
-        if stderr_cb and stderr_lines:
-            for line in stderr_lines:
-                stderr_cb(line)
-        opts = MagicMock()
-        for k, v in kwargs.items():
-            setattr(opts, k, v)
-        return opts
-
-    mock.ClaudeAgentOptions = MagicMock(side_effect=_options_ctor)
-
-    async def _agen(prompt, options):
-        if fail is not None:
-            raise fail
-        yield _FakeAssistantMessage([_FakeTextBlock(t) for t in texts])
-
-    mock.query = MagicMock(side_effect=_agen)
-    return mock
+    return _make_full_mock_sdk(
+        [_FakeAssistantMessage([_FakeTextBlock(t) for t in texts])],
+        fail=fail,
+        stderr_lines=stderr_lines,
+    )
 
 
 class TestModelClientInterface:
@@ -327,10 +299,7 @@ class TestAgentSDKClient:
                     return _FakeAssistantMessage([_FakeTextBlock("world")])
                 raise StopAsyncIteration
 
-        mock = MagicMock()
-        mock.AssistantMessage = _FakeAssistantMessage
-        mock.TextBlock = _FakeTextBlock
-        mock.ClaudeAgentOptions = MagicMock(side_effect=lambda **kw: MagicMock())
+        mock = _make_mock_sdk()
         mock.query = MagicMock(side_effect=lambda prompt, options: _UnknownThenGood())
 
         with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
@@ -354,10 +323,7 @@ class TestAgentSDKClient:
                 raise RuntimeError("Command failed with exit code 1")
             yield _FakeAssistantMessage([_FakeTextBlock("recovered")])
 
-        mock = MagicMock()
-        mock.AssistantMessage = _FakeAssistantMessage
-        mock.TextBlock = _FakeTextBlock
-        mock.ClaudeAgentOptions = MagicMock(side_effect=lambda **kw: MagicMock())
+        mock = _make_mock_sdk()
         mock.query = MagicMock(side_effect=_agen)
 
         with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
@@ -485,17 +451,7 @@ class TestAnthropicAPIClient:
         a response with .content containing the model's text."""
         from multiplai_core.model_client import AnthropicAPIClient
 
-        mock_text_block = MagicMock()
-        mock_text_block.type = "text"
-        mock_text_block.text = "API response text"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("API response text")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -519,16 +475,7 @@ class TestAnthropicAPIClient:
         THEN the request uses that model instead of the default."""
         from multiplai_core.model_client import AnthropicAPIClient
 
-        mock_text_block = MagicMock()
-        mock_text_block.text = "opus response"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("opus response")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -551,16 +498,7 @@ class TestAnthropicAPIClient:
         """
         from multiplai_core.model_client import AnthropicAPIClient, DEFAULT_MODEL
 
-        mock_text_block = MagicMock()
-        mock_text_block.text = "response"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("response")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -578,16 +516,7 @@ class TestAnthropicAPIClient:
         THEN the request is sent with max_tokens=4096."""
         from multiplai_core.model_client import AnthropicAPIClient
 
-        mock_text_block = MagicMock()
-        mock_text_block.text = "response"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("response")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -608,16 +537,7 @@ class TestAnthropicAPIClient:
         """
         from multiplai_core.model_client import AnthropicAPIClient
 
-        mock_text_block = MagicMock()
-        mock_text_block.text = "response"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("response")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -638,16 +558,7 @@ class TestAnthropicAPIClient:
         """
         from multiplai_core.model_client import AnthropicAPIClient
 
-        mock_text_block = MagicMock()
-        mock_text_block.text = "response"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("response")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -665,16 +576,7 @@ class TestAnthropicAPIClient:
         THEN the request uses 16000, not the default."""
         from multiplai_core.model_client import AnthropicAPIClient
 
-        mock_text_block = MagicMock()
-        mock_text_block.text = "response"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("response")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -759,17 +661,9 @@ class TestResponseNormalization:
         extracted from the Anthropic API's response.content[0].text structure."""
         from multiplai_core.model_client import AnthropicAPIClient, ModelResponse
 
-        mock_text_block = MagicMock()
-        mock_text_block.type = "text"
-        mock_text_block.text = "anthropic response text"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic(
+            "anthropic response text"
+        )
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -791,17 +685,7 @@ class TestResponseNormalization:
 
         mock_sdk = _make_mock_sdk(["sdk text"])
 
-        mock_text_block = MagicMock()
-        mock_text_block.type = "text"
-        mock_text_block.text = "api text"
-        mock_api_response = MagicMock()
-        mock_api_response.content = [mock_text_block]
-
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("api text")
 
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk, "anthropic": mock_anthropic}):
             sdk_client = AgentSDKClient()
@@ -834,16 +718,11 @@ class TestResponseNormalization:
             b.text = text
             return b
 
-        mock_api_response = MagicMock()
-        mock_api_response.content = [
+        mock_anthropic, mock_async_client = _mock_anthropic(blocks=[
             _blk("text", "first "),
             _blk("thinking", "IGNORED"),
             _blk("text", "second"),
-        ]
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        ])
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test")
@@ -859,12 +738,7 @@ class TestResponseNormalization:
         """A tool-only/refusal turn (no text blocks) yields "" not IndexError."""
         from multiplai_core.model_client import AnthropicAPIClient
 
-        mock_api_response = MagicMock()
-        mock_api_response.content = []
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_api_response)
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic()
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test")
@@ -1129,32 +1003,6 @@ class TestSDKCallTimeout:
             asyncio.run(_test())
 
 
-class TestEnvFloat:
-    """The SDK timeout constant is parsed at import — bad values must not
-    crash `import multiplai_core` for every consumer."""
-
-    def test_env_float_valid(self):
-        from multiplai_core.model_client import _env_float
-        with patch.dict(os.environ, {"X_TIMEOUT": "1800"}):
-            assert _env_float("X_TIMEOUT", 600.0) == 1800.0
-
-    def test_env_float_garbage_returns_default(self):
-        from multiplai_core.model_client import _env_float
-        with patch.dict(os.environ, {"X_TIMEOUT": "abc"}):
-            assert _env_float("X_TIMEOUT", 600.0) == 600.0
-
-    def test_env_float_empty_returns_default(self):
-        from multiplai_core.model_client import _env_float
-        with patch.dict(os.environ, {"X_TIMEOUT": ""}):
-            assert _env_float("X_TIMEOUT", 600.0) == 600.0
-
-    def test_env_float_unset_returns_default(self):
-        from multiplai_core.model_client import _env_float
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("X_TIMEOUT", None)
-            assert _env_float("X_TIMEOUT", 600.0) == 600.0
-
-
 class TestProviderSeam:
     """The registry that lets a non-Anthropic reviewer backend plug in.
 
@@ -1354,15 +1202,7 @@ class TestPerCallTimeout:
         a caller that escalates must not get a TypeError or a bogus API param."""
         from multiplai_core.model_client import AnthropicAPIClient
 
-        block = MagicMock()
-        block.type = "text"
-        block.text = "ok"
-        response = MagicMock()
-        response.content = [block]
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=response)
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("ok")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test")
@@ -1416,15 +1256,7 @@ class TestPromptCaching:
         from multiplai_core.model_client import (
             MIN_CACHEABLE_SYSTEM_BYTES, AnthropicAPIClient,
         )
-        mock_block = MagicMock()
-        mock_block.type = "text"
-        mock_block.text = "ok"
-        mock_response = MagicMock()
-        mock_response.content = [mock_block]
-        mock_async_client = MagicMock()
-        mock_async_client.messages.create = AsyncMock(return_value=mock_response)
-        mock_anthropic = MagicMock()
-        mock_anthropic.AsyncAnthropic.return_value = mock_async_client
+        mock_anthropic, mock_async_client = _mock_anthropic("ok")
 
         big = "y" * (MIN_CACHEABLE_SYSTEM_BYTES + 10)
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
