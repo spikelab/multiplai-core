@@ -111,10 +111,19 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
         unregister_provider,
     )
 
-# Which lazily-imported submodule serves each deferred public name. The module
-# names themselves are included so `multiplai_core.agent_runner` keeps working
-# after a bare `import multiplai_core` (the eager `from .agent_runner import`
-# used to bind the submodule attribute as a side effect).
+# Which lazily-imported submodule serves each deferred public name. The three
+# module names themselves are included so `multiplai_core.agent_runner` (and
+# `.aio`, `.model_client`) keep working after a bare `import multiplai_core`
+# — the eager `from .agent_runner import …` this replaces bound the submodule
+# attribute as a side effect. No other submodule was ever bound that way, so
+# none is listed here: `from multiplai_core.costing import …` imports the
+# submodule directly and never reaches `__getattr__`.
+#
+# This map is a THIRD list that must agree with `__all__` and the
+# TYPE_CHECKING block above. Type checkers validate those two; only
+# tests/test_package_api.py validates this one, and without it a missing entry
+# is an ImportError for a public name that the whole suite passes straight
+# over.
 _LAZY_ATTRS: dict[str, str] = {
     **dict.fromkeys(
         (
@@ -136,7 +145,6 @@ _LAZY_ATTRS: dict[str, str] = {
         ),
         "model_client",
     ),
-    "costing": "costing",
 }
 
 

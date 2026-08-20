@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from conftest import (
+from _fakes import (
     _FakeAssistantMessage,
     _FakeResultMessage,
     _FakeTextBlock,
@@ -645,7 +645,8 @@ class TestHeartbeat:
 
     def test_interval_read_at_call_time_not_import_time(self, monkeypatch):
         """The knob is a call-time read, so a caller can set it per run —
-        unlike model_client's import-time _SDK_CALL_TIMEOUT_S."""
+        unlike model_client's _SDK_CALL_TIMEOUT_S, which is read once when that
+        module is first imported."""
         from multiplai_core.agent_runner import (
             _HEARTBEAT_DEFAULT_S, _HEARTBEAT_ENV, _env_float,
         )

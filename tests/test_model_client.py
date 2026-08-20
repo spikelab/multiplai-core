@@ -12,11 +12,11 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Mock harnesses — shared with test_agent_runner via conftest; this module's
+# Mock harnesses — shared with test_agent_runner via _fakes; this module's
 # convenience shape is "one AssistantMessage carrying one TextBlock per text".
 # ---------------------------------------------------------------------------
 
-from conftest import (
+from _fakes import (
     _FakeAssistantMessage,
     _FakeTextBlock,
     _make_mock_sdk as _make_full_mock_sdk,

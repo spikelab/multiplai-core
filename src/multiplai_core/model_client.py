@@ -12,11 +12,10 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
-from .agent_runner import (  # noqa: F401 — _summarize_stderr re-exported for compat
+from .agent_runner import (
     AgentRunError,
     _env_float,
-    _summarize_stderr,
-    deny_list,
+    _summarize_stderr,  # noqa: F401 — re-exported for compat
     run_agent,
 )
 from .env import CURRENT_MODEL, DEFAULT_PROVIDER, ModelSpec, parse_model_spec
@@ -65,13 +64,16 @@ _SDK_MAX_TURNS = 6
 # TimeoutError that the retry budget catches and, after _SDK_MAX_ATTEMPTS,
 # surfaces as SDKQueryError — callers that tolerate failure (e.g. dream's
 # critic pass) then degrade gracefully instead of hanging. Default keeps
-# interactive callers
-# (context_manager, session_start) snappy; long-running batch callers raise it
-# via env — e.g. a long-running batch caller sets
-# MULTIPLAI_SDK_CALL_TIMEOUT_S=1800 before import.
-# Read at import time (this value is a module constant) via the defensive
-# `_env_float` parser shared with agent_runner, so a malformed value must not
-# crash `import multiplai_core` for every consumer.
+# interactive callers (context_manager, session_start) snappy; long-running
+# batch callers raise it via env — e.g. MULTIPLAI_SDK_CALL_TIMEOUT_S=1800.
+#
+# WHEN the env var is read: once, when THIS MODULE is first imported. Since
+# `multiplai_core` defers `model_client` (PEP 562, see __init__), that moment
+# is the first use of the model path — not `import multiplai_core`. So set the
+# variable any time before your first model call; a value set after that call
+# has no effect. Parsed through the defensive `_env_float` shared with
+# agent_runner, so a malformed value cannot crash the import for every
+# consumer.
 _SDK_CALL_TIMEOUT_S = _env_float("MULTIPLAI_SDK_CALL_TIMEOUT_S", 600.0)
 _NO_TOOLS_SUFFIX = (
     "\n\nAll information you need is already provided in this message. Do NOT "

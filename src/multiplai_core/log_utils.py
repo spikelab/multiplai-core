@@ -603,7 +603,15 @@ def _emit_hook_line(logger: logging.Logger, level: int, message: str) -> None:
     except Exception:
         return
     delivered = False
-    for handler in list(logger.handlers):
+    # Guarded: this runs from hook_run's `finally`, where an exception would
+    # replace the body's and skip HOOK_EXIT entirely — the one thing this
+    # function exists to guarantee. `logger` is caller-supplied, so
+    # `.handlers` is not necessarily a plain list read.
+    try:
+        handlers = list(logger.handlers)
+    except Exception:
+        handlers = []
+    for handler in handlers:
         try:
             if isinstance(handler, _DatedRotatingFileHandler):
                 handler.handle(record)

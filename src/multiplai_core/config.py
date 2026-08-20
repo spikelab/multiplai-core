@@ -28,9 +28,16 @@ def _atomic_write(path: Path, text: str) -> None:
 
     Creates parent dirs as needed. A crash mid-write never leaves a
     truncated file at *path*; the temp file is removed on failure.
+
+    The temp name is unique per call rather than derived from *path* alone.
+    Two writers of the same file would otherwise share one temp name, and the
+    ``finally`` cleanup of whichever finished first would delete the other's
+    in-flight file out from under its ``os.replace``. (``tempfile.mkstemp``
+    would also be unique, but it creates 0600 and would silently narrow files
+    a plain write leaves at the process umask.)
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}-{os.urandom(4).hex()}.tmp")
     try:
         tmp.write_text(text)
         os.replace(str(tmp), str(path))
