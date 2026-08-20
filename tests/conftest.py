@@ -1,6 +1,12 @@
-"""Shared fixtures for multiplai-core unit tests."""
+"""Shared fixtures for multiplai-core unit tests.
+
+The fake SDK/``anthropic`` harnesses these suites share live in ``_fakes.py``
+next door; see the note at the foot of this file for why.
+"""
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -49,3 +55,19 @@ def reset_paths_cache():
     _reset_cache()
     yield
     _reset_cache()
+
+
+@pytest.fixture
+def tmp_workspace(monkeypatch, tmp_path, reset_paths_cache):
+    """Anchor the path resolver at a temp workspace; yield its root."""
+    monkeypatch.setenv("WORKSPACE", str(tmp_path))
+    yield tmp_path
+
+
+# ---------------------------------------------------------------------------
+# The fake SDK/anthropic harnesses live in ``_fakes.py``. pytest imports this
+# conftest itself under every import mode, so putting the directory on
+# sys.path here is what lets the test modules say ``from _fakes import …``
+# without depending on the legacy ``prepend`` mode.
+# ---------------------------------------------------------------------------
+sys.path.insert(0, str(Path(__file__).parent))

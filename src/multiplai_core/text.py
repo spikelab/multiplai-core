@@ -9,71 +9,47 @@ from __future__ import annotations
 import json
 import re
 
+# Explicit ```json fences first, then bare ``` fences.
+_FENCE_RES = (
+    re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL),
+    re.compile(r"```\s*\n(.*?)\n```", re.DOTALL),
+)
+
 
 def extract_json(text: str) -> dict | list:
     """Extract a JSON object or array from a model response.
 
     Handles:
     - ```json ... ``` fenced code blocks
-    - Plain JSON with surrounding prose
-    - Multi-line JSON objects (via bracket balancing, string-aware)
+    - Plain JSON with surrounding prose (the first complete object/array,
+      via ``json.JSONDecoder.raw_decode``)
 
-    Raises ``ValueError`` on empty input, no JSON found, or unbalanced JSON.
+    Raises ``ValueError`` (``json.JSONDecodeError`` is a subclass) on empty
+    input, no JSON found, or malformed/unbalanced JSON.
     """
     if not text or not text.strip():
         raise ValueError("Empty response")
 
-    # 1. Fenced code blocks — try explicit ```json fences first, then bare
-    #    ``` fences. A non-JSON fence earlier in the text (e.g. a ```python
-    #    example before the answer) must not shadow the real JSON, so every
-    #    candidate is tried and a non-parsing fence falls through to the
-    #    bracket-balancing scan instead of raising.
-    for pattern in (r"```json\s*\n(.*?)\n```", r"```\s*\n(.*?)\n```"):
-        for fence_match in re.finditer(pattern, text, re.DOTALL):
+    # 1. Fenced code blocks. A non-JSON fence earlier in the text (e.g. a
+    #    ```python example before the answer) must not shadow the real JSON,
+    #    so every candidate is tried and a non-parsing fence falls through to
+    #    the raw_decode scan instead of raising.
+    for pattern in _FENCE_RES:
+        for fence_match in pattern.finditer(text):
             try:
                 return json.loads(fence_match.group(1).strip())
             except json.JSONDecodeError:
                 continue
 
-    # 2. First complete JSON object/array via bracket balancing
+    # 2. First complete JSON object/array. raw_decode parses from the first
+    #    bracket and stops at the value's end, ignoring trailing prose — the
+    #    stdlib's string/escape-correct version of a bracket-balancing scan.
     stripped = text.strip()
-    start = None
-    for i, ch in enumerate(stripped):
-        if ch in "{[":
-            start = i
-            break
+    start = min(
+        (i for i in (stripped.find("{"), stripped.find("[")) if i != -1),
+        default=None,
+    )
     if start is None:
         raise ValueError("No JSON object/array found in response")
-
-    open_ch = stripped[start]
-    close_ch = "}" if open_ch == "{" else "]"
-    depth = 0
-    in_str = False
-    escape = False
-    end = None
-
-    for i in range(start, len(stripped)):
-        ch = stripped[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\":
-            escape = True
-            continue
-        if ch == '"':
-            in_str = not in_str
-            continue
-        if in_str:
-            continue
-        if ch == open_ch:
-            depth += 1
-        elif ch == close_ch:
-            depth -= 1
-            if depth == 0:
-                end = i
-                break
-
-    if end is None:
-        raise ValueError("Unbalanced JSON in response")
-
-    return json.loads(stripped[start : end + 1])
+    value, _ = json.JSONDecoder().raw_decode(stripped, start)
+    return value

@@ -18,6 +18,11 @@ from typing import Final
 
 log = logging.getLogger(__name__)
 
+# ``multiplai.conf`` section header. Dots allowed so dotted task keys work as
+# section names, e.g. ``[deep-research.parse]`` — see pick_model()'s per-task
+# overrides.
+_SECTION_RE = re.compile(r"^\[([a-zA-Z0-9_.-]+)\]\s*$")
+
 
 def find_project_root(start: Path | None = None) -> Path | None:
     """Walk upward from *start* looking for the multiplai-kit root.
@@ -106,19 +111,17 @@ def load_multiplai_conf() -> dict:
         log.warning("Could not read %s (%s); using defaults", conf_path, e)
         return {"_sections": {}}
 
-    result: dict[str, str] = {}
+    result: dict[str, object] = {}
     sections: dict[str, dict[str, str]] = {}
     current_section: str | None = None
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # Dots allowed so dotted task keys work as section names, e.g.
-        # ``[deep-research.parse]`` — see pick_model()'s per-task overrides.
-        section_match = re.match(r"^\[([a-zA-Z0-9_.-]+)\]\s*$", line)
+        section_match = _SECTION_RE.match(line)
         if section_match:
             current_section = section_match.group(1)
-            sections.setdefault(current_section, {})  # type: ignore[arg-type]
+            sections.setdefault(current_section, {})
             continue
         if "=" in line:
             key, _, value = line.partition("=")
@@ -128,8 +131,15 @@ def load_multiplai_conf() -> dict:
                 sections[current_section][key] = value
             else:
                 result[key] = value
-    result["_sections"] = sections  # type: ignore[assignment]
+    result["_sections"] = sections
     return result
+
+
+def _task_setting(conf: dict, task: str | None, key: str) -> str | None:
+    """The per-task ``[task] KEY=`` override from *conf*, or ``None``."""
+    if not task:
+        return None
+    return ((conf.get("_sections", {}) or {}).get(task) or {}).get(key)
 
 
 _TIERS = {"haiku": 1, "sonnet": 2, "opus": 3}
@@ -149,9 +159,6 @@ unknown name is valid loses its own "unknown → default" fallback silently.
 Read-only, and additive by policy — a future release may add a tier, so treat
 membership as the question and the integers as relative order only.
 """
-
-# Private alias kept so the module's own call sites read as before.
-_EFFORT_TIERS = EFFORT_TIERS
 
 KNOWN_EFFORTS: Final[frozenset[str]] = frozenset(EFFORT_TIERS)
 """The valid effort names — ``frozenset(EFFORT_TIERS)``, for membership tests."""
@@ -270,7 +277,7 @@ def pick_model_spec(default_tier: str = "opus", task: str | None = None) -> Mode
     it to CURRENT_MODEL.
     """
     conf = load_multiplai_conf()
-    raw = ((conf.get("_sections", {}) or {}).get(task) or {}).get("MODEL") if task else None
+    raw = _task_setting(conf, task, "MODEL")
     ceiling = conf.get("MULTIPLAI_MODEL")  # None → resolve_model uses env/default
     if raw and ":" in raw:
         spec = parse_model_spec(raw)
@@ -312,7 +319,7 @@ def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
 
 
 def _effort_tier(effort: str) -> int:
-    return _EFFORT_TIERS.get(effort.lower(), 3)
+    return EFFORT_TIERS.get(effort.lower(), 3)
 
 
 def resolve_effort(requested: str, ceiling: str | None = None) -> str:
@@ -330,7 +337,7 @@ def _normalize_effort(value: str | None) -> str | None:
     if not value:
         return None
     v = value.strip().lower()
-    return v if v in _EFFORT_TIERS else None
+    return v if v in EFFORT_TIERS else None
 
 
 def pick_effort(default_effort: str = "high", task: str | None = None) -> str:
@@ -344,8 +351,7 @@ def pick_effort(default_effort: str = "high", task: str | None = None) -> str:
     :func:`pick_model` exactly.
     """
     conf = load_multiplai_conf()
-    section = (conf.get("_sections", {}) or {}).get(task) if task else None
-    override = _normalize_effort((section or {}).get("EFFORT"))
+    override = _normalize_effort(_task_setting(conf, task, "EFFORT"))
     effort = override or _normalize_effort(default_effort) or "high"
     ceiling = conf.get("MULTIPLAI_EFFORT")  # None → resolve_effort uses env/default
     return resolve_effort(effort, ceiling=ceiling)

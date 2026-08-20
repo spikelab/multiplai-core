@@ -16,20 +16,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import multiplai_core.log_utils as log_utils
-from multiplai_core.paths import _reset_cache
 
 
 @pytest.fixture
-def logs_dir(tmp_path, monkeypatch):
+def logs_dir(tmp_path, monkeypatch, reset_paths_cache):
     """Point the path resolver at a tmp data dir; yield its logs/ dir."""
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path / "plugin"))
     monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "data"))
-    _reset_cache()
     log_utils._swept = False
     log_utils._STARTUP_MS = None
     monkeypatch.delenv("MULTIPLAI_LOG_RETENTION_DAYS", raising=False)
     yield tmp_path / "data" / "logs"
-    _reset_cache()
 
 
 def _unique(name: str) -> str:

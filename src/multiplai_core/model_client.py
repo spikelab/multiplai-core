@@ -9,14 +9,13 @@ The create_client() factory tries Agent SDK first, falls back to API key.
 
 import inspect
 import logging
-import os
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
-from .agent_runner import (  # noqa: F401 — _summarize_stderr re-exported for compat
+from .agent_runner import (
     AgentRunError,
-    _summarize_stderr,
-    deny_list,
+    _env_float,
+    _summarize_stderr,  # noqa: F401 — re-exported for compat
     run_agent,
 )
 from .env import CURRENT_MODEL, DEFAULT_PROVIDER, ModelSpec, parse_model_spec
@@ -65,32 +64,17 @@ _SDK_MAX_TURNS = 6
 # TimeoutError that the retry budget catches and, after _SDK_MAX_ATTEMPTS,
 # surfaces as SDKQueryError — callers that tolerate failure (e.g. dream's
 # critic pass) then degrade gracefully instead of hanging. Default keeps
-# interactive callers
-# (context_manager, session_start) snappy; long-running batch callers raise it
-# via env — e.g. a long-running batch caller sets
-# MULTIPLAI_SDK_CALL_TIMEOUT_S=1800 before import.
-def _env_float(name: str, default: float) -> float:
-    """Parse a float env var, falling back to the default on garbage.
-
-    Read at import time (this value is a module constant), so a malformed
-    value must not crash `import multiplai_core` for every consumer — mirror
-    the defensive parsing in log_utils.retention_days().
-    """
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        logger.warning("%s=%r is not a number; using default %s", name, raw, default)
-        return default
-
-
+# interactive callers (context_manager, session_start) snappy; long-running
+# batch callers raise it via env — e.g. MULTIPLAI_SDK_CALL_TIMEOUT_S=1800.
+#
+# WHEN the env var is read: once, when THIS MODULE is first imported. Since
+# `multiplai_core` defers `model_client` (PEP 562, see __init__), that moment
+# is the first use of the model path — not `import multiplai_core`. So set the
+# variable any time before your first model call; a value set after that call
+# has no effect. Parsed through the defensive `_env_float` shared with
+# agent_runner, so a malformed value cannot crash the import for every
+# consumer.
 _SDK_CALL_TIMEOUT_S = _env_float("MULTIPLAI_SDK_CALL_TIMEOUT_S", 600.0)
-# This client opens no tools, so the deny-list is the whole tool universe.
-# Derived, not duplicated: agent_runner.TOOL_UNIVERSE is the single home for
-# the list (it has to be, since run_agent now defaults to it).
-_DISALLOWED_TOOLS = deny_list(None)
 _NO_TOOLS_SUFFIX = (
     "\n\nAll information you need is already provided in this message. Do NOT "
     "use any tools, skills, subagents, or tool search, and do NOT ask "
@@ -115,19 +99,20 @@ class SDKQueryError(RuntimeError):
     """
 
     def __init__(self, message: str, *, stderr_tail: str = "") -> None:
-        self._base_message = message
         self.stderr_tail = stderr_tail
-        super().__init__(self._format())
-
-    def _format(self) -> str:
-        parts = [self._base_message]
-        if self.stderr_tail:
-            parts.append("--- captured CLI stderr (errors) ---")
-            parts.append(self.stderr_tail)
-            parts.append("--- end stderr ---")
+        if stderr_tail:
+            parts = [
+                message,
+                "--- captured CLI stderr (errors) ---",
+                stderr_tail,
+                "--- end stderr ---",
+            ]
         else:
-            parts.append("(no CLI stderr captured — subprocess likely died before emitting any output)")
-        return "\n".join(parts)
+            parts = [
+                message,
+                "(no CLI stderr captured — subprocess likely died before emitting any output)",
+            ]
+        super().__init__("\n".join(parts))
 
 
 def _messages_to_prompt(messages: list[dict]) -> str:
@@ -265,8 +250,11 @@ class AgentSDKClient:
             result = await run_agent(
                 prompt,
                 system_prompt=system + _NO_TOOLS_SUFFIX,
+                # allowed_tools=[] opens nothing, and run_agent's default
+                # disallowed_tools is already the fail-closed complement (the
+                # whole TOOL_UNIVERSE) — the safety floor is decided there,
+                # once, not restated here.
                 allowed_tools=[],
-                disallowed_tools=_DISALLOWED_TOOLS,  # see _DISALLOWED_TOOLS note
                 max_turns=_SDK_MAX_TURNS,
                 model=model,
                 effort=effort,

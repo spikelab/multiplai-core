@@ -7,9 +7,8 @@ from multiplai_core.costing import TokenCounts
 
 
 @pytest.fixture(autouse=True)
-def _paths_to_tmp(monkeypatch, tmp_path, reset_paths_cache):
+def _paths_to_tmp(tmp_workspace):
     """Anchor the ledger under a temp workspace for every test."""
-    monkeypatch.setenv("WORKSPACE", str(tmp_path))
 
 
 # ----------------------------------------------------------------------

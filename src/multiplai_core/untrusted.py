@@ -44,6 +44,21 @@ _MARKDOWN_FENCE_BREAKERS = (
     ("~~~", "∼∼∼"),
 )
 
+# One compiled alternation per breaker set, so defang makes a single pass over
+# the text (it runs on exactly the large inputs it exists for) instead of one
+# full copy per needle. Alternation order preserves tuple order, so the closing
+# tag still matches before the opening-tag prefix inside it.
+_BREAKER_REPLACEMENTS = dict(_MARKDOWN_FENCE_BREAKERS + _TAG_BREAKERS)
+_TAG_BREAKER_RE = re.compile(
+    "|".join(re.escape(needle) for needle, _ in _TAG_BREAKERS)
+)
+_ALL_BREAKER_RE = re.compile(
+    "|".join(
+        re.escape(needle)
+        for needle, _ in _MARKDOWN_FENCE_BREAKERS + _TAG_BREAKERS
+    )
+)
+
 # Instruction-shaped patterns. Deliberately loose: a false positive costs one
 # noisy marker in the output, a false negative costs an executed instruction.
 _INJECTION_PATTERNS = [
@@ -99,9 +114,8 @@ def defang(
         return ""
     clean = _ANSI_RE.sub("", str(text))
     clean = _CONTROL_RE.sub("", clean)
-    breakers = (_MARKDOWN_FENCE_BREAKERS + _TAG_BREAKERS) if markdown_fences else _TAG_BREAKERS
-    for needle, replacement in breakers:
-        clean = clean.replace(needle, replacement)
+    breaker_re = _ALL_BREAKER_RE if markdown_fences else _TAG_BREAKER_RE
+    clean = breaker_re.sub(lambda m: _BREAKER_REPLACEMENTS[m.group(0)], clean)
     if mark_injections:
         clean = _INJECTION_RE.sub(lambda m: f"⟪INJECTION?⟫{m.group(0)}⟪/⟫", clean)
     if limit is not None and len(clean) > limit:

@@ -20,6 +20,30 @@ TEMPLATE_FILENAMES: list[str] = ["me.md", "technical-pref.md", "preferences.md"]
 # Backwards-compatible alias for the same set.
 MEMORY_FILENAMES: list[str] = TEMPLATE_FILENAMES
 
+_SESSION_STATE_NAME = "session_state.json"
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write *text* to *path* atomically (temp sibling + ``os.replace``).
+
+    Creates parent dirs as needed. A crash mid-write never leaves a
+    truncated file at *path*; the temp file is removed on failure.
+
+    The temp name is unique per call rather than derived from *path* alone.
+    Two writers of the same file would otherwise share one temp name, and the
+    ``finally`` cleanup of whichever finished first would delete the other's
+    in-flight file out from under its ``os.replace``. (``tempfile.mkstemp``
+    would also be unique, but it creates 0600 and would silently narrow files
+    a plain write leaves at the process umask.)
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}-{os.urandom(4).hex()}.tmp")
+    try:
+        tmp.write_text(text)
+        os.replace(str(tmp), str(path))
+    finally:
+        tmp.unlink(missing_ok=True)
+
 
 def load_yaml(path: Path) -> dict[str, Any]:
     """Load a YAML file, returning an empty dict if missing or unreadable.
@@ -29,11 +53,11 @@ def load_yaml(path: Path) -> dict[str, Any]:
     """
     import yaml
 
-    if not path.exists():
-        return {}
     try:
         with path.open() as f:
             loaded = yaml.safe_load(f)
+    except FileNotFoundError:
+        return {}
     except Exception:
         logger.warning("Could not read %s, starting fresh", path.name)
         return {}
@@ -60,15 +84,7 @@ def save_yaml(path: Path, data: dict[str, Any]) -> None:
     """
     import yaml
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    try:
-        with tmp.open("w") as f:
-            yaml.dump(data, f, default_flow_style=False)
-        os.replace(str(tmp), str(path))
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    _atomic_write(path, yaml.dump(data, default_flow_style=False))
 
 
 def read_memory_files(memory_dir: Path, *, exclude: set[str] | None = None) -> dict[str, str]:
@@ -97,11 +113,8 @@ def read_session_state(data_dir: Path) -> dict[str, Any] | None:
     Returns the parsed dict, or ``None`` if the file is missing or
     unreadable.  Used by both ``session_stop`` and ``session_end``.
     """
-    state_file = data_dir / "session_state.json"
-    if not state_file.exists():
-        return None
     try:
-        return json.loads(state_file.read_text())
+        return json.loads((data_dir / _SESSION_STATE_NAME).read_text())
     except Exception:
         return None
 
@@ -113,12 +126,9 @@ def write_session_state(data_dir: Path, state: dict[str, Any]) -> bool:
     leaves a half-written state file. Returns ``True`` on success,
     ``False`` on any OS error (callers treat this as best-effort).
     """
-    state_file = data_dir / "session_state.json"
+    state_file = data_dir / _SESSION_STATE_NAME
     try:
-        data_dir.mkdir(parents=True, exist_ok=True)
-        tmp = state_file.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        os.replace(str(tmp), str(state_file))
+        _atomic_write(state_file, json.dumps(state, indent=2))
         return True
     except OSError:
         logger.warning("Could not write %s", state_file.name)

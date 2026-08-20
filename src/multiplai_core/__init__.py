@@ -3,19 +3,16 @@
 One source of truth for path resolution, config loading, logging, and the
 model client. Every Multiplai plugin imports from here instead of vendoring
 its own copy.
+
+The asyncio-heavy modules (``agent_runner``, ``aio``, ``model_client``) are
+imported lazily via PEP 562: a hook that only needs a path, an option, or a
+``log_event`` no longer pays for ``asyncio`` at import time. Every public
+name still resolves through ``from multiplai_core import X`` exactly as
+before — the import just happens on first use.
 """
 
-from .agent_runner import (
-    MAX_PROMPT_BYTES,
-    AgentRunError,
-    AgentRunResult,
-    AgentRunTimeout,
-    TOOL_UNIVERSE,
-    AgentUsage,
-    deny_list,
-    run_agent,
-)
-from .aio import hard_timeout, swallow_task_result
+from typing import TYPE_CHECKING
+
 from .banks import (
     BANKS_FILENAME,
     BANK_MODES,
@@ -64,22 +61,6 @@ from .log_utils import (
     retention_days,
     setup_logging,
 )
-from .model_client import (
-    DEFAULT_MAX_TOKENS,
-    DEFAULT_MODEL,
-    AgentSDKClient,
-    AnthropicAPIClient,
-    ModelClient,
-    ModelResponse,
-    SDKQueryError,
-    UnknownProviderError,
-    create_client,
-    create_client_for,
-    detect_client_type,
-    register_provider,
-    registered_providers,
-    unregister_provider,
-)
 # NB: do not re-export the `paths` singleton here — binding the name `paths`
 # in the package namespace would shadow the `multiplai_core.paths` submodule.
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
@@ -100,6 +81,88 @@ from .untrusted import (
     fence,
     markdown_notice,
 )
+
+if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is lazy
+    from .agent_runner import (
+        MAX_PROMPT_BYTES,
+        AgentRunError,
+        AgentRunResult,
+        AgentRunTimeout,
+        TOOL_UNIVERSE,
+        AgentUsage,
+        deny_list,
+        run_agent,
+    )
+    from .aio import hard_timeout, swallow_task_result
+    from .model_client import (
+        DEFAULT_MAX_TOKENS,
+        DEFAULT_MODEL,
+        AgentSDKClient,
+        AnthropicAPIClient,
+        ModelClient,
+        ModelResponse,
+        SDKQueryError,
+        UnknownProviderError,
+        create_client,
+        create_client_for,
+        detect_client_type,
+        register_provider,
+        registered_providers,
+        unregister_provider,
+    )
+
+# Which lazily-imported submodule serves each deferred public name. The three
+# module names themselves are included so `multiplai_core.agent_runner` (and
+# `.aio`, `.model_client`) keep working after a bare `import multiplai_core`
+# — the eager `from .agent_runner import …` this replaces bound the submodule
+# attribute as a side effect. No other submodule was ever bound that way, so
+# none is listed here: `from multiplai_core.costing import …` imports the
+# submodule directly and never reaches `__getattr__`.
+#
+# This map is a THIRD list that must agree with `__all__` and the
+# TYPE_CHECKING block above. Type checkers validate those two; only
+# tests/test_package_api.py validates this one, and without it a missing entry
+# is an ImportError for a public name that the whole suite passes straight
+# over.
+_LAZY_ATTRS: dict[str, str] = {
+    **dict.fromkeys(
+        (
+            "run_agent", "AgentRunResult", "AgentRunError", "AgentRunTimeout",
+            "AgentUsage", "MAX_PROMPT_BYTES", "TOOL_UNIVERSE", "deny_list",
+            "agent_runner",
+        ),
+        "agent_runner",
+    ),
+    **dict.fromkeys(("hard_timeout", "swallow_task_result", "aio"), "aio"),
+    **dict.fromkeys(
+        (
+            "create_client", "detect_client_type", "ModelClient",
+            "ModelResponse", "AgentSDKClient", "AnthropicAPIClient",
+            "SDKQueryError", "DEFAULT_MODEL", "DEFAULT_MAX_TOKENS",
+            "create_client_for", "register_provider", "unregister_provider",
+            "registered_providers", "UnknownProviderError",
+            "model_client",
+        ),
+        "model_client",
+    ),
+}
+
+
+def __getattr__(name: str):
+    module_name = _LAZY_ATTRS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from importlib import import_module
+
+    module = import_module(f".{module_name}", __name__)
+    value = module if name == module_name else getattr(module, name)
+    globals()[name] = value  # cache: __getattr__ runs at most once per name
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__) | set(_LAZY_ATTRS))
+
 
 __version__ = "0.13.0"
 

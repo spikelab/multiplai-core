@@ -326,11 +326,16 @@ def _coerce_sync(name: str, raw: Any) -> str:
 
 def _is_inside(child: Path, parent: Path) -> bool:
     """Is *child* at or below *parent*? Lexical, on already-resolved paths."""
-    try:
-        child.relative_to(parent)
-        return True
-    except ValueError:
-        return False
+    return child.is_relative_to(parent)
+
+
+def _overlaps(a: Path, b: Path) -> bool:
+    """Do *a* and *b* name the same directory, or does either contain the other?
+
+    The mutual-containment test behind every refusal in this module — the
+    underlying rule is **a memory file belongs to exactly one bank**.
+    """
+    return _is_inside(a, b) or _is_inside(b, a)
 
 
 def _resolve_bank_path(raw: Any, *, name: str, workspace_base: Path) -> Path:
@@ -399,8 +404,8 @@ def _personal_relocation(entry: dict, *, workspace_base: Path) -> Optional[Path]
 
 def _bank_from_entry(
     entry: dict, *, name: str, workspace_base: Path
-) -> Optional[MemoryBank]:
-    """One validated *shared* :class:`MemoryBank`, or ``None`` if unusable.
+) -> MemoryBank:
+    """One validated *shared* :class:`MemoryBank`.
 
     Overlap is deliberately **not** checked here — see :func:`load_banks`. A
     per-entry overlap check has to compare against whatever ``personal`` was
@@ -500,9 +505,9 @@ def load_banks(
                 if relocated is not None:
                     personal = dataclasses.replace(personal, path=relocated)
                 continue
-            bank = _bank_from_entry(entry, name=name, workspace_base=workspace_base)
-            if bank is not None:
-                candidates.append(bank)
+            candidates.append(
+                _bank_from_entry(entry, name=name, workspace_base=workspace_base)
+            )
         except Exception:  # pragma: no cover - defensive
             logger.warning("memory bank entry %r could not be read — ignored", entry)
 
@@ -514,10 +519,7 @@ def load_banks(
     # a trusted and an untrusted bank, untrusted has to win.
     if personal.path != configured.path:
         clash = next(
-            (
-                c for c in candidates
-                if _is_inside(personal.path, c.path) or _is_inside(c.path, personal.path)
-            ),
+            (c for c in candidates if _overlaps(personal.path, c.path)),
             None,
         )
         if clash is not None:
@@ -547,7 +549,7 @@ def _without_overlaps(
     """
     kept: list[MemoryBank] = []
     for bank in candidates:
-        if _is_inside(bank.path, personal.path) or _is_inside(personal.path, bank.path):
+        if _overlaps(bank.path, personal.path):
             logger.warning(
                 "memory bank %r at %s overlaps the personal memory dir %s — ignored "
                 "(its files would be catalogued twice)",
@@ -555,12 +557,7 @@ def _without_overlaps(
             )
             continue
         clash = next(
-            (
-                k for k in kept
-                if k.path == bank.path
-                or _is_inside(bank.path, k.path)
-                or _is_inside(k.path, bank.path)
-            ),
+            (k for k in kept if _overlaps(bank.path, k.path)),
             None,
         )
         if clash is not None:

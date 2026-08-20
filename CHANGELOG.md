@@ -20,6 +20,16 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Added
 
+- **`tests/test_package_api.py` — the public surface now has a test.**
+  `__all__`, the `TYPE_CHECKING` import block and the new `_LAZY_ATTRS` map
+  each spell out the exported names, and a type checker reads only the first
+  two. Dropping one name from `_LAZY_ATTRS` left all 499 tests passing while
+  `from multiplai_core import <name>` raised `ImportError` — so every exported
+  name is now asserted to resolve both as an attribute and through a real
+  import in a fresh interpreter, the three lazy submodules are asserted to
+  survive a bare `import multiplai_core`, and a subprocess check pins the
+  headline claim that `asyncio` stays out of `sys.modules`.
+
 - **`hook_run()` — two log lines that make a killed hook diagnosable.** New
   `hook_run(name, logger, *, session_id=None)` context manager and the `HookRun`
   it yields (`run.stage("router")`, `run.note(injected=3)`). Wrapping a hook's
@@ -160,6 +170,47 @@ not backfilled; their contents are recoverable from `git log`.
   release (2026-08-14). If you pin `claude-agent-sdk` yourself below 0.2.139,
   `multiplai-core[sdk]` will no longer solve alongside it. The `<0.3` ceiling is
   unchanged.
+
+- **`import multiplai_core` no longer imports `asyncio` (lazy submodules).**
+  The asyncio-heavy modules — `agent_runner`, `aio`, `model_client` — are now
+  imported lazily via PEP 562. Every exported name still resolves through
+  `from multiplai_core import X` exactly as before, and
+  `multiplai_core.agent_runner` attribute access still works after a bare
+  `import multiplai_core`; the import just happens on first use. Measured on
+  the dev tree: package import drops ~35 ms → ~19 ms, which is real money
+  inside a hook budget that only needs `get_paths()` / `option()` /
+  `log_event()`. **What you must change:** nothing — unless you relied on
+  `import multiplai_core` alone having already imported those submodules as a
+  side effect (e.g. checking `sys.modules`), which was never documented.
+
+  One consequence worth stating outright: `MULTIPLAI_SDK_CALL_TIMEOUT_S` is
+  read once when `model_client` is first imported, and that moment is now the
+  first use of the model path rather than `import multiplai_core`. The
+  instruction changes from "set it before import" to "set it before your first
+  model call" — strictly more forgiving, but a different moment than the old
+  docstring named.
+
+- **Internal simplification pass — no public API change.** One shared
+  `_env_float` (model_client now imports agent_runner's), one atomic-write
+  helper in `config`, one merge-or-rename helper in `log_utils` (rotation now
+  streams via `shutil.copyfileobj` instead of slurping the old log into
+  memory), the workspace-base cascade in `paths.resolve()` computed once
+  instead of walking the marker discovery twice, `extract_json` rebuilt on
+  `json.JSONDecoder.raw_decode` (unbalanced-JSON failures now raise
+  `json.JSONDecodeError` — still a `ValueError`, message text differs),
+  single-pass breaker replacement in `untrusted.defang`, and dead code removed
+  (`model_client._DISALLOWED_TOOLS` no-op restatement, `env._EFFORT_TIERS`
+  alias, an unused `deny_list` import). A failed `write_session_state` also no
+  longer leaves a stale temp file behind — the cleanup `save_yaml` already had
+  now applies to both writers, and the temp name carries pid + random suffix
+  so two writers of the same file cannot delete each other's in-flight temp.
+
+  Two behavior notes, because "no API change" is not the same as "nothing
+  moved": `defang` and `Paths.resolve()` were checked exhaustively against the
+  previous implementations (240,000 adversarial strings and 384 environment
+  combinations respectively, zero differences), but **when
+  `MULTIPLAI_SDK_CALL_TIMEOUT_S` is read has changed** — see the lazy-submodule
+  entry above.
 
 - **Workspace discovery now walks up to the nearest `.multiplai/` marker.**
   `Paths` resolution gains a third step between `$WORKSPACE` and the

@@ -670,24 +670,6 @@ class TestModuleSingleton:
             f"Module-level paths is {type(paths).__name__}, expected Paths"
         )
 
-    def test_module_level_paths_has_accessors(self, reset_paths_cache):
-        """Module-level paths must support all accessor methods."""
-        from multiplai_core.paths import paths
-
-        # Verify all accessors are callable
-        assert callable(paths.plugin_root)
-        assert callable(paths.plugin_data)
-        assert callable(paths.memory_dir)
-        assert callable(paths.diary_dir)
-        assert callable(paths.venv_dir)
-        assert callable(paths.catalogs_dir)
-        assert callable(paths.logs_dir)
-        assert callable(paths.templates_dir)
-        assert callable(paths.scripts_dir)
-        assert callable(paths.dream_state_file)
-        assert callable(paths.learnings_file)
-        assert callable(paths.is_plugin_mode)
-
 
 # ---------------------------------------------------------------------------
 # Public import surface
@@ -695,26 +677,15 @@ class TestModuleSingleton:
 
 
 class TestPublicImports:
-    """The documented public import paths resolve (including the lazily-
-    resolved `paths` singleton via PEP 562 module __getattr__)."""
+    """The one non-obvious import path: the `paths` singleton is resolved
+    lazily via PEP 562 module __getattr__ (a plain module attribute would
+    read env vars at import time and cache them forever)."""
 
     def test_lib_paths_importable(self):
         """from multiplai_core.paths import paths must work (lazy resolution)."""
         from multiplai_core.paths import paths
 
         assert paths is not None
-
-    def test_lib_paths_get_paths_importable(self):
-        """from multiplai_core.paths import get_paths must work."""
-        from multiplai_core.paths import get_paths
-
-        assert callable(get_paths)
-
-    def test_lib_paths_class_importable(self):
-        """from multiplai_core.paths import Paths must work."""
-        from multiplai_core.paths import Paths
-
-        assert callable(Paths.resolve)
 
 
 # ---------------------------------------------------------------------------
@@ -827,3 +798,192 @@ class TestEdgeCases:
 
         p = Paths.resolve()
         assert p.plugin_data() == Path.home() / ".multiplai" / "data"
+
+
+# ---------------------------------------------------------------------------
+# Marker-based workspace discovery
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceDiscovery:
+    """Requirement: a workspace is findable without the launcher exporting it.
+
+    Moved here from test_banks.py: these tests exercise paths.resolve()'s
+    marker walk-up and data_dir cascade, not banks.py.
+    """
+
+    def test_marker_directory_is_discovered_from_project_dir(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        (tmp_path / ".multiplai").mkdir()
+        nested = tmp_path / "PROJECTS" / "thing" / "src"
+        nested.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(nested))
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().memory_dir() == tmp_path / ".multiplai" / "memory"
+
+    def test_explicit_workspace_still_wins(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        (tmp_path / "discovered" / ".multiplai").mkdir(parents=True)
+        explicit = tmp_path / "explicit"
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "discovered"))
+        monkeypatch.setenv("WORKSPACE", str(explicit))
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().memory_dir() == explicit / ".multiplai" / "memory"
+
+    def test_no_project_dir_means_no_discovery(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        """The cwd is never a start point — resolution must not depend on it."""
+        (tmp_path / ".multiplai").mkdir()
+        monkeypatch.chdir(tmp_path)
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().memory_dir() == Path.home() / ".multiplai" / "memory"
+
+    def test_no_marker_anywhere_falls_back_to_standalone(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        nested = tmp_path / "a" / "b"
+        nested.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(nested))
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().memory_dir() == Path.home() / ".multiplai" / "memory"
+
+    def test_a_managed_data_dir_survives_discovery(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        """Requirement: discovery must not relocate an install's runtime state.
+
+        This is the case the change is most likely to break and the one the
+        CHANGELOG makes a promise about. ``CLAUDE_PLUGIN_DATA`` is a fact about
+        the install; a discovered marker is an inference. Ranking discovery
+        above it moves ``data_dir`` — and with it ``venv_dir``,
+        ``catalogs_dir``, logs and dream state — for every plugin install with
+        no ``WORKSPACE``, orphaning an already-bootstrapped venv and catalogs.
+        """
+        (tmp_path / ".multiplai").mkdir()
+        nested = tmp_path / "PROJECTS" / "thing"
+        nested.mkdir(parents=True)
+        managed = tmp_path / "managed-data"
+        managed.mkdir()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(nested))
+        monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(managed))
+        from multiplai_core.paths import Paths
+
+        resolved = Paths.resolve()
+        assert resolved.data_dir() == managed.resolve()
+        assert resolved.venv_dir() == managed.resolve() / "venv"
+        # memory_dir *does* follow the discovered workspace — that is the
+        # whole point of discovery, and it is not runtime state.
+        assert resolved.memory_dir() == tmp_path / ".multiplai" / "memory"
+
+    def test_discovery_still_rescues_the_standalone_data_dir(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        """The case discovery exists for: no WORKSPACE and no managed data dir."""
+        (tmp_path / ".multiplai").mkdir()
+        nested = tmp_path / "PROJECTS" / "thing"
+        nested.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(nested))
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().data_dir() == tmp_path / ".multiplai" / "data"
+
+    def test_an_explicit_workspace_still_beats_a_managed_data_dir(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        managed = tmp_path / "managed-data"
+        managed.mkdir()
+        explicit = tmp_path / "explicit"
+        monkeypatch.setenv("WORKSPACE", str(explicit))
+        monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(managed))
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().data_dir() == explicit / ".multiplai" / "data"
+
+    def test_home_itself_is_not_a_discovered_workspace(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        """``~/.multiplai`` is the standalone layout, not a workspace.
+
+        The marker test used to run before the home boundary, so any session
+        rooted at ``$HOME`` with no closer marker discovered ``~/.multiplai``
+        and relocated ``data_dir`` off the managed dir — the common case for a
+        plain install, not an edge case.
+        """
+        fake_home = tmp_path / "home"
+        (fake_home / ".multiplai").mkdir(parents=True)
+        managed = tmp_path / "managed-data"
+        managed.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(fake_home))
+        monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(managed))
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().data_dir() == managed.resolve()
+
+    @pytest.mark.parametrize("value", [".", "..", "relative/path"])
+    def test_a_relative_project_dir_is_not_a_start_point(
+        self, monkeypatch, tmp_path, reset_paths_cache, value
+    ):
+        """Requirement: resolution never depends on the cwd.
+
+        ``Path(".").resolve()`` re-introduces the cwd through the back door —
+        the one thing the marker walk's docstring forbids, and the reason a
+        test run from the wrong directory could resolve against a live corpus.
+        """
+        (tmp_path / ".multiplai").mkdir()
+        nested = tmp_path / "a" / "b"
+        nested.mkdir(parents=True)
+        monkeypatch.chdir(nested)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", value)
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().memory_dir() == Path.home() / ".multiplai" / "memory"
+
+    def test_the_walk_is_bounded(self, monkeypatch, tmp_path, reset_paths_cache):
+        """``_MARKER_MAX_DEPTH`` could be set to 1 and nothing would notice."""
+        from multiplai_core import paths as paths_mod
+
+        (tmp_path / ".multiplai").mkdir()
+        deep = tmp_path
+        for i in range(paths_mod._MARKER_MAX_DEPTH + 2):
+            deep = deep / f"d{i}"
+        deep.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(deep))
+
+        assert paths_mod.Paths.resolve().memory_dir() == Path.home() / ".multiplai" / "memory"
+
+        # ... and one level inside the bound still finds it.
+        paths_mod._reset_cache()
+        near = tmp_path
+        for i in range(paths_mod._MARKER_MAX_DEPTH - 2):
+            near = near / f"n{i}"
+        near.mkdir(parents=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(near))
+        assert paths_mod.Paths.resolve().memory_dir() == tmp_path / ".multiplai" / "memory"
+
+    @pytest.mark.parametrize("value", ["/", "/nonexistent-path-xyz"])
+    def test_odd_absolute_project_dirs_do_not_raise(
+        self, monkeypatch, tmp_path, reset_paths_cache, value
+    ):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", value)
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().memory_dir() is not None
+
+    def test_a_marker_that_is_a_file_does_not_count(
+        self, monkeypatch, tmp_path, reset_paths_cache
+    ):
+        (tmp_path / ".multiplai").write_text("not a dir", encoding="utf-8")
+        nested = tmp_path / "a"
+        nested.mkdir()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(nested))
+        from multiplai_core.paths import Paths
+
+        assert Paths.resolve().memory_dir() == Path.home() / ".multiplai" / "memory"

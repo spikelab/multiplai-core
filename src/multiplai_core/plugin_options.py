@@ -92,49 +92,47 @@ def option(name: str, default: str = "") -> str:
     return value if value else default
 
 
+def _parse_bool(raw: str) -> bool:
+    lowered = raw.lower()
+    if lowered in _TRUE:
+        return True
+    if lowered in _FALSE:
+        return False
+    raise ValueError(raw)
+
+
+def _option_typed(name: str, default, parse):
+    """Shared skeleton for the typed accessors.
+
+    One home for the malformed-value policy (warn, yield the default) so a
+    change to it cannot reach two of the three accessors and miss the third.
+    """
+    raw = option(name)
+    if not raw:
+        return default
+    try:
+        return parse(raw)
+    except ValueError:
+        logger.warning(
+            "Malformed plugin option %s=%r; using default %s", name, raw, default
+        )
+        return default
+
+
 def option_bool(name: str, default: bool) -> bool:
     """Return option *name* as a bool, or *default* when unset or malformed.
 
     Accepts ``true/1/yes/on`` and ``false/0/no/off``, case-insensitively.
     Anything else warns and yields *default*.
     """
-    raw = option(name)
-    if not raw:
-        return default
-    lowered = raw.lower()
-    if lowered in _TRUE:
-        return True
-    if lowered in _FALSE:
-        return False
-    logger.warning(
-        "Malformed plugin option %s=%r; using default %s", name, raw, default
-    )
-    return default
+    return _option_typed(name, default, _parse_bool)
 
 
 def option_int(name: str, default: int) -> int:
     """Return option *name* as an int, or *default* when unset or malformed."""
-    raw = option(name)
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning(
-            "Malformed plugin option %s=%r; using default %d", name, raw, default
-        )
-        return default
+    return _option_typed(name, default, int)
 
 
 def option_float(name: str, default: float) -> float:
     """Return option *name* as a float, or *default* when unset or malformed."""
-    raw = option(name)
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        logger.warning(
-            "Malformed plugin option %s=%r; using default %s", name, raw, default
-        )
-        return default
+    return _option_typed(name, default, float)
