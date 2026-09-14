@@ -18,6 +18,35 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`costing.refresh_pricing()` — list prices are fetched, not hand-copied.**
+  It GETs the official pricing page (`PRICING_URL`, the docs site's markdown
+  rendering), parses the model table with `parse_pricing_markdown()` and
+  writes `<data_dir>/costs/pricing.json`; `load_pricing()` now prefers that
+  file, merged over the bundled snapshot so retired models stay priced. The
+  fetch is skipped while the cached file is under a day old and never raises:
+  offline, the bundled table is used and a WARNING is logged. New helpers:
+  `fetch_live_pricing()`, `model_id_from_display_name()`, `tier_prices()`,
+  `pricing_cache_path()`, `pricing_age_days()`, `reset_pricing_cache()`.
+- **Per-tier prices in `pricing.json`.** A model entry may state `cw5m`,
+  `cw1h` and `cr` per MTok explicitly; the multipliers stay as the default.
+  Needed because Claude Fable 5.1 and Mythos 5.1 read cache at 0.025× input
+  ($0.25/MTok), not the 0.1× every other model uses.
+- **Unknown models are warned about once per process** in
+  `resolve_model_rates()`, on top of the existing `pricing_fallback` flag.
+
+### Fixed
+
+- **Bundled `pricing.json` was stale in three ways** (verified against the
+  pricing page on 2026-09-13): `claude-sonnet-5` was listed at $3/$15, the
+  Sonnet 4.6 rate — the real price is $2/$10, so every Sonnet 5 record was
+  overstated by 50%; `claude-opus-5` was missing and priced at fallback (the
+  fallback happens to equal its $5/$25 list price, so the flag was wrong but
+  the number was right); `claude-fable-5-1` / `claude-mythos-5-1` were
+  missing and their cache reads were priced at $1.00/MTok instead of $0.25.
+  Existing ledger records keep the price they were written with.
+
 ## [0.14.0] – 2026-08-20
 
 ### Added
