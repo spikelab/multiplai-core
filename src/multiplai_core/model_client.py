@@ -356,16 +356,26 @@ class AnthropicAPIClient:
         client here has its own transport timeouts. Ignoring it keeps a caller
         that escalates the timeout for one large request working against either
         backend instead of raising ``TypeError`` on the fallback client.
+
+        *temperature* is accepted for parity and never sent: the 1.x SDK
+        removed ``temperature``/``top_p``/``top_k`` from ``messages.create()``
+        (passing them raises ``TypeError``), and every current model rejects
+        them with a 400 anyway. A non-default value is logged so a caller that
+        relied on it can see the no-op.
         """
         if effort is not None:
             logger.debug("AnthropicAPIClient ignores effort=%s (not a Messages API param)", effort)
+        if temperature != 1.0:
+            logger.warning(
+                "AnthropicAPIClient ignores temperature=%s: sampling parameters are "
+                "not accepted by the Messages API on current models", temperature,
+            )
         if timeout_s is not None:
             logger.debug("AnthropicAPIClient ignores timeout_s=%s (SDK-path guard)", timeout_s)
         client = self._ensure_client()
         create_kwargs: dict = dict(
             model=model,
             max_tokens=max_tokens,
-            temperature=temperature,
             system=cacheable_system(system),
             messages=messages,
         )
