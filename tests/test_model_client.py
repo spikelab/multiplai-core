@@ -470,6 +470,30 @@ class TestAnthropicAPIClient:
 
             asyncio.run(_test())
 
+
+    def test_temperature_is_never_sent_to_the_api(self, caplog):
+        """WHEN AnthropicAPIClient.query() is called with a non-default temperature
+        THEN messages.create() receives no sampling parameter (the 1.x SDK raises
+        TypeError on temperature/top_p/top_k) and the no-op is logged."""
+        import logging
+
+        from multiplai_core.model_client import AnthropicAPIClient
+
+        mock_anthropic, mock_async_client = _mock_anthropic("ok")
+
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            client = AnthropicAPIClient("sk-test-key")
+            client._client = None
+
+            async def _test():
+                with caplog.at_level(logging.WARNING):
+                    await client.query("s", [{"role": "user", "content": "hi"}], temperature=0.0)
+                kwargs = mock_async_client.messages.create.call_args.kwargs
+                assert "temperature" not in kwargs
+                assert "top_p" not in kwargs and "top_k" not in kwargs
+                assert "ignores temperature=0.0" in caplog.text
+
+            asyncio.run(_test())
     def test_model_override(self):
         """WHEN query() is called with model='claude-opus-4-20250514'
         THEN the request uses that model instead of the default."""
