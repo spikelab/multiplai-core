@@ -208,6 +208,64 @@ def test_parse_pricing_markdown_reads_only_model_table():
     assert "claude-opus-5-/-claude-opus-4-8" not in models
 
 
+def test_parse_pricing_markdown_reads_columns_by_heading():
+    reordered = """## Model pricing
+
+| Model | Output tokens | Base input tokens | Cache hits and refreshes | 1h cache writes | 5m cache writes |
+| --- | --- | --- | --- | --- | --- |
+| Claude Sonnet 5 | $10 / MTok | $2 / MTok | $0.20 / MTok | $4 / MTok | $2.50 / MTok |
+"""
+    models = costing.parse_pricing_markdown(reordered)
+    assert models["claude-sonnet-5"] == {"in": 2.0, "out": 10.0, "cw5m": 2.5, "cw1h": 4.0, "cr": 0.2}
+
+
+def test_parse_pricing_markdown_skips_inconsistent_rows(caplog):
+    page = """## Model pricing
+
+| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |
+| --- | --- | --- | --- | --- | --- |
+| Claude Sonnet 5 | $10 / MTok | $2.50 / MTok | $4 / MTok | $0.20 / MTok | $2 / MTok |
+| Claude Opus 5 | $5 / MTok | $6.25 / MTok | $10 / MTok | $0.50 / MTok | $25 / MTok |
+"""
+    with caplog.at_level("WARNING"):
+        models = costing.parse_pricing_markdown(page)
+    assert set(models) == {"claude-opus-5"}
+    assert "sanity check" in caplog.text
+
+
+def test_parse_pricing_markdown_ignores_tables_without_price_header():
+    page = """## Model pricing
+
+| Model | Fast mode input | Fast mode output |
+| --- | --- | --- |
+| Claude Opus 5 | $30 / MTok | $150 / MTok |
+"""
+    assert costing.parse_pricing_markdown(page) == {}
+
+
+def test_fetch_live_pricing_rejects_a_partial_table(monkeypatch):
+    partial = """## Model pricing
+
+| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |
+| --- | --- | --- | --- | --- | --- |
+| Claude Opus 5 | $5 / MTok | $6.25 / MTok | $10 / MTok | $0.50 / MTok | $25 / MTok |
+"""
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return partial.encode()
+
+    monkeypatch.setattr(costing.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    with pytest.raises(ValueError, match="below the floor"):
+        costing.fetch_live_pricing()
+
+
 def test_parse_pricing_markdown_without_section_is_empty():
     assert costing.parse_pricing_markdown("# nothing here\n| Claude Opus 5 | $5 / MTok |") == {}
 

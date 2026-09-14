@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import urllib.request
 from dataclasses import dataclass
@@ -133,17 +134,46 @@ def model_id_from_display_name(name: str) -> str:
     return _DISPLAY_NAME_IDS.get(model_id, model_id)
 
 
+# Header cell → price key. Columns are located by these headings, never by
+# position, so a reordered page cannot swap input for output silently.
+_PRICE_COLUMNS = (
+    ("base input", "in"),
+    ("5m cache", "cw5m"),
+    ("1h cache", "cw1h"),
+    ("cache hit", "cr"),
+    ("output", "out"),
+)
+
+
+def _price_columns(header: str) -> dict[str, int] | None:
+    """Map price keys to cell indices from a table header row, or ``None``."""
+    cells = [c.strip().lower() for c in header.strip().strip("|").split("|")]
+    if not cells or cells[0] != "model":
+        return None
+    columns: dict[str, int] = {}
+    for needle, key in _PRICE_COLUMNS:
+        hits = [i for i, c in enumerate(cells[1:], start=1) if needle in c]
+        if len(hits) != 1:
+            return None
+        columns[key] = hits[0] - 1  # index into the price cells after Model
+    return columns
+
+
 def parse_pricing_markdown(text: str) -> dict[str, dict[str, float]]:
     """Extract ``{model_id: {in, out, cw5m, cw1h, cr}}`` from the pricing page.
 
-    Reads the first table under ``## Model pricing`` whose rows have five
-    ``$N / MTok`` cells: base input, 5m write, 1h write, cache read, output.
-    Rows with a different cell count (fast-mode and batch tables) are ignored.
-    Returns an empty dict when the section is missing, so a page redesign
-    fails loudly in the caller rather than writing an empty table.
+    Reads the tables under ``## Model pricing`` whose header names all five
+    price columns (base input, 5m cache writes, 1h cache writes, cache hits,
+    output); each price is taken from the column its heading names, so a
+    reordered table still parses correctly. Tables without such a header
+    (fast-mode and batch tables) are ignored, as is any row whose prices are
+    not internally consistent (output below input, or cache reads above
+    input). Returns an empty dict when the section is missing, so a page
+    redesign fails loudly in the caller rather than writing an empty table.
     """
     models: dict[str, dict[str, float]] = {}
     in_section = False
+    columns: dict[str, int] | None = None
     for line in text.splitlines():
         if line.startswith("## "):
             if in_section:
@@ -152,18 +182,30 @@ def parse_pricing_markdown(text: str) -> dict[str, dict[str, float]]:
             continue
         if not in_section:
             continue
+        header = _price_columns(line)
+        if header is not None:
+            columns = header
+            continue
         row = _PRICE_ROW.match(line)
-        if not row:
+        if not row or columns is None:
             continue
-        prices = [float(m) for m in _PRICE_CELL.findall(row.group(2))]
-        if len(prices) != 5:
+        cells = row.group(2).split("|")
+        prices: dict[str, float] = {}
+        for key, index in columns.items():
+            cell = _PRICE_CELL.search(cells[index]) if index < len(cells) else None
+            if cell is None:
+                break
+            prices[key] = float(cell.group(1))
+        if len(prices) != len(columns):
             continue
-        base_in, cw5m, cw1h, cr, out = prices
+        if prices["out"] < prices["in"] or prices["cr"] > prices["in"]:
+            logger.warning("Pricing row for %r fails the sanity check, skipped: %s", row.group(1), prices)
+            continue
         try:
             model_id = model_id_from_display_name(row.group(1))
         except ValueError:
             continue
-        models[model_id] = {"in": base_in, "out": out, "cw5m": cw5m, "cw1h": cw1h, "cr": cr}
+        models[model_id] = prices
     return models
 
 
@@ -173,8 +215,11 @@ def fetch_live_pricing(url: str = PRICING_URL, timeout: float = 10.0) -> dict[st
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         text = resp.read().decode("utf-8", errors="replace")
     models = parse_pricing_markdown(text)
-    if not models:
-        raise ValueError(f"no model pricing table found at {url}")
+    floor = max(1, len(_bundled_pricing()["models"]) // 2)
+    if len(models) < floor:
+        raise ValueError(
+            f"model pricing table at {url} parsed {len(models)} models, below the floor of {floor}"
+        )
     return models
 
 
@@ -209,7 +254,7 @@ def refresh_pricing(
         "models": models,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     tmp.replace(path)
     reset_pricing_cache()
