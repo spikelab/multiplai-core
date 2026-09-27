@@ -53,6 +53,15 @@ not backfilled; their contents are recoverable from `git log`.
   names its transcript under `hook-sessions/`. Consumers see these lines only
   if their logger setup forwards `multiplai_core` (`setup_logging(...,
   propagate_loggers=("multiplai_core",))`).
+- **`hook_run(..., watchdog_s=, on_watchdog=)` leaves a line behind before a
+  harness kill.** When the body is still running after `watchdog_s` seconds,
+  a daemon timer writes `HOOK_WATCHDOG hook=… ms=… pid=… stage=<running>
+  stages=<finished>` at WARNING. It then calls `on_watchdog(run)` for
+  hook-specific diagnostics, and any exception from that callback is
+  swallowed. A run that finishes after the line fired gets `watchdog=fired`
+  on its EXIT line. Until now a hook killed at its timeout left only
+  `HOOK_ENTRY`. New `HookRun.current_stage` returns the innermost stage still
+  running. Both keywords default to off, so existing callers are unchanged.
 - **Unknown models are warned about once per process** in
   `resolve_model_rates()`, on top of the existing `pricing_fallback` flag.
 
