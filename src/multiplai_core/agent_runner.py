@@ -35,6 +35,14 @@ Every invocation always gets the isolation/hardening bundle:
 Every run also logs an ``alive`` heartbeat at INFO while an attempt is in
 flight, every ``MULTIPLAI_AGENT_HEARTBEAT_S`` seconds (default 60; ``0`` or
 negative disables it). Set it to ``0`` if a caller's log must stay quiet.
+
+Every attempt also writes the CLI's debug stderr to a file under
+``<logs_dir>/sdk/`` as the lines arrive, so the file survives the calling
+process being killed. It is deleted after a fast successful attempt and kept
+after a failed, timed-out or slow one (``MULTIPLAI_SDK_DEBUG_KEEP_S``, default
+10; ``0`` keeps every file). ``MULTIPLAI_SDK_DEBUG_LOG=off`` turns it off.
+Files older than the log retention (``MULTIPLAI_LOG_RETENTION_DAYS``) are
+deleted once per process.
 """
 
 from __future__ import annotations
@@ -44,10 +52,13 @@ import contextlib
 import itertools
 import logging
 import os
+import re
 import tempfile
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 
 from .aio import hard_timeout
 
@@ -78,6 +89,19 @@ _STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
 # "slow but producing" from "stalled with nothing".
 _HEARTBEAT_ENV = "MULTIPLAI_AGENT_HEARTBEAT_S"
 _HEARTBEAT_DEFAULT_S = 60.0
+
+# CLI debug stderr on disk, per attempt. The in-memory capture above is only
+# summarized when an attempt ends, so a caller that is killed mid-call (a hook
+# at its harness ceiling) lost every line: on 2026-09-27 a memory-router call
+# stalled for 26s and the only record left was the hook's HOOK_ENTRY line. The
+# file is written line by line and flushed, so it outlives a SIGKILL of this
+# process, and it holds the CLI's own record of the call: auth check, request
+# dispatch with its x-client-request-id, first stream chunk, retries.
+_DEBUG_LOG_ENV = "MULTIPLAI_SDK_DEBUG_LOG"      # "off" disables the file
+_DEBUG_KEEP_ENV = "MULTIPLAI_SDK_DEBUG_KEEP_S"  # keep successes at least this slow
+_DEBUG_KEEP_DEFAULT_S = 10.0
+_DEBUG_LOG_SUBDIR = "sdk"
+_debug_logs_swept = False
 
 # Under permission_mode="bypassPermissions" ``allowed_tools`` is only an
 # allow-list: it adds nothing to the deny side, so every default tool stays
@@ -202,6 +226,8 @@ class AgentRunError(RuntimeError):
     many attempts were made; ``partial`` the result assembled up to the
     failure point (text/turns/files/usage), for callers that degrade to
     partial output instead of failing hard (buildme's agent_call).
+    ``debug_log_path`` is the last attempt's full CLI debug log on disk
+    (``""`` when the file was off or could not be written).
     """
 
     def __init__(
@@ -212,11 +238,13 @@ class AgentRunError(RuntimeError):
         attempts: int = 1,
         stderr_tail: str = "",
         partial: AgentRunResult | None = None,
+        debug_log_path: str = "",
     ) -> None:
         self.reason = reason or message
         self.attempts = attempts
         self.stderr_tail = stderr_tail
         self.partial = partial
+        self.debug_log_path = debug_log_path
         parts = [message]
         if stderr_tail:
             parts.append("--- captured CLI stderr (errors) ---")
@@ -240,6 +268,89 @@ def _summarize_stderr(error_lines: list[str], recent_lines: list[str]) -> str:
         deduped = [line for line, _ in itertools.groupby(error_lines)]
         return "\n".join(deduped[-_STDERR_MAX_ERROR_LINES:])
     return "\n".join(recent_lines[-_STDERR_RING_LINES:])
+
+
+def _sweep_debug_logs(sdk_dir: Path) -> None:
+    """Delete debug-log files older than the log retention, once per process."""
+    global _debug_logs_swept
+    if _debug_logs_swept:
+        return
+    _debug_logs_swept = True
+    from .log_utils import retention_days
+
+    days = retention_days()
+    if days <= 0:
+        return
+    cutoff = time.time() - days * 86400
+    for path in sdk_dir.glob("*.log"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
+
+
+class _DebugLog:
+    """One attempt's CLI stderr, written to disk as each line arrives.
+
+    Never raises into the run: a failure to open or write disables the file
+    and logs one warning. Writes after :meth:`close` (the CLI subprocess of a
+    timed-out attempt can keep emitting) are dropped.
+    """
+
+    def __init__(self, path: Path, fh: IO[str], label: str) -> None:
+        self.path = path
+        self._fh: IO[str] | None = fh
+        self._label = label
+
+    @classmethod
+    def open(cls, label: str, component: str, attempt: int) -> "_DebugLog | None":
+        if os.environ.get(_DEBUG_LOG_ENV, "").strip().lower() == "off":
+            return None
+        try:
+            from .log_utils import _get_logs_dir
+
+            sdk_dir = _get_logs_dir() / _DEBUG_LOG_SUBDIR
+            sdk_dir.mkdir(parents=True, exist_ok=True)
+            _sweep_debug_logs(sdk_dir)
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            name = re.sub(
+                r"[^A-Za-z0-9_.-]+", "_",
+                f"{stamp}-{component or 'agent'}-{label}-p{os.getpid()}-a{attempt + 1}",
+            )
+            path = sdk_dir / f"{name}.log"
+            # buffering=1: line-buffered, so every line reaches the OS as it
+            # is written and survives a kill of this process.
+            fh = open(path, "a", encoding="utf-8", buffering=1)
+        except Exception:  # noqa: BLE001 — diagnostics must not break a run
+            logger.warning(
+                "run_agent [%s]: could not open CLI debug log (ignored)",
+                label, exc_info=True,
+            )
+            return None
+        return cls(path, fh, label)
+
+    def write(self, line: str) -> None:
+        fh = self._fh
+        if fh is None:
+            return
+        try:
+            fh.write(line if line.endswith("\n") else line + "\n")
+        except Exception:  # noqa: BLE001
+            self._fh = None
+            logger.warning(
+                "run_agent [%s]: CLI debug log write failed; stopped writing %s",
+                self._label, self.path,
+            )
+
+    def close(self, *, keep: bool) -> None:
+        fh, self._fh = self._fh, None
+        if fh is not None:
+            with contextlib.suppress(Exception):
+                fh.close()
+        if not keep:
+            with contextlib.suppress(OSError):
+                self.path.unlink()
 
 
 def _hook_session_dir() -> Path:
@@ -401,6 +512,7 @@ async def run_agent(
     text_cls = _sdk_class(sdk, "TextBlock")
     tool_use_cls = _sdk_class(sdk, "ToolUseBlock")
     result_cls = _sdk_class(sdk, "ResultMessage")
+    system_cls = _sdk_class(sdk, "SystemMessage")
 
     effective_tools = list(allowed_tools or [])
     # Guard merged LAST so a caller's env can never clear it: the reversed
@@ -462,6 +574,7 @@ async def run_agent(
     last_tail = ""
     last_partial: AgentRunResult | None = None
     last_session_id = ""
+    last_debug_path = ""
     any_attempt_failed = False
     timed_out = False
 
@@ -472,8 +585,18 @@ async def run_agent(
             # never evicted by a DEBUG burst.
             recent_lines: deque[str] = deque(maxlen=_STDERR_RING_LINES)
             error_lines: list[str] = []
+            debug_log = _DebugLog.open(label, component, attempt)
+            if debug_log is not None:
+                logger.info(
+                    "run_agent [%s] attempt=%d/%d CLI debug log: %s",
+                    label, attempt + 1, max_attempts, debug_log.path,
+                )
 
-            def _on_stderr(line: str, _r=recent_lines, _e=error_lines) -> None:
+            def _on_stderr(
+                line: str, _r=recent_lines, _e=error_lines, _d=debug_log,
+            ) -> None:
+                if _d is not None:
+                    _d.write(line)
                 _r.append(line)
                 if "[ERROR]" in line and len(_e) < _STDERR_ERROR_CAPTURE_CAP:
                     _e.append(line)
@@ -535,6 +658,7 @@ async def run_agent(
             turns = 0
             usage = AgentUsage()
             session_id = ""
+            attempt_start = loop.time()
 
             async def _consume() -> None:
                 # Hold the generator explicitly and aclose() it in finally: on
@@ -544,9 +668,31 @@ async def run_agent(
                 # while a retry spawns a second one.
                 nonlocal turns, usage, session_id, text_bytes
                 gen = _safe_query(sdk, prompt=prompt, options=options)
+                # Two timing lines split a slow call in two: CLI startup
+                # (spawn, auth, config) versus the model request itself. A
+                # stall with neither line means the CLI never came up.
+                cli_ready_logged = False
                 try:
                     async for message in gen:
+                        if not cli_ready_logged:
+                            cli_ready_logged = True
+                            child = ""
+                            if system_cls and isinstance(message, system_cls):
+                                data = getattr(message, "data", None) or {}
+                                if isinstance(data, dict):
+                                    child = data.get("session_id") or ""
+                            logger.info(
+                                "run_agent [%s] CLI ready after %.1fs "
+                                "child_session=%s",
+                                label, loop.time() - attempt_start,
+                                child or "?",
+                            )
                         if assistant_cls and isinstance(message, assistant_cls):
+                            if turns == 0:
+                                logger.info(
+                                    "run_agent [%s] first reply after %.1fs",
+                                    label, loop.time() - attempt_start,
+                                )
                             turns += 1
                             for block in message.content:
                                 if text_cls and isinstance(block, text_cls):
@@ -602,8 +748,10 @@ async def run_agent(
             )
             backoff_s = 0.0
 
+            attempt_ok = False
             try:
                 await hard_timeout(_consume(), timeout_s)
+                attempt_ok = True
                 elapsed = loop.time() - run_start
                 logger.info(
                     "DONE run_agent [%s] attempt=%d/%d turns=%d text=%d bytes "
@@ -641,15 +789,24 @@ async def run_agent(
                     stderr_tail=last_tail,
                 )
                 last_session_id = session_id
+                last_debug_path = str(debug_log.path) if debug_log else ""
                 any_attempt_failed = True
                 if attempt + 1 < max_attempts:
                     logger.warning(
-                        "run_agent [%s] %s (attempt %d/%d), retrying in %.1fs",
+                        "run_agent [%s] %s (attempt %d/%d), retrying in %.1fs"
+                        " — CLI debug log: %s",
                         label, last_reason, attempt + 1, max_attempts,
-                        retry_backoff_s,
+                        retry_backoff_s, last_debug_path or "(none)",
                     )
                     backoff_s = retry_backoff_s
             finally:
+                if debug_log is not None:
+                    keep_s = _env_float(_DEBUG_KEEP_ENV, _DEBUG_KEEP_DEFAULT_S)
+                    debug_log.close(keep=(
+                        not attempt_ok
+                        or keep_s <= 0
+                        or loop.time() - attempt_start >= keep_s
+                    ))
                 # Cancel AND await, for the same reason _consume() explicitly
                 # aclose()s its generator: on timeout the attempt is cancelled
                 # fire-and-forget, and a heartbeat left pending would keep
@@ -674,9 +831,11 @@ async def run_agent(
 
     elapsed = loop.time() - run_start
     logger.error(
-        "FAIL run_agent [%s] %s after %d attempt(s) elapsed=%.1fs\n"
+        "FAIL run_agent [%s] %s after %d attempt(s) elapsed=%.1fs "
+        "CLI debug log: %s\n"
         "--- captured CLI stderr (errors) ---\n%s",
-        label, last_reason, max_attempts, elapsed, last_tail or "(none)",
+        label, last_reason, max_attempts, elapsed, last_debug_path or "(none)",
+        last_tail or "(none)",
     )
     if last_partial is not None:
         # Failed runs still spent tokens — record what was consumed.
@@ -688,4 +847,5 @@ async def run_agent(
         attempts=max_attempts,
         stderr_tail=last_tail,
         partial=last_partial,
+        debug_log_path=last_debug_path,
     ) from last_exc
