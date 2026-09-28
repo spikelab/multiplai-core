@@ -33,6 +33,35 @@ not backfilled; their contents are recoverable from `git log`.
   `cw1h` and `cr` per MTok explicitly; the multipliers stay as the default.
   Needed because Claude Fable 5.1 and Mythos 5.1 read cache at 0.025× input
   ($0.25/MTok), not the 0.1× every other model uses.
+- **`run_agent` writes each attempt's CLI debug output to disk as it
+  arrives**, under `<logs_dir>/sdk/<time>-<component>-<label>-p<pid>-n<seq>-a<n>.log`.
+  Until now that output lived only in memory and was summarized when an
+  attempt ended, so a caller killed mid-call (a hook at its 30s ceiling) lost
+  all of it. The file is line-buffered and survives a SIGKILL of the caller.
+  It holds the CLI's own record of the call: auth check, the
+  `x-client-request-id` of each API request, first stream chunk, retries. It
+  is deleted after a successful attempt faster than
+  `MULTIPLAI_SDK_DEBUG_KEEP_S` (default 10; `0` keeps all) and kept otherwise.
+  `MULTIPLAI_SDK_DEBUG_LOG=off` disables it. Files older than
+  `MULTIPLAI_LOG_RETENTION_DAYS` are deleted once per process. The path is
+  logged at attempt start, in the retry warning and in the FAIL line, and is
+  on `AgentRunError.debug_log_path` (new keyword, default `""`).
+- **`run_agent` logs two timing lines per attempt**: `CLI ready after Ns
+  child_session=<id>` on the first message from the CLI, and `first reply
+  after Ns` on the first assistant message. A slow call now shows whether the
+  time went to CLI startup or to the model request, and the child session id
+  names its transcript under `hook-sessions/`. Consumers see these lines only
+  if their logger setup forwards `multiplai_core` (`setup_logging(...,
+  propagate_loggers=("multiplai_core",))`).
+- **`hook_run(..., watchdog_s=, on_watchdog=)` leaves a line behind before a
+  harness kill.** When the body is still running after `watchdog_s` seconds,
+  a daemon timer writes `HOOK_WATCHDOG hook=… ms=… pid=… stage=<running>
+  stages=<finished>` at WARNING. It then calls `on_watchdog(run)` for
+  hook-specific diagnostics, and any exception from that callback is
+  swallowed. A run that finishes after the line fired gets `watchdog=fired`
+  on its EXIT line. Until now a hook killed at its timeout left only
+  `HOOK_ENTRY`. New `HookRun.current_stage` returns the innermost stage still
+  running. Both keywords default to off, so existing callers are unchanged.
 - **Unknown models are warned about once per process** in
   `resolve_model_rates()`, on top of the existing `pricing_fallback` flag.
 

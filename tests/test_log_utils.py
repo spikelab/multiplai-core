@@ -696,3 +696,116 @@ def test_hook_run_sanitizes_the_hook_name(logs_dir):
     assert "hook=context_manager_x" in entry
     for token in entry.split("HOOK_ENTRY ", 1)[1].split():
         assert token.count("=") <= 1
+
+
+# --------------------------------------------------------------------------
+# hook_run watchdog
+# --------------------------------------------------------------------------
+
+
+def _wait_for_line(logs_dir, name, needle, timeout=5.0):
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        path = logs_dir / f"{name}.log"
+        if path.exists():
+            hits = [ln for ln in path.read_text().splitlines() if needle in ln]
+            if hits:
+                return hits
+        _time.sleep(0.01)
+    return []
+
+
+def test_watchdog_names_the_running_stage_before_the_body_ends(logs_dir):
+    """The line must be on disk while the stage is still running.
+
+    That is the case it exists for: the harness kills the hook mid-stage and
+    nothing after HOOK_ENTRY would otherwise be written.
+    """
+    name = _unique("watchdog")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger, session_id="abcdef123456", watchdog_s=0.05) as run:
+        with run.stage("transcript"):
+            pass
+        with run.stage("router"):
+            during = _wait_for_line(logs_dir, name, "HOOK_WATCHDOG")
+
+    assert during, "watchdog line never reached the file"
+    line = during[0]
+    assert f"hook={name}" in line
+    assert "stage=router" in line
+    assert re.search(r"stages=transcript:\d+", line)
+    assert "session=abcdef12" in line
+    assert re.search(r"\bms=\d+", line)
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "watchdog=fired" in exit_line
+
+
+def test_watchdog_stays_quiet_when_the_body_is_fast(logs_dir):
+    import time as _time
+
+    name = _unique("watchdog")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger, watchdog_s=0.2):
+        pass
+    _time.sleep(0.3)
+
+    lines = _lines(logs_dir, name)
+    assert not any("HOOK_WATCHDOG" in ln for ln in lines)
+    assert not any("watchdog=" in ln for ln in lines)
+
+
+def test_watchdog_reports_no_stage_between_stages(logs_dir):
+    name = _unique("watchdog")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger, watchdog_s=0.05):
+        hits = _wait_for_line(logs_dir, name, "HOOK_WATCHDOG")
+
+    assert hits and "stage=-" in hits[0]
+
+
+def test_watchdog_runs_the_callback_and_swallows_its_errors(logs_dir):
+    name = _unique("watchdog")
+    logger = log_utils.setup_logging(name)
+    seen = []
+
+    def _probe(run):
+        seen.append(run.current_stage)
+        logger.warning("probe says dns_ms=12")
+        raise RuntimeError("probe blew up")
+
+    with log_utils.hook_run(name, logger, watchdog_s=0.05, on_watchdog=_probe) as run:
+        with run.stage("router"):
+            hits = _wait_for_line(logs_dir, name, "probe says")
+
+    assert hits
+    assert seen == ["router"]
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "status=ok" in exit_line
+
+
+def test_current_stage_tracks_nesting():
+    run = log_utils.HookRun()
+    assert run.current_stage == ""
+    with run.stage("outer"):
+        assert run.current_stage == "outer"
+        with run.stage("inner"):
+            assert run.current_stage == "inner"
+        assert run.current_stage == "outer"
+    assert run.current_stage == ""
+
+
+def test_watchdog_is_a_reserved_note_field(logs_dir):
+    name = _unique("watchdog")
+    logger = log_utils.setup_logging(name)
+
+    with log_utils.hook_run(name, logger) as run:
+        run.note(watchdog="spoofed")
+
+    exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
+    assert "note_watchdog=spoofed" in exit_line
+    assert " watchdog=" not in exit_line

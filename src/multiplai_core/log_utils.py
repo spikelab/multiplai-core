@@ -38,6 +38,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -548,7 +549,8 @@ _STAGE_NAME_SANITIZE = re.compile(r"[,:=\s]+")
 # `status=` / `ms=` token on the same line, and two parsers would disagree about
 # which one is the hook's real status — so they are prefixed, never overwritten.
 _RESERVED_FIELDS = frozenset(
-    {"hook", "status", "ms", "startup_ms", "session", "stages", "pid", "err"}
+    {"hook", "status", "ms", "startup_ms", "session", "stages", "pid", "err",
+     "watchdog"}
 )
 
 
@@ -641,6 +643,12 @@ class HookRun:
         self._t0 = time.monotonic()
         self._stages: dict[str, float] = {}
         self._fields: dict[str, object] = {}
+        # Stages entered and not yet left, innermost last. Read from the
+        # watchdog thread, so it is replaced, never mutated in place.
+        self._active: tuple[str, ...] = ()
+        # Set by the watchdog thread; a plain attribute so that thread never
+        # writes into _fields while the EXIT line iterates it.
+        self._watchdog_fired = False
 
     @contextmanager
     def stage(self, name: str):
@@ -652,11 +660,22 @@ class HookRun:
         """
         key = _STAGE_NAME_SANITIZE.sub("_", name.strip()) or "unnamed"
         started = time.monotonic()
+        self._active = self._active + (key,)
         try:
             yield
         finally:
             elapsed = (time.monotonic() - started) * 1000.0
             self._stages[key] = self._stages.get(key, 0.0) + elapsed
+            active = list(self._active)
+            if key in active:
+                del active[len(active) - 1 - active[::-1].index(key)]
+            self._active = tuple(active)
+
+    @property
+    def current_stage(self) -> str:
+        """The innermost stage still running, or ``""`` between stages."""
+        active = self._active
+        return active[-1] if active else ""
 
     def note(self, **fields: object) -> None:
         """Attach key=value facts to the EXIT line (e.g. ``injected=3``).
@@ -694,6 +713,8 @@ def hook_run(
     logger: logging.Logger,
     *,
     session_id: str | None = None,
+    watchdog_s: float | None = None,
+    on_watchdog=None,
 ):
     """Bracket a hook's work with an ENTRY line and an EXIT line.
 
@@ -711,6 +732,19 @@ def hook_run(
             carries it when ``setup_logging`` was given one; this is for the
             case where it was not, and the ENTRY line is exactly where it
             matters, because that is the line a killed run leaves behind.
+
+        watchdog_s: When set and positive, a daemon timer writes a
+            ``HOOK_WATCHDOG`` line at WARNING if the body is still running
+            after this many seconds: elapsed ms, the stage still running and
+            the stages finished so far. Set it a few seconds under the
+            harness timeout. A kill leaves nothing after ENTRY; this line
+            says where the time went before the kill. A run that finishes
+            after the line fired has ``watchdog=fired`` on its EXIT line.
+        on_watchdog: Optional ``callable(run)`` invoked on the timer thread
+            right after the ``HOOK_WATCHDOG`` line, for hook-specific
+            diagnostics (a network probe, the tail of a child's log). It
+            should log what it finds itself and return promptly: the harness
+            kill is seconds away. Exceptions from it are swallowed.
 
     Yields:
         A :class:`HookRun` for per-stage timing (``run.stage("router")``) and
@@ -736,6 +770,35 @@ def hook_run(
         entry.append(f"session={sid}")
     _emit_hook_line(logger, logging.INFO, " ".join(entry))
 
+    timer: threading.Timer | None = None
+    if watchdog_s is not None and watchdog_s > 0:
+        def _watchdog() -> None:
+            try:
+                parts = [
+                    f"HOOK_WATCHDOG hook={safe_name}",
+                    f"ms={run.elapsed_ms:.0f}",
+                    f"pid={pid}",
+                ]
+                if sid:
+                    parts.append(f"session={sid}")
+                parts.append(f"stage={run.current_stage or '-'}")
+                stages = run._stages_field()
+                if stages:
+                    parts.append(f"stages={stages}")
+                run._watchdog_fired = True
+                _emit_hook_line(logger, logging.WARNING, " ".join(parts))
+            except Exception:
+                return
+            if on_watchdog is not None:
+                try:
+                    on_watchdog(run)
+                except Exception:
+                    pass
+
+        timer = threading.Timer(watchdog_s, _watchdog)
+        timer.daemon = True
+        timer.start()
+
     status = "ok"
     err = ""
     try:
@@ -756,6 +819,8 @@ def hook_run(
             err = type(exc).__name__
         raise
     finally:
+        if timer is not None:
+            timer.cancel()
         # Build defensively: an exception escaping here would leave an ENTRY
         # with no EXIT, i.e. this instrumentation forging the exact tombstone it
         # exists to make trustworthy. Whatever fails, a line still goes out.
@@ -775,6 +840,8 @@ def hook_run(
             if stages:
                 parts.append(f"stages={stages}")
             parts.extend(f"{k}={v}" for k, v in run._fields.items())
+            if run._watchdog_fired:
+                parts.append("watchdog=fired")
             line = " ".join(parts)
         except Exception:
             line = (

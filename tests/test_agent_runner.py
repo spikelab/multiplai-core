@@ -745,3 +745,225 @@ class TestCostLedgerTap:
         records = list(iter_ledger())
         assert len(records) == 1
         assert records[0]["component"] == "deep-research"
+
+
+# ---------------------------------------------------------------------------
+# CLI debug log on disk
+# ---------------------------------------------------------------------------
+
+
+class _FakeSystemMessage:
+    def __init__(self, subtype: str, data: dict) -> None:
+        self.subtype = subtype
+        self.data = data
+
+
+@pytest.fixture
+def sdk_logs(tmp_path, monkeypatch):
+    """Point run_agent's debug logs at tmp_path/sdk and reset the sweep flag."""
+    import multiplai_core.agent_runner as ar
+
+    monkeypatch.setattr("multiplai_core.log_utils._get_logs_dir", lambda: tmp_path)
+    monkeypatch.setattr(ar, "_debug_logs_swept", False)
+    monkeypatch.delenv("MULTIPLAI_SDK_DEBUG_LOG", raising=False)
+    monkeypatch.delenv("MULTIPLAI_SDK_DEBUG_KEEP_S", raising=False)
+    return tmp_path / "sdk"
+
+
+class TestDebugLog:
+    def test_lines_reach_disk_while_the_call_is_running(self, sdk_logs):
+        seen: dict = {}
+        mock = _make_mock_sdk(stderr_lines=["[DEBUG] [API REQUEST] /v1/messages x-client-request-id=abc"])
+
+        async def _agen(prompt, options):
+            # Read the file mid-call: the line must already be on disk, not
+            # held until the attempt ends.
+            files = list(sdk_logs.glob("*.log"))
+            seen["files"] = files
+            seen["text"] = files[0].read_text() if files else ""
+            yield _FakeAssistantMessage([_FakeTextBlock("ok")])
+
+        mock.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            _run(run_agent("hi", label="router", component="memory-router"))
+        assert len(seen["files"]) == 1
+        assert "x-client-request-id=abc" in seen["text"]
+        assert "memory-router-router" in seen["files"][0].name
+
+    def test_fast_success_deletes_the_file(self, sdk_logs):
+        mock = _make_mock_sdk(stderr_lines=["[DEBUG] hello"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            _run(run_agent("hi"))
+        assert list(sdk_logs.glob("*.log")) == []
+
+    def test_keep_zero_keeps_every_file(self, sdk_logs, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_SDK_DEBUG_KEEP_S", "0")
+        mock = _make_mock_sdk(stderr_lines=["[DEBUG] hello"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            _run(run_agent("hi"))
+        files = list(sdk_logs.glob("*.log"))
+        assert len(files) == 1
+        assert files[0].read_text() == "[DEBUG] hello\n"
+
+    def test_slow_success_keeps_the_file(self, sdk_logs, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_SDK_DEBUG_KEEP_S", "0.05")
+        mock = _make_mock_sdk(stderr_lines=["[DEBUG] hello"])
+
+        async def _agen(prompt, options):
+            await asyncio.sleep(0.1)
+            yield _FakeAssistantMessage([_FakeTextBlock("ok")])
+
+        mock.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            _run(run_agent("hi"))
+        assert len(list(sdk_logs.glob("*.log"))) == 1
+
+    def test_concurrent_same_label_calls_get_their_own_files(self, sdk_logs, monkeypatch):
+        # Two calls in one process, same label and component, started in the
+        # same second. The fast one deletes its file on success; that must not
+        # take the slow one's evidence with it.
+        monkeypatch.setenv("MULTIPLAI_SDK_DEBUG_KEEP_S", "0.05")
+        mock = _make_mock_sdk()
+
+        async def _agen(prompt, options):
+            options.stderr(f"[DEBUG] {prompt}")
+            if prompt == "slow":
+                await asyncio.sleep(0.15)
+            yield _FakeAssistantMessage([_FakeTextBlock("ok")])
+
+        mock.query = MagicMock(side_effect=_agen)
+
+        async def _both():
+            await asyncio.gather(run_agent("slow"), run_agent("fast"))
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            _run(_both())
+        files = list(sdk_logs.glob("*.log"))
+        assert len(files) == 1
+        assert files[0].read_text() == "[DEBUG] slow\n"
+
+    def test_failure_keeps_the_file_and_names_it(self, sdk_logs):
+        mock = _make_mock_sdk(
+            fail=RuntimeError("Command failed with exit code 1"),
+            stderr_lines=["[DEBUG] getaddrinfo EAI_AGAIN api.anthropic.com"],
+        )
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            with pytest.raises(AgentRunError) as exc:
+                _run(run_agent("hi"))
+        path = exc.value.debug_log_path
+        assert path and os.path.exists(path)
+        assert "EAI_AGAIN" in open(path).read()
+
+    def test_timeout_keeps_the_file(self, sdk_logs):
+        mock = _make_mock_sdk(stderr_lines=["[DEBUG] [API:auth] OAuth token check starting"])
+
+        async def _agen(prompt, options):
+            await asyncio.sleep(10)
+            yield _FakeAssistantMessage([])
+
+        mock.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            with pytest.raises(AgentRunTimeout) as exc:
+                _run(run_agent("hi", timeout_s=0.05))
+        assert "OAuth token check starting" in open(exc.value.debug_log_path).read()
+
+    def test_off_writes_nothing(self, sdk_logs, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_SDK_DEBUG_LOG", "off")
+        mock = _make_mock_sdk(fail=RuntimeError("x"), stderr_lines=["[DEBUG] a"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            with pytest.raises(AgentRunError) as exc:
+                _run(run_agent("hi"))
+        assert exc.value.debug_log_path == ""
+        assert not sdk_logs.exists() or list(sdk_logs.glob("*.log")) == []
+
+    def test_unwritable_dir_does_not_break_the_run(self, tmp_path, monkeypatch):
+        import multiplai_core.agent_runner as ar
+
+        def _boom():
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr("multiplai_core.log_utils._get_logs_dir", _boom)
+        monkeypatch.setattr(ar, "_debug_logs_swept", False)
+        mock = _make_mock_sdk(stderr_lines=["[DEBUG] a"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            result = _run(run_agent("hi"))
+        assert result.text == "default text"
+
+    def test_retention_sweep_deletes_old_files(self, sdk_logs, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "7")
+        sdk_logs.mkdir(parents=True)
+        old = sdk_logs / "old.log"
+        old.write_text("x")
+        eight_days = 8 * 86400
+        os.utime(old, (old.stat().st_atime - eight_days, old.stat().st_mtime - eight_days))
+        fresh = sdk_logs / "fresh.log"
+        fresh.write_text("y")
+        with patch.dict(sys.modules, {"claude_agent_sdk": _make_mock_sdk()}):
+            _run(run_agent("hi"))
+        assert not old.exists()
+        assert fresh.exists()
+
+    def test_file_survives_sigkill_of_the_caller(self, tmp_path):
+        """The case that motivated the file: a hook killed at its ceiling."""
+        import signal
+        import subprocess
+        import time as _time
+
+        tests_dir = os.path.dirname(os.path.abspath(__file__))
+        script = tmp_path / "child.py"
+        script.write_text(
+            "import asyncio, sys\n"
+            f"sys.path.insert(0, {tests_dir!r})\n"
+            "from pathlib import Path\n"
+            "from unittest.mock import MagicMock\n"
+            "import multiplai_core.log_utils as lu\n"
+            f"lu._get_logs_dir = lambda: Path({str(tmp_path)!r})\n"
+            "from _fakes import _make_mock_sdk\n"
+            "mock = _make_mock_sdk(stderr_lines=['[DEBUG] [API REQUEST] /v1/messages x-client-request-id=zzz'])\n"
+            "async def _agen(prompt, options):\n"
+            "    print('READY', flush=True)\n"
+            "    await asyncio.sleep(60)\n"
+            "    yield None\n"
+            "mock.query = MagicMock(side_effect=_agen)\n"
+            "sys.modules['claude_agent_sdk'] = mock\n"
+            "from multiplai_core.agent_runner import run_agent\n"
+            "asyncio.run(run_agent('hi', label='router'))\n"
+        )
+        env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+        proc = subprocess.Popen(
+            [sys.executable, str(script)], stdout=subprocess.PIPE, text=True, env=env,
+        )
+        try:
+            assert proc.stdout.readline().strip() == "READY"
+            proc.send_signal(signal.SIGKILL)
+            proc.wait(timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        files = list((tmp_path / "sdk").glob("*.log"))
+        assert len(files) == 1
+        assert "x-client-request-id=zzz" in files[0].read_text()
+
+
+class TestTimingLines:
+    def test_cli_ready_and_first_reply_are_logged(self, sdk_logs, caplog):
+        mock = _make_mock_sdk([
+            _FakeSystemMessage("init", {"session_id": "child-123"}),
+            _FakeAssistantMessage([_FakeTextBlock("a")]),
+            _FakeAssistantMessage([_FakeTextBlock("b")]),
+        ])
+        mock.SystemMessage = _FakeSystemMessage
+        with caplog.at_level(logging.INFO, logger="multiplai_core.agent_runner"):
+            with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+                _run(run_agent("hi", label="router", max_turns=3))
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(re.search(r"CLI ready after [\d.]+s child_session=child-123", m) for m in msgs)
+        assert sum("first reply after" in m for m in msgs) == 1
+        assert any("CLI debug log:" in m for m in msgs)
+
+    def test_no_system_message_logs_unknown_child(self, sdk_logs, caplog):
+        mock = _make_mock_sdk()
+        with caplog.at_level(logging.INFO, logger="multiplai_core.agent_runner"):
+            with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+                _run(run_agent("hi"))
+        assert any("child_session=?" in r.getMessage() for r in caplog.records)
