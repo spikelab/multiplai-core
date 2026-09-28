@@ -102,6 +102,10 @@ _DEBUG_KEEP_ENV = "MULTIPLAI_SDK_DEBUG_KEEP_S"  # keep successes at least this s
 _DEBUG_KEEP_DEFAULT_S = 10.0
 _DEBUG_LOG_SUBDIR = "sdk"
 _debug_logs_swept = False
+# Per-process sequence number in each file name. Timestamp, label, pid and
+# attempt alone collide when two calls with the same label start in the same
+# second, and the fast one's cleanup would then delete the slow one's file.
+_debug_log_seq = itertools.count(1)
 
 # Under permission_mode="bypassPermissions" ``allowed_tools`` is only an
 # allow-list: it adds nothing to the deny side, so every default tool stays
@@ -316,12 +320,15 @@ class _DebugLog:
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             name = re.sub(
                 r"[^A-Za-z0-9_.-]+", "_",
-                f"{stamp}-{component or 'agent'}-{label}-p{os.getpid()}-a{attempt + 1}",
+                f"{stamp}-{component or 'agent'}-{label}-p{os.getpid()}"
+                f"-n{next(_debug_log_seq)}-a{attempt + 1}",
             )
             path = sdk_dir / f"{name}.log"
             # buffering=1: line-buffered, so every line reaches the OS as it
-            # is written and survives a kill of this process.
-            fh = open(path, "a", encoding="utf-8", buffering=1)
+            # is written and survives a kill of this process. "x": a name that
+            # still collides fails the open (caught below) rather than two
+            # calls sharing one file.
+            fh = open(path, "x", encoding="utf-8", buffering=1)
         except Exception:  # noqa: BLE001 — diagnostics must not break a run
             logger.warning(
                 "run_agent [%s]: could not open CLI debug log (ignored)",

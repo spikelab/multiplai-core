@@ -34,7 +34,7 @@ not backfilled; their contents are recoverable from `git log`.
   Needed because Claude Fable 5.1 and Mythos 5.1 read cache at 0.025× input
   ($0.25/MTok), not the 0.1× every other model uses.
 - **`run_agent` writes each attempt's CLI debug output to disk as it
-  arrives**, under `<logs_dir>/sdk/<time>-<component>-<label>-p<pid>-a<n>.log`.
+  arrives**, under `<logs_dir>/sdk/<time>-<component>-<label>-p<pid>-n<seq>-a<n>.log`.
   Until now that output lived only in memory and was summarized when an
   attempt ended, so a caller killed mid-call (a hook at its 30s ceiling) lost
   all of it. The file is line-buffered and survives a SIGKILL of the caller.

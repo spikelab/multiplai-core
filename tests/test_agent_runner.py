@@ -818,6 +818,30 @@ class TestDebugLog:
             _run(run_agent("hi"))
         assert len(list(sdk_logs.glob("*.log"))) == 1
 
+    def test_concurrent_same_label_calls_get_their_own_files(self, sdk_logs, monkeypatch):
+        # Two calls in one process, same label and component, started in the
+        # same second. The fast one deletes its file on success; that must not
+        # take the slow one's evidence with it.
+        monkeypatch.setenv("MULTIPLAI_SDK_DEBUG_KEEP_S", "0.05")
+        mock = _make_mock_sdk()
+
+        async def _agen(prompt, options):
+            options.stderr(f"[DEBUG] {prompt}")
+            if prompt == "slow":
+                await asyncio.sleep(0.15)
+            yield _FakeAssistantMessage([_FakeTextBlock("ok")])
+
+        mock.query = MagicMock(side_effect=_agen)
+
+        async def _both():
+            await asyncio.gather(run_agent("slow"), run_agent("fast"))
+
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            _run(_both())
+        files = list(sdk_logs.glob("*.log"))
+        assert len(files) == 1
+        assert files[0].read_text() == "[DEBUG] slow\n"
+
     def test_failure_keeps_the_file_and_names_it(self, sdk_logs):
         mock = _make_mock_sdk(
             fail=RuntimeError("Command failed with exit code 1"),
