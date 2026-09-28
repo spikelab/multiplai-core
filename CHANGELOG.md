@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.15.0] – 2026-09-28
+
 ### Added
 
 - **`costing.refresh_pricing()` — list prices are fetched, not hand-copied.**
@@ -643,7 +645,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/spikelab/multiplai-core/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/spikelab/multiplai-core/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/spikelab/multiplai-core/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/spikelab/multiplai-core/compare/v0.12.0...v0.12.1
