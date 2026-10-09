@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import itertools
 import logging
 import os
@@ -212,6 +213,17 @@ class AgentUsage:
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """One tool call an agent made: the tool's name and a copy of its input.
+
+    Holds only what the agent asked for, never the tool's result.
+    """
+
+    name: str
+    input: dict
+
+
+@dataclass(frozen=True)
 class AgentRunResult:
     """Normalized result of one agent run."""
 
@@ -220,6 +232,9 @@ class AgentRunResult:
     usage: AgentUsage
     files_changed: list[str]     # file_path args of Write/Edit ToolUseBlocks
     stderr_tail: str             # compact failure context ("" on success)
+    # Every ToolUseBlock in the order it arrived, Write/Edit included. Last and
+    # defaulted so callers that build an AgentRunResult keep working.
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 class AgentRunError(RuntimeError):
@@ -662,6 +677,7 @@ async def run_agent(
             chunks: list[str] = []
             text_bytes = 0  # running UTF-8 size of chunks, for log lines
             files_changed: list[str] = []
+            tool_calls: list[ToolCall] = []
             turns = 0
             usage = AgentUsage()
             session_id = ""
@@ -706,10 +722,13 @@ async def run_agent(
                                     chunks.append(block.text)
                                     text_bytes += len(block.text.encode("utf-8"))
                                 elif tool_use_cls and isinstance(block, tool_use_cls):
+                                    block_input = getattr(block, "input", None) or {}
+                                    tool_calls.append(ToolCall(
+                                        name=block.name,
+                                        input=copy.deepcopy(dict(block_input)),
+                                    ))
                                     if block.name in ("Write", "Edit"):
-                                        fp = (getattr(block, "input", None) or {}).get(
-                                            "file_path", ""
-                                        )
+                                        fp = block_input.get("file_path", "")
                                         if fp and fp not in files_changed:
                                             files_changed.append(fp)
                         elif result_cls and isinstance(message, result_cls):
@@ -776,6 +795,7 @@ async def run_agent(
                     turns=turns,
                     usage=usage,
                     files_changed=files_changed,
+                    tool_calls=tuple(tool_calls),
                     stderr_tail="",
                 )
             except Exception as e:  # noqa: BLE001
@@ -793,6 +813,7 @@ async def run_agent(
                     turns=turns,
                     usage=usage,
                     files_changed=files_changed,
+                    tool_calls=tuple(tool_calls),
                     stderr_tail=last_tail,
                 )
                 last_session_id = session_id

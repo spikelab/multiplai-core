@@ -90,6 +90,7 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
         AgentRunTimeout,
         TOOL_UNIVERSE,
         AgentUsage,
+        ToolCall,
         deny_list,
         run_agent,
     )
@@ -129,7 +130,7 @@ _LAZY_ATTRS: dict[str, str] = {
         (
             "run_agent", "AgentRunResult", "AgentRunError", "AgentRunTimeout",
             "AgentUsage", "MAX_PROMPT_BYTES", "TOOL_UNIVERSE", "deny_list",
-            "agent_runner",
+            "ToolCall", "agent_runner",
         ),
         "agent_runner",
     ),
@@ -173,6 +174,7 @@ __all__ = [
     "AgentRunError",
     "AgentRunTimeout",
     "AgentUsage",
+    "ToolCall",
     "MAX_PROMPT_BYTES",
     "TOOL_UNIVERSE",
     "deny_list",

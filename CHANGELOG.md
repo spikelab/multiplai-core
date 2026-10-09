@@ -18,6 +18,20 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`AgentRunResult.tool_calls` — every tool call the agent made.** A tuple of
+  the new `ToolCall(name, input)`, one per `ToolUseBlock` in the order the
+  agent made them, `Write`/`Edit` included. `input` is a copy of the call's
+  arguments (a `Read`'s `file_path`/`offset`/`limit`, a `Grep`'s `pattern` and
+  `path`); the tool's *result* is never kept. It is filled on success and on
+  the `partial` result an `AgentRunError`/`AgentRunTimeout` carries, so a
+  timed-out run still reports what it did. `ToolCall` is exported from
+  `multiplai_core`.
+  **Nothing needs to change to keep working:** the field is last and defaults
+  to `()`, so code that builds an `AgentRunResult` without it is unaffected,
+  and `files_changed` is unchanged.
+
 ## [0.15.0] – 2026-09-28
 
 ### Added

@@ -23,6 +23,7 @@ from multiplai_core.agent_runner import (
     AgentRunResult,
     AgentRunTimeout,
     AgentUsage,
+    ToolCall,
     deny_list,
     run_agent,
 )
@@ -76,6 +77,53 @@ class TestBasicRuns:
             result = _run(run_agent("go", allowed_tools=["Write", "Edit"], max_turns=10))
         assert result.files_changed == ["/a.py", "/b.py"]
         assert result.text == "done"
+
+    def test_tool_calls_hold_every_tool_use_in_order(self):
+        read_input = {"file_path": "/repo/a.py", "offset": 10, "limit": 20}
+        grep_input = {"pattern": "def run", "path": "/repo", "glob": "*.py"}
+        mock_sdk = _make_mock_sdk(
+            [
+                _FakeAssistantMessage([_FakeToolUseBlock("Read", read_input)]),
+                _FakeAssistantMessage(
+                    [
+                        _FakeToolUseBlock("Grep", grep_input),
+                        _FakeTextBlock("done"),
+                    ]
+                ),
+            ]
+        )
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            result = _run(run_agent("go", allowed_tools=["Read", "Grep"], max_turns=10))
+        assert result.tool_calls == (
+            ToolCall("Read", {"file_path": "/repo/a.py", "offset": 10, "limit": 20}),
+            ToolCall("Grep", {"pattern": "def run", "path": "/repo", "glob": "*.py"}),
+        )
+        # A copy, not a reference to the SDK object's input.
+        read_input["offset"] = 99
+        assert result.tool_calls[0].input["offset"] == 10
+        assert result.files_changed == []
+
+    def test_tool_calls_include_write_and_edit(self):
+        mock_sdk = _make_mock_sdk(
+            [
+                _FakeAssistantMessage(
+                    [
+                        _FakeToolUseBlock("Write", {"file_path": "/a.py"}),
+                        _FakeToolUseBlock("Edit", {"file_path": "/a.py"}),
+                    ]
+                ),
+            ]
+        )
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            result = _run(run_agent("go", allowed_tools=["Write", "Edit"], max_turns=10))
+        assert [c.name for c in result.tool_calls] == ["Write", "Edit"]
+        assert result.files_changed == ["/a.py"]
+
+    def test_result_built_without_tool_calls_still_works(self):
+        result = AgentRunResult(
+            text="t", turns=1, usage=AgentUsage(), files_changed=[], stderr_tail=""
+        )
+        assert result.tool_calls == ()
 
     def test_usage_captured_from_result_message(self):
         mock_sdk = _make_mock_sdk(
@@ -477,6 +525,23 @@ class TestTimeout:
             )
         assert result.text == "recovered"
         assert state["calls"] == 2
+
+    def test_timeout_partial_reports_tool_calls(self):
+        mock = _make_mock_sdk()
+
+        async def _agen(prompt, options):
+            yield _FakeAssistantMessage(
+                [_FakeToolUseBlock("Read", {"file_path": "/repo/a.py"})]
+            )
+            await asyncio.sleep(10)
+
+        mock.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            with pytest.raises(AgentRunTimeout) as exc:
+                _run(run_agent("hi", timeout_s=0.05))
+        assert exc.value.partial.tool_calls == (
+            ToolCall("Read", {"file_path": "/repo/a.py"}),
+        )
 
 
 class TestPromptFileFallback:
