@@ -18,6 +18,34 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **A check that a cited `path:line` range at a commit contains a quote**, so
+  a pipeline that drops claims whose citations do not reproduce stops carrying
+  its own copy (`multiplai_core.citations`). The review and
+  codebase-walkthrough gates in `multiplai-cc-mktplace` each held the same
+  core; a fix to how quotes are matched now lands once. Standard library only,
+  no model call, no `[sdk]` extra needed, and imported lazily. **Nothing needs
+  to change to keep working:** every change is an addition.
+  - `check_quote(repo, sha, path, start, end, quote)` returns `None` when the
+    whitespace-normalised quote is inside lines `start..end` (1-based,
+    inclusive) of `path` at `sha`. Otherwise it returns the reason the
+    pipelines already use: `"empty quote"`, `"path not at commit"` or
+    `"quote not at cited lines"`. The review pipeline's own reason for a
+    missing path is `"path not at head"`; map it when you adopt this.
+  - `file_at(repo, sha, path)` is the file's text at that commit (`git show`,
+    decoded as UTF-8 with replacement), or `None` when the path is not there.
+    It is cached per `(repo, sha, path)`, so pass a commit sha, not a ref such
+    as `HEAD`; `file_at.cache_clear()` drops the cache.
+  - `lines_at(repo, sha, path, start, end)` is those lines, split on `\n` the
+    way git numbers them. An `end` past the end of the file returns the lines
+    that exist.
+  - `normalise_ws(text)` collapses whitespace the way the check compares.
+  - `GIT_ARGV` and `git_env()` are the git argv prefix (`color.ui=never`,
+    `core.quotepath=off`) and environment (no `GIT_EXTERNAL_DIFF`,
+    `GIT_TERMINAL_PROMPT=0`) the check runs git with, for a pipeline that wants
+    its own git calls to match.
+
 ## [0.17.0] – 2026-10-11
 
 ### Added
