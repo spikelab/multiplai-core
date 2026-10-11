@@ -110,8 +110,10 @@ def stub(monkeypatch, tmp_path):
         return t
 
     monkeypatch.setattr(pb, "_open_transport", fake_open)
-    monkeypatch.setattr(pb, "_git_status", lambda workdir: None)
     monkeypatch.chdir(tmp_path)
+    # A run with no cwd defaults to $CLAUDE_CONFIG_DIR/hook-sessions; keep it
+    # out of the real config dir.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
     return seen
 
 
@@ -242,27 +244,15 @@ class TestFilesChanged:
         return [_ev(0, e) for e in _tool("write", {"path": "src/made_by_event.py"})] + [
             _ev(2, e) for e in _tool("read", {"path": "ignored.py"})]
 
-    def test_merges_events_and_git_status(self, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
-        (repo / "untracked.py").write_text("x = 1\n")
-        files = pb.files_changed(self._events(), str(repo))
-        assert "src/made_by_event.py" in files and "untracked.py" in files
-        assert "ignored.py" not in files
+    def test_write_and_edit_targets_in_order_without_duplicates(self):
+        events = self._events() + [_ev(4, e) for e in _tool("edit", {"path": "b.py"})] + [
+            _ev(6, e) for e in _tool("write", {"path": "src/made_by_event.py"})]
+        assert pb.files_changed(events) == ["src/made_by_event.py", "b.py"]
 
-    def test_files_dirty_before_the_run_are_not_reported(self, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
-        (repo / "already_dirty.py").write_text("x = 1\n")
-        before = pb._git_status(str(repo))
-        (repo / "new_via_bash.py").write_text("y = 2\n")
-        files = pb.files_changed([], str(repo), before)
-        assert files == ["new_via_bash.py"]
-
-    def test_survives_non_git_dir(self, tmp_path):
-        assert pb.files_changed([], str(tmp_path)) == []
+    def test_bash_writes_are_not_reported(self):
+        # Same as the SDK path: only Write/Edit file paths count.
+        events = [_ev(0, e) for e in _tool("bash", {"command": "echo x > c.py"})]
+        assert pb.files_changed(events) == []
 
 
 # ------------------------------------------------------------ whole runs
@@ -293,6 +283,43 @@ class TestRun:
         assert stub["transport"].sent[0] == {"type": "prompt", "message": "go"}
         assert stub["transport"].closed
         assert stub["env"]["_HOOK_CHILD_SESSION"] == "1"
+
+    def test_files_changed_reports_only_the_agents_write_and_edit_targets(
+            self, stub, monkeypatch, tmp_path):
+        # The run's cwd is a subdirectory of a repo that other processes are
+        # also changing: one creates a file elsewhere in the repo while the run
+        # is going, and one re-edits a file that was already dirty. Neither is
+        # the agent's write/edit, so neither is reported, the same contract as
+        # the SDK path (file_path args of Write/Edit only).
+        repo = tmp_path / "repo"
+        work = repo / "sub"
+        work.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        (work / "dirty.py").write_text("x = 1\n")
+        opened = pb._open_transport
+
+        async def open_and_race(argv, *, cwd, env):
+            (repo / "other_process.py").write_text("y = 2\n")
+            (work / "dirty.py").write_text("x = 3\n")
+            return await opened(argv, cwd=cwd, env=env)
+
+        monkeypatch.setattr(pb, "_open_transport", open_and_race)
+        stub["script"] += [
+            _assistant_end(tool_calls=[("edit", {"path": "a.py"})], stop="toolUse"),
+            *_tool("edit", {"path": "a.py", "oldText": "a", "newText": "b"}),
+            TURN_END, _assistant_end("done"), TURN_END, SETTLED,
+        ]
+        r = _run(run_agent("go", model=SPEC, allowed_tools=["Edit"], max_turns=5, cwd=work))
+        assert r.files_changed == ["a.py"]
+
+    def test_default_cwd_is_the_hook_session_dir(self, stub, monkeypatch, tmp_path):
+        # Same default as the SDK path: with no cwd the run must not edit or
+        # pick up context from whatever project the caller is in.
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+        stub["script"] += [_assistant_end("hi"), TURN_END, SETTLED]
+        _run(run_agent("p", model=SPEC))
+        assert stub["cwd"] == str(tmp_path / "cfg" / "hook-sessions")
+        assert (tmp_path / "cfg" / "hook-sessions").is_dir()
 
     def test_no_tool_call(self, stub):
         stub["script"] += [_assistant_end("hi"), TURN_END, SETTLED]
@@ -425,7 +452,7 @@ class TestBinary:
         gate.write_text("")
         monkeypatch.setenv(pb.GATE_EXT_ENV, str(gate))
         stub["script"] += [_assistant_end("ok"), SETTLED]
-        _run(run_agent("p", model=SPEC, allowed_tools=["Bash"]))
+        _run(run_agent("p", model=SPEC, allowed_tools=["Bash"], cwd=tmp_path))
         assert stub["argv"][-1] == str(gate)
         assert stub["env"]["PIHARNESS_WORKSPACE"] == str(tmp_path.resolve())
 

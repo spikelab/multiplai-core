@@ -26,6 +26,11 @@ How the arguments map onto Pi:
 - ``effort`` → ``--thinking <level>``; ``None`` leaves the flag off, so Pi's
   default applies. ``thinking={"type": "disabled"}`` with no effort →
   ``--thinking off``.
+- ``cwd`` → Pi's working directory. ``None`` uses the SDK path's default,
+  ``$CLAUDE_CONFIG_DIR/hook-sessions``, so the run cannot edit or pick up
+  context files from the caller's project.
+- ``files_changed`` → the paths of write/edit tool calls, as the agent passed
+  them; bash writes are not reported. Both match the SDK path.
 - ``system_prompt`` is put ahead of the prompt in the one message Pi receives.
   The prompt travels as a JSON line on Pi's stdin, so there is no argv limit
   and ``prompt_file_fallback`` has nothing to do here.
@@ -54,7 +59,6 @@ import asyncio
 import logging
 import os
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,6 +71,7 @@ from ..agent_runner import (
     AgentRunTimeout,
     AgentUsage,
     ToolCall,
+    _hook_session_dir,
     register_agent_backend,
 )
 from .events import Event, Kind
@@ -357,37 +362,15 @@ def final_error(events: list[Event]) -> str | None:
 _WRITE_TOOLS = {"write", "edit"}
 
 
-def _git_status(workdir: str) -> dict[str, str] | None:
-    """``path -> porcelain status`` for *workdir*, or None when git can't say."""
-    try:
-        # -uall expands untracked directories into their files.
-        out = subprocess.run(
-            ["git", "-C", workdir, "status", "--porcelain", "-uall"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode != 0:
-        return None
-    status: dict[str, str] = {}
-    for line in out.stdout.splitlines():
-        path = line[3:].strip().strip('"')
-        if " -> " in path:  # rename: keep the destination
-            path = path.split(" -> ", 1)[1].strip().strip('"')
-        if path:
-            status[path] = line[:2]
-    return status
+def files_changed(events: list[Event]) -> list[str]:
+    """Files the run changed: the path of every write/edit tool call, in order.
 
-
-def files_changed(
-    events: list[Event], workdir: str, before: dict[str, str] | None = None,
-) -> list[str]:
-    """Files the run changed: write/edit tool targets, then a git fallback.
-
-    The event stream comes first; ``git status`` catches files written another
-    way (the bash tool). With *before* (the status taken before the run), the
-    fallback adds only paths whose status changed during the run, so files
-    that were already dirty are not reported as the agent's.
+    The same contract as the SDK path (``file_path`` args of Write/Edit), so a
+    path is reported as the agent passed it. Files written another way (the
+    bash tool) are not reported on either path. There is deliberately no
+    ``git status`` fallback: it reports paths relative to the repo root rather
+    than the run's cwd, covers the whole repo, and so attributes changes made
+    by other processes during the run to the agent.
     """
     files: list[str] = []
     for ev in events:
@@ -397,13 +380,6 @@ def files_changed(
             continue
         if ev.target and ev.target not in files:
             files.append(ev.target)
-    after = _git_status(workdir)
-    if after is not None:
-        for path, st in after.items():
-            if before is not None and before.get(path) == st:
-                continue
-            if path not in files:
-                files.append(path)
     return files
 
 
@@ -454,8 +430,7 @@ def _record_cost(component: str, label: str, spec: str,
 
 
 async def _attempt(argv: list[str], prompt: str, *, workdir: str, env: dict[str, str],
-                   max_turns: int, timeout_s: float, label: str) -> tuple[PiRunOutcome, str, dict | None]:
-    before = _git_status(workdir)
+                   max_turns: int, timeout_s: float, label: str) -> tuple[PiRunOutcome, str]:
     transport = await _open_transport(argv, cwd=workdir, env=env)
     try:
         outcome = await supervise(PiRpc(transport), prompt,
@@ -467,7 +442,7 @@ async def _attempt(argv: list[str], prompt: str, *, workdir: str, env: dict[str,
             logger.warning("pi run [%s]: closing pi failed (ignored)", label, exc_info=True)
     tail_fn = getattr(transport, "stderr_tail", None)
     tail = tail_fn() if callable(tail_fn) else ""
-    return outcome, tail, before
+    return outcome, tail
 
 
 async def run_pi_agent(
@@ -497,7 +472,9 @@ async def run_pi_agent(
     except PiSpecError as e:
         raise AgentRunError(str(e), reason="malformed pi model spec") from e
 
-    workdir = str(Path(cwd).resolve()) if cwd else str(Path.cwd())
+    # Same default as the SDK path: an isolated directory, so a run with no
+    # cwd neither edits nor picks up context files from the caller's project.
+    workdir = str(Path(cwd).resolve()) if cwd else str(_hook_session_dir())
     run_env = {**os.environ, **(env or {}), "_HOOK_CHILD_SESSION": "1"}
     gate_ext = os.environ.get(GATE_EXT_ENV, "").strip() or None
     if gate_ext:
@@ -518,7 +495,7 @@ async def run_pi_agent(
     started = time.monotonic()
     last: AgentRunError | None = None
     for attempt in range(max(1, max_attempts)):
-        outcome, stderr_tail, before = await _attempt(
+        outcome, stderr_tail = await _attempt(
             argv, message, workdir=workdir, env=run_env,
             max_turns=max_turns, timeout_s=timeout_s, label=label)
         usage, cost_reported = usage_from_events(outcome.events)
@@ -527,7 +504,7 @@ async def run_pi_agent(
             text=assistant_text(outcome.events),
             turns=outcome.turns,
             usage=usage,
-            files_changed=files_changed(outcome.events, workdir, before),
+            files_changed=files_changed(outcome.events),
             stderr_tail="",
             tool_calls=tool_calls_from_events(outcome.events),
         )

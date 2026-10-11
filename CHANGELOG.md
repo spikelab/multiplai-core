@@ -51,7 +51,10 @@ not backfilled; their contents are recoverable from `git log`.
     leaves it off), enforces `max_turns` and `timeout_s` (a hard limit: a Pi
     that has stopped reading stdin cannot hold the run past it plus a few
     seconds of cleanup), and returns the same
-    `AgentRunResult`, usage and `tool_calls` included. Cost comes from Pi's own
+    `AgentRunResult`, usage and `tool_calls` included. As on the SDK path,
+    `files_changed` lists only the paths of write/edit tool calls (bash writes
+    are not reported), and a run with no `cwd` runs in
+    `$CLAUDE_CONFIG_DIR/hook-sessions`. Cost comes from Pi's own
     events; when Pi reports none the cost-ledger record has `cost_usd: 0` and
     `cost_unreported: true`. `MULTIPLAI_PI_GATE_EXT` names an optional Pi
     extension that gates bash. A missing binary raises `AgentRunError` with an
