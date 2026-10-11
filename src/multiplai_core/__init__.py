@@ -95,6 +95,8 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
         run_agent,
     )
     from .aio import hard_timeout, swallow_task_result
+    from .budget import BudgetExceededError, SpendLedger
+    from .checkpoint import load_model, save_model
     from .model_client import (
         DEFAULT_MAX_TOKENS,
         DEFAULT_MODEL,
@@ -111,6 +113,9 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
         registered_providers,
         unregister_provider,
     )
+    from .progress import ProgressWriter
+    from .stage_config import check_effort, coerce_int, conf_value, read_yaml_mapping
+    from .structured import StructuredAnswerError, parse_answer, reformat_prompt
 
 # Which lazily-imported submodule serves each deferred public name. The three
 # module names themselves are included so `multiplai_core.agent_runner` (and
@@ -118,7 +123,10 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
 # — the eager `from .agent_runner import …` this replaces bound the submodule
 # attribute as a side effect. No other submodule was ever bound that way, so
 # none is listed here: `from multiplai_core.costing import …` imports the
-# submodule directly and never reaches `__getattr__`.
+# submodule directly and never reaches `__getattr__`. The pipeline modules
+# (`budget`, `checkpoint`, `progress`, `stage_config`, `structured`) are the
+# exception: they are listed by module name too, because `budget`'s ContextVar
+# helpers are public API spelled `multiplai_core.budget.start(...)`.
 #
 # This map is a THIRD list that must agree with `__all__` and the
 # TYPE_CHECKING block above. Type checkers validate those two; only
@@ -145,6 +153,17 @@ _LAZY_ATTRS: dict[str, str] = {
             "model_client",
         ),
         "model_client",
+    ),
+    **dict.fromkeys(("SpendLedger", "BudgetExceededError", "budget"), "budget"),
+    **dict.fromkeys(("save_model", "load_model", "checkpoint"), "checkpoint"),
+    **dict.fromkeys(("ProgressWriter", "progress"), "progress"),
+    **dict.fromkeys(
+        ("conf_value", "read_yaml_mapping", "coerce_int", "check_effort", "stage_config"),
+        "stage_config",
+    ),
+    **dict.fromkeys(
+        ("parse_answer", "reformat_prompt", "StructuredAnswerError", "structured"),
+        "structured",
     ),
 }
 
@@ -259,5 +278,19 @@ __all__ = [
     "contains_injection",
     "markdown_notice",
     "bracket_notice",
+    # pipeline primitives: structured answers, spend ledger, checkpoint,
+    # progress file, per-stage config
+    "parse_answer",
+    "reformat_prompt",
+    "StructuredAnswerError",
+    "SpendLedger",
+    "BudgetExceededError",
+    "save_model",
+    "load_model",
+    "ProgressWriter",
+    "conf_value",
+    "read_yaml_mapping",
+    "coerce_int",
+    "check_effort",
     "__version__",
 ]

@@ -18,6 +18,48 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **Pipeline primitives, so a plugin pipeline stops carrying its own copy.**
+  Five new modules, copied from the review and codebase-walkthrough pipelines
+  in `multiplai-cc-mktplace`, where they were duplicated. All are imported
+  lazily, so a bare `import multiplai_core` stays as light as before, and none
+  adds a dependency (`pyyaml` was already one; nothing imports pydantic, the
+  schemas are duck-typed). **Nothing needs to change to keep working:** every
+  change is an addition.
+  - `parse_answer(text, schema)`, `reformat_prompt(text, schema, error)` and
+    `StructuredAnswerError` (`multiplai_core.structured`). `parse_answer`
+    validates the JSON in an agent's answer against a pydantic schema; when the
+    answer names none of the schema's fields it raises `StructuredAnswerError`,
+    "the answer contains no JSON object with the field(s) …", instead of an
+    error about a stray brace in the prose. `StructuredAnswerError` is a
+    `ValueError`, so an `except (ValidationError, ValueError)` that drives a
+    re-ask keeps catching it. There is no call loop: how a pipeline re-asks
+    stays in the pipeline.
+  - `SpendLedger` and `BudgetExceededError` (`multiplai_core.budget`). A token
+    and cost ledger with a circuit breaker: `record(usage, label)` never
+    raises; `check(label)` raises `BudgetExceededError` (carrying `cost_usd`,
+    `tokens` and `diagnosis`) once `max_usd` **or** `max_tokens` is spent, and
+    warns once at `warn_fraction` (0.8). `to_state()` / `load_state()` /
+    `SpendLedger.from_state()` carry the spend through a checkpoint. The
+    ContextVar helpers `multiplai_core.budget.start / get / record / check`
+    keep one ledger per asyncio task; pass `ledger_cls=` to use a subclass
+    (one with its own default ceiling, or `run_name` for the warning).
+    `start()` forwards only the ceilings it is given: one left out keeps the
+    subclass default, and one passed as `None` turns that ceiling off.
+  - `save_model(model, dir, filename)` and `load_model(path, cls)`
+    (`multiplai_core.checkpoint`). An atomic JSON checkpoint: a temp file in
+    the same directory, then `os.replace`. `load_model` returns `None`, and
+    logs, when the file is missing or does not validate.
+  - `ProgressWriter(path)` (`multiplai_core.progress`), with `line`, `stage`,
+    `done` and `failed`. It writes `[<UTC>Z] DONE …` lines, the exact format
+    the review and walkthrough SKILL.md wait loops grep for. Each pipeline
+    keeps its own `started` line in a subclass.
+  - `conf_value`, `read_yaml_mapping`, `coerce_int` and `check_effort`
+    (`multiplai_core.stage_config`): the shared half of a pipeline's
+    `<out>/<name>.yaml` > `multiplai.conf` > defaults loader. The config
+    dataclasses and their keys stay in the plugins.
+
 ## [0.16.0] – 2026-10-09
 
 ### Added
