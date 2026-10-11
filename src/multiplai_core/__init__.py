@@ -97,6 +97,14 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
     from .aio import hard_timeout, swallow_task_result
     from .budget import BudgetExceededError, SpendLedger
     from .checkpoint import load_model, save_model
+    from .citations import (
+        GIT_ARGV,
+        check_quote,
+        file_at,
+        git_env,
+        lines_at,
+        normalise_ws,
+    )
     from .model_client import (
         DEFAULT_MAX_TOKENS,
         DEFAULT_MODEL,
@@ -124,9 +132,11 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
 # attribute as a side effect. No other submodule was ever bound that way, so
 # none is listed here: `from multiplai_core.costing import …` imports the
 # submodule directly and never reaches `__getattr__`. The pipeline modules
-# (`budget`, `checkpoint`, `progress`, `stage_config`, `structured`) are the
-# exception: they are listed by module name too, because `budget`'s ContextVar
-# helpers are public API spelled `multiplai_core.budget.start(...)`.
+# (`budget`, `checkpoint`, `progress`, `stage_config`, `structured`,
+# `citations`) are the exception: they are listed by module name too, because
+# `budget`'s ContextVar helpers are public API spelled
+# `multiplai_core.budget.start(...)`, and `citations.file_at.cache_clear()` is
+# how a caller drops the cached file text.
 #
 # This map is a THIRD list that must agree with `__all__` and the
 # TYPE_CHECKING block above. Type checkers validate those two; only
@@ -156,6 +166,13 @@ _LAZY_ATTRS: dict[str, str] = {
     ),
     **dict.fromkeys(("SpendLedger", "BudgetExceededError", "budget"), "budget"),
     **dict.fromkeys(("save_model", "load_model", "checkpoint"), "checkpoint"),
+    **dict.fromkeys(
+        (
+            "check_quote", "file_at", "lines_at", "normalise_ws", "GIT_ARGV",
+            "git_env", "citations",
+        ),
+        "citations",
+    ),
     **dict.fromkeys(("ProgressWriter", "progress"), "progress"),
     **dict.fromkeys(
         ("conf_value", "read_yaml_mapping", "coerce_int", "check_effort", "stage_config"),
@@ -292,5 +309,12 @@ __all__ = [
     "read_yaml_mapping",
     "coerce_int",
     "check_effort",
+    # citation check: does path:line at a commit contain a quote
+    "check_quote",
+    "file_at",
+    "lines_at",
+    "normalise_ws",
+    "GIT_ARGV",
+    "git_env",
     "__version__",
 ]
