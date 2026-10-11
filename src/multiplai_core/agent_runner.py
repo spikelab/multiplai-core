@@ -43,6 +43,14 @@ after a failed, timed-out or slow one (``MULTIPLAI_SDK_DEBUG_KEEP_S``, default
 10; ``0`` keeps every file). ``MULTIPLAI_SDK_DEBUG_LOG=off`` turns it off.
 Files older than the log retention (``MULTIPLAI_LOG_RETENTION_DAYS``) are
 deleted once per process.
+
+``model`` may name a backend other than the Claude Agent SDK, as a
+``provider:model`` spec (``pi:deepseek/deepseek-v4-flash@fireworks``). An
+Anthropic spec (a bare ID, ``anthropic:<id>`` or ``claude:<id>``) runs on the
+SDK path above with the provider prefix removed; any other provider goes to the
+runner registered for it with :func:`register_agent_backend`. The ``pi``
+backend registers itself the first time a ``pi:`` spec is run, so importing
+this module never imports :mod:`multiplai_core.pi`.
 """
 
 from __future__ import annotations
@@ -59,9 +67,10 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Any, Awaitable, Callable
 
 from .aio import hard_timeout
+from .env import DEFAULT_PROVIDER, parse_model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +283,84 @@ class AgentRunError(RuntimeError):
 
 class AgentRunTimeout(AgentRunError):
     """The run exceeded ``timeout_s`` on every attempt."""
+
+
+class UnknownAgentBackendError(AgentRunError):
+    """``model`` names a provider no agent backend is registered for."""
+
+
+AgentBackend = Callable[..., Awaitable["AgentRunResult"]]
+"""An agent backend: ``async (prompt, *, <run_agent's keywords>) -> AgentRunResult``."""
+
+_AGENT_BACKENDS: dict[str, AgentBackend] = {}
+
+# Backends that register themselves when their module is imported. They are
+# imported on first use only, so `import multiplai_core.agent_runner` stays
+# free of their code (and of anything they import).
+_LAZY_AGENT_BACKENDS: dict[str, str] = {"pi": "multiplai_core.pi.backend"}
+
+# A provider prefix is a plain lowercase word. Requiring it keeps a Bedrock
+# model ID such as `anthropic.claude-3-5-sonnet-20240620-v1:0` (dots before the
+# colon) on the SDK path, exactly as before backends existed.
+_PROVIDER_RE = re.compile(r"[a-z][a-z0-9_-]*")
+# A Bedrock ARN (`arn:aws:bedrock:…`) is also a model ID the SDK path takes.
+_BARE_ID_PREFIXES = frozenset({"arn"})
+
+
+def register_agent_backend(provider: str, runner: AgentBackend) -> None:
+    """Make :func:`run_agent` send ``<provider>:<model>`` specs to *runner*.
+
+    *runner* is called as ``await runner(prompt, **kwargs)`` with every keyword
+    :func:`run_agent` takes, ``model`` holding the full spec as the caller
+    wrote it (``pi:deepseek/deepseek-v4-flash@fireworks``), and must return an
+    :class:`AgentRunResult`. Registering a provider again replaces its runner.
+    The Anthropic provider cannot be replaced: it is the SDK path itself.
+    """
+    name = (provider or "").strip().lower()
+    if not name:
+        raise ValueError("agent backend provider name is empty")
+    if name in (DEFAULT_PROVIDER, "claude"):
+        raise ValueError(f"{name!r} is the built-in Claude Agent SDK backend")
+    _AGENT_BACKENDS[name] = runner
+
+
+def registered_agent_backends() -> tuple[str, ...]:
+    """The providers :func:`run_agent` can dispatch to, sorted.
+
+    Includes ``anthropic`` (the SDK path) and the built-in backends that
+    register on first use (``pi``), whether or not they have loaded yet.
+    """
+    return tuple(sorted({DEFAULT_PROVIDER, *_AGENT_BACKENDS, *_LAZY_AGENT_BACKENDS}))
+
+
+def _backend_provider(model: str) -> tuple[str, str]:
+    """Split *model* into ``(provider, model)`` for dispatch.
+
+    A value with no colon, or whose part before the first colon is not a plain
+    provider word, is an Anthropic model ID and is returned unchanged.
+    """
+    head, sep, _ = model.partition(":")
+    head = head.strip().lower()
+    if not sep or head in _BARE_ID_PREFIXES or not _PROVIDER_RE.fullmatch(head):
+        return DEFAULT_PROVIDER, model
+    spec = parse_model_spec(model)
+    return spec.provider, spec.model
+
+
+def _agent_backend(provider: str) -> AgentBackend:
+    runner = _AGENT_BACKENDS.get(provider)
+    if runner is None and provider in _LAZY_AGENT_BACKENDS:
+        import importlib
+
+        importlib.import_module(_LAZY_AGENT_BACKENDS[provider])
+        runner = _AGENT_BACKENDS.get(provider)
+    if runner is None:
+        raise UnknownAgentBackendError(
+            f"no agent backend for provider {provider!r}; available: "
+            f"{', '.join(registered_agent_backends())}",
+            reason=f"unknown agent backend {provider!r}",
+        )
+    return runner
 
 
 def _summarize_stderr(error_lines: list[str], recent_lines: list[str]) -> str:
@@ -517,11 +604,33 @@ async def run_agent(
             the run's usage is appended to the cost ledger (source ``"sdk"``);
             ledger failures never break the run. Empty = no ledger write.
 
+        model: Model ID or ``provider:model`` spec. ``None`` and Anthropic
+            specs (bare, ``anthropic:``, ``claude:``) run on the Claude Agent
+            SDK; another provider runs on its registered backend (see
+            :func:`register_agent_backend`).
+
     Raises:
         AgentRunTimeout: every attempt exceeded ``timeout_s``.
         AgentRunError: every attempt failed for another reason, or the SDK is
             not importable. Carries ``.partial`` with whatever was consumed.
+        UnknownAgentBackendError: ``model`` names a provider with no backend.
     """
+    if model:
+        provider, parsed = _backend_provider(model)
+        if provider != DEFAULT_PROVIDER:
+            runner = _agent_backend(provider)
+            kwargs: dict[str, Any] = dict(
+                system_prompt=system_prompt, allowed_tools=allowed_tools,
+                disallowed_tools=disallowed_tools, max_turns=max_turns,
+                model=model, effort=effort, thinking=thinking, cwd=cwd,
+                env=env, timeout_s=timeout_s, max_attempts=max_attempts,
+                retry_backoff_s=retry_backoff_s,
+                prompt_file_fallback=prompt_file_fallback, label=label,
+                component=component,
+            )
+            return await runner(prompt, **kwargs)
+        model = parsed
+
     try:
         import claude_agent_sdk as sdk
     except ImportError as e:
