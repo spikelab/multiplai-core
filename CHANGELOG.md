@@ -39,7 +39,11 @@ not backfilled; their contents are recoverable from `git log`.
     as `HEAD`; `file_at.cache_clear()` drops the cache.
   - `lines_at(repo, sha, path, start, end)` is those lines, split on `\n` the
     way git numbers them. An `end` past the end of the file returns the lines
-    that exist.
+    that exist. A range that is not valid (`start` below 1, or `end` before
+    `start`) returns `[]`, so `check_quote` reports it as
+    `"quote not at cited lines"`. The copies in the review and walkthrough
+    gates slice without this guard, so a negative `start` there wraps round to
+    the end of the file and can pass a quote that is not at the cited lines.
   - `normalise_ws(text)` collapses whitespace the way the check compares.
   - `GIT_ARGV` and `git_env()` are the git argv prefix (`color.ui=never`,
     `core.quotepath=off`) and environment (no `GIT_EXTERNAL_DIFF`,

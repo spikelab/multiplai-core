@@ -55,11 +55,15 @@ def lines_at(repo: str, sha: str, path: str, start: int, end: int) -> list[str] 
     """Lines *start*..*end* of *path* at *sha* (1-based, inclusive), or None.
 
     The text is split on ``\\n`` the way git numbers lines. An *end* past the
-    end of the file returns the lines that exist.
+    end of the file returns the lines that exist. A range that is not valid
+    (*start* below 1, or *end* before *start*) returns ``[]``: no lines, so a
+    quote cited there fails rather than matching a wrapped slice of the file.
     """
     text = file_at(repo, sha, path)
     if text is None:
         return None
+    if start < 1 or end < start:
+        return []
     return text.split("\n")[start - 1:end]
 
 

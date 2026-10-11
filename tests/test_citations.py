@@ -96,6 +96,25 @@ def test_line_end_past_the_end_of_the_file(repo):
     assert check_quote(path, first, "mod.py", 6, 500, "VALUE = 1") == "quote not at cited lines"
 
 
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [(-1000, 1000), (-1, 5), (0, 3), (0, 0), (3, 2), (5, 1)],
+)
+def test_a_line_range_that_is_not_valid_is_an_empty_window(repo, start, end):
+    path, first, _ = repo
+    # A start below 1 must not wrap the slice round to the end of the file,
+    # and an end before the start covers no lines at all.
+    assert lines_at(path, first, "mod.py", start, end) == []
+    for quote in ("def greet(name):", "VALUE = 1"):
+        assert check_quote(path, first, "mod.py", start, end, quote) == "quote not at cited lines"
+
+
+def test_a_line_range_that_is_not_valid_still_reports_a_missing_path(repo):
+    path, _, second = repo
+    assert lines_at(path, second, "old.py", 0, 1) is None
+    assert check_quote(path, second, "old.py", 0, 1, "gone = True") == "path not at commit"
+
+
 def test_lines_at_is_one_based_and_inclusive(repo):
     path, _, second = repo
     assert lines_at(path, second, "mod.py", 4, 5) == [
