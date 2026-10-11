@@ -156,9 +156,15 @@ branch inside `create_client()`. Two reasons, both load-bearing:
 - The tier/ceiling machinery in `env.py` ranks the **Claude family only**. A
   provider-qualified `MODEL=` is passed through verbatim, because coercing
   another vendor's model into a Claude tier would defeat the point of naming it.
-- **No non-Anthropic backend ships here.** Choosing a provider means choosing
-  whose API key and whose bill — a human decision, not a default. Registering
-  one from the outside is three lines.
+- **No non-Anthropic model client ships here.** Choosing a provider means
+  choosing whose API key and whose bill — a human decision, not a default.
+  Registering one from the outside is three lines.
+- **One exception, on purpose: the `pi` agent backend** (`multiplai_core.pi`,
+  added in the model-per-step change, Spike's decision of 2026-10-11). It runs
+  only when a caller names a `pi:` spec, its keys and bill live in Pi's own
+  configuration, and it adds no dependency. It is reached through
+  `register_agent_backend`, the agent-side twin of `register_provider`, and is
+  imported lazily so `agent_runner` never loads it.
 
 So: do not add an `openai`/`gemini`/`ollama` client to this repo, and keep a
 bare model ID resolving to Anthropic (`DEFAULT_PROVIDER`) so every pre-seam
