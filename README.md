@@ -22,6 +22,11 @@ own drifting copy:
 | `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, dated rotation, retention. `hook_run(name, logger)` / `HookRun` — ENTRY/EXIT timing pair that makes a killed hook diagnosable. |
 | `multiplai_core.model_client` | `create_client()` — Agent SDK first, Anthropic API fallback — plus the [provider seam](#provider-seam) (`create_client_for`, `register_provider`). |
 | `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting). |
+| `multiplai_core.structured` | `parse_answer()` / `reformat_prompt()` — validate an agent's answer against a pydantic schema, and build the no-tools re-ask that reformats one that did not parse. No call loop: the retry policy stays in each pipeline. |
+| `multiplai_core.budget` | `SpendLedger` — per-run token and cost ledger with a circuit breaker (`BudgetExceededError`), checkpointable spend, and ContextVar helpers (`start`/`get`/`record`/`check`) for one ledger per asyncio task. |
+| `multiplai_core.checkpoint` | `save_model()` / `load_model()` — atomic JSON checkpoint of a pydantic model. |
+| `multiplai_core.progress` | `ProgressWriter` — tailable `[<UTC>Z] STAGE/DONE/FAILED …` progress file. |
+| `multiplai_core.stage_config` | `conf_value()`, `read_yaml_mapping()`, `coerce_int()`, `check_effort()` — the shared half of a pipeline's `<name>.yaml` > `multiplai.conf` > defaults config loader. |
 
 ## Install
 
