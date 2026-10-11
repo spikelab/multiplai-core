@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -142,7 +142,9 @@ def _task_setting(conf: dict, task: str | None, key: str) -> str | None:
     return ((conf.get("_sections", {}) or {}).get(task) or {}).get(key)
 
 
-_TIERS = {"haiku": 1, "sonnet": 2, "opus": 3}
+# Fable ranks above Opus (Spike, 2026-10-11): an `opus` ceiling turns a `fable`
+# request into opus, and only a `fable` ceiling lets fable through.
+_TIERS = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
 # `xhigh` sits between high and max. An earlier copy of this table (the now-dead
 # sync_skill_config.py) omitted it, which silently ranked xhigh as "unknown" and
 # capped it to high — which is why this table is now exported rather than copied.
@@ -167,6 +169,11 @@ KNOWN_EFFORTS: Final[frozenset[str]] = frozenset(EFFORT_TIERS)
 # multi-vendor support, so an unqualified ID is Anthropic by definition.
 DEFAULT_PROVIDER = "anthropic"
 
+# Provider names that mean the same thing as DEFAULT_PROVIDER. ``claude:opus``
+# reads naturally next to ``pi:<model>@<provider>`` in a config file, so
+# parse_model_spec folds it into ``anthropic``.
+_PROVIDER_ALIASES = {"claude": DEFAULT_PROVIDER}
+
 
 def _tier(model: str) -> int:
     model_lower = model.lower()
@@ -189,14 +196,17 @@ def resolve_model(requested: str, ceiling: str | None = None) -> str:
     return requested
 
 
-# The ONE place a dated model ID lives. Bump these 3 lines when a model ships;
-# everything downstream references families (opus/sonnet/haiku), never a dated ID.
+# The ONE place a dated model ID lives. Bump these lines when a model ships;
+# everything downstream references families (opus/sonnet/haiku/fable), never a dated ID.
 # IDs verified against the claude-api catalog (2026-07-09): opus/sonnet are bare
-# aliases, haiku's alias resolves to claude-haiku-4-5-20251001.
+# aliases, haiku's alias resolves to claude-haiku-4-5-20251001. fable verified
+# against the same catalog (cached 2026-10-06) on 2026-10-11: Claude Fable 5.1
+# is `claude-fable-5-1`.
 CURRENT_MODEL = {
     "haiku": "claude-haiku-4-5",
     "sonnet": "claude-sonnet-5",
     "opus": "claude-opus-4-8",
+    "fable": "claude-fable-5-1",
 }
 
 
@@ -257,7 +267,7 @@ def parse_model_spec(value: str, *, default_provider: str = DEFAULT_PROVIDER) ->
     provider, model = provider.strip().lower(), model.strip()
     if not provider or not model:
         raise ValueError(f"malformed model spec {value!r} (expected 'provider:model')")
-    return ModelSpec(provider, model)
+    return ModelSpec(_PROVIDER_ALIASES.get(provider, provider), model)
 
 
 def pick_model_spec(default_tier: str = "opus", task: str | None = None) -> ModelSpec:
@@ -287,6 +297,53 @@ def pick_model_spec(default_tier: str = "opus", task: str | None = None) -> Mode
         raw = spec.model  # fall through to the shared Anthropic path below
     tier = _normalize_tier(raw) or _normalize_tier(default_tier) or "opus"
     return ModelSpec(DEFAULT_PROVIDER, resolve_model(CURRENT_MODEL[tier], ceiling=ceiling))
+
+
+def _anthropic_id(raw: str, ceiling: str | None) -> str:
+    """Normalise an Anthropic family name or ID and cap it at *ceiling*.
+
+    The same steps :func:`pick_model_spec` applies to a bare or
+    ``anthropic:``-qualified value: a family name becomes the current ID, a
+    dated ID of a known family is pinned to that family's current ID, and an
+    unrecognised string is kept as written (it may be a real ID this table has
+    not caught up with), then capped.
+    """
+    tier = _normalize_tier(raw)
+    model = CURRENT_MODEL[tier] if tier else raw
+    return resolve_model(model, ceiling=ceiling)
+
+
+def resolve_model_spec(
+    chain: Sequence[str | None], *, ceiling: str | None = None
+) -> ModelSpec | None:
+    """Resolve the first non-empty spec in *chain* to a :class:`ModelSpec`.
+
+    *chain* is an ordered list of candidate values, most specific first: a
+    plugin decides which config keys go into it (``models.<step>``, then
+    ``models.<stage>``, …) and core only resolves the list. Returns ``None``
+    when every entry is empty or ``None``, so the caller keeps its own default.
+
+    An Anthropic spec (``opus``, ``claude:fable``, ``anthropic:claude-opus-4-8``)
+    takes the same path as :func:`pick_model_spec`: family normalisation, then
+    the ceiling (*ceiling*, else ``MULTIPLAI_MODEL`` from ``multiplai.conf``,
+    else the env/default :func:`resolve_model` uses). A non-Anthropic spec
+    (``pi:deepseek/deepseek-v4-flash@fireworks``) passes through unchanged:
+    the Claude tier ranking means nothing for another vendor's model.
+
+    Raises:
+        ValueError: the first non-empty entry is a malformed spec
+            (``"pi:"``). The chain does not skip past it, because the user
+            wrote that value and a silent fallback would hide the typo.
+    """
+    raw = next((c.strip() for c in chain if c and c.strip()), None)
+    if raw is None:
+        return None
+    spec = parse_model_spec(raw)
+    if not spec.is_anthropic:
+        return spec
+    if ceiling is None:
+        ceiling = load_multiplai_conf().get("MULTIPLAI_MODEL")  # type: ignore[assignment]
+    return ModelSpec(DEFAULT_PROVIDER, _anthropic_id(spec.model, ceiling))
 
 
 def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
