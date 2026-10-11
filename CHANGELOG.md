@@ -45,6 +45,8 @@ not backfilled; their contents are recoverable from `git log`.
     ContextVar helpers `multiplai_core.budget.start / get / record / check`
     keep one ledger per asyncio task; pass `ledger_cls=` to use a subclass
     (one with its own default ceiling, or `run_name` for the warning).
+    `start()` forwards only the ceilings it is given: one left out keeps the
+    subclass default, and one passed as `None` turns that ceiling off.
   - `save_model(model, dir, filename)` and `load_model(path, cls)`
     (`multiplai_core.checkpoint`). An atomic JSON checkpoint: a temp file in
     the same directory, then `os.replace`. `load_model` returns `None`, and

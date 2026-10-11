@@ -146,14 +146,29 @@ def test_a_subclass_names_the_run_and_sets_its_own_default_ceiling(caplog):
         def __init__(self, max_usd=50.0, **kw):
             super().__init__(max_usd=max_usd, **kw)
 
-    ledger = budget.start(None, None, ledger_cls=ReviewBudget)
-    assert isinstance(ledger, ReviewBudget) and ledger.max_usd is None
+    ledger = budget.start(ledger_cls=ReviewBudget)
+    assert isinstance(ledger, ReviewBudget) and ledger.max_usd == 50.0
+    resumed = budget.start(state={"cost_usd": 3.0}, ledger_cls=ReviewBudget)
+    assert resumed.max_usd == 50.0 and resumed.cost_usd == 3.0
     assert ReviewBudget().max_usd == 50.0
     r = ReviewBudget(max_usd=1.0)
     r.record(_usage(cost_usd=0.9))
     with caplog.at_level(logging.WARNING, logger="multiplai_core.budget"):
         r.check()
     assert caplog.records[-1].getMessage().startswith("Review has used 90%")
+
+
+def test_start_with_an_explicit_none_ceiling_leaves_the_run_uncapped():
+    class ReviewBudget(SpendLedger):
+        def __init__(self, max_usd=50.0, max_tokens=1_000, **kw):
+            super().__init__(max_usd=max_usd, max_tokens=max_tokens, **kw)
+
+    ledger = budget.start(max_usd=None, max_tokens=None, ledger_cls=ReviewBudget)
+    assert ledger.max_usd is None and ledger.max_tokens is None
+    ledger.record(_usage(cost_usd=500.0))
+    ledger.check()  # uncapped: never raises
+    only_usd = budget.start(None, ledger_cls=ReviewBudget)
+    assert only_usd.max_usd is None and only_usd.max_tokens == 1_000
 
 
 def test_start_restores_state_and_record_and_check_go_to_the_current_ledger():

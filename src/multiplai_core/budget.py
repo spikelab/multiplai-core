@@ -19,11 +19,14 @@ against their own ledger.
 
 A pipeline that needs its own default ceiling, warning text or state fields
 subclasses :class:`SpendLedger` and passes the subclass as ``ledger_cls``.
+``start()`` forwards only the ceilings it is given, so leaving one out keeps
+the subclass default; passing ``None`` turns that ceiling off.
 """
 
 from __future__ import annotations
 
 import contextvars
+import enum
 import logging
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
@@ -210,15 +213,32 @@ def get(*, ledger_cls: type[SpendLedger] = SpendLedger) -> SpendLedger:
     return ledger
 
 
+class _Unset(enum.Enum):
+    UNSET = enum.auto()
+
+
+_UNSET = _Unset.UNSET
+
+
 def start(
-    max_usd: float | None = None,
+    max_usd: float | None | _Unset = _UNSET,
     state: dict | None = None,
     *,
-    max_tokens: int | None = None,
+    max_tokens: int | None | _Unset = _UNSET,
     ledger_cls: type[SpendLedger] = SpendLedger,
 ) -> SpendLedger:
-    """Begin a ledger in the current context with these ceilings, restoring *state* if given."""
-    ledger = ledger_cls.from_state(state, max_usd=max_usd, max_tokens=max_tokens)
+    """Begin a ledger in the current context with these ceilings, restoring *state* if given.
+
+    A ceiling left out takes ``ledger_cls``'s own default, so a subclass that
+    sets a default ceiling keeps it. A ceiling passed as ``None`` turns that
+    ceiling off: the run is uncapped on it.
+    """
+    ceilings: dict[str, Any] = {}
+    if max_usd is not _UNSET:
+        ceilings["max_usd"] = max_usd
+    if max_tokens is not _UNSET:
+        ceilings["max_tokens"] = max_tokens
+    ledger = ledger_cls.from_state(state, **ceilings)
     _current.set(ledger)
     return ledger
 
