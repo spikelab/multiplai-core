@@ -48,12 +48,16 @@ not backfilled; their contents are recoverable from `git log`.
     `model="pi:<model-id>@<provider>"`. It drives `pi --mode rpc` (`pi` on
     `PATH`, or `MULTIPLAI_PI_BIN`), maps `allowed_tools` onto Pi's `-t`
     allow-list (none means `--no-tools`), `effort` onto `--thinking` (`None`
-    leaves it off), enforces `max_turns` and `timeout_s`, and returns the same
+    leaves it off), enforces `max_turns` and `timeout_s` (a hard limit: a Pi
+    that has stopped reading stdin cannot hold the run past it plus a few
+    seconds of cleanup), and returns the same
     `AgentRunResult`, usage and `tool_calls` included. Cost comes from Pi's own
     events; when Pi reports none the cost-ledger record has `cost_usd: 0` and
     `cost_unreported: true`. `MULTIPLAI_PI_GATE_EXT` names an optional Pi
     extension that gates bash. A missing binary raises `AgentRunError` with an
-    install hint and never falls back to Claude. It is imported the first time
+    install hint and never falls back to Claude. A Pi that exits mid-run (so a
+    write to it fails with a broken pipe) raises `AgentRunError` with its
+    stderr tail and the partial result, and is retried under `max_attempts`. It is imported the first time
     a `pi:` spec runs, so `import multiplai_core.agent_runner` does not load
     it. Installing and configuring Pi is not covered.
 

@@ -58,17 +58,25 @@ SETTLED = {"type": "agent_settled"}
 class StubTransport:
     """Replays *script* after Pi receives the prompt; records what was sent."""
 
-    def __init__(self, script, *, hang=False, chunk=7):
+    def __init__(self, script, *, hang=False, chunk=7, fail_on=None, wedge_on=None):
         self.script = script
         self.hang = hang
         self.chunk = chunk
+        self.fail_on = fail_on or {}
+        """Command type -> exception raised when it is written (Pi already exited)."""
+        self.wedge_on = wedge_on or ()
+        """Command types whose write never completes (Pi stopped reading stdin)."""
         self.sent = []
         self.closed = False
         self._prompted = asyncio.Event()
 
     async def send(self, data):
         frame = json.loads(data.decode())
+        if frame["type"] in self.fail_on:
+            raise self.fail_on[frame["type"]]
         self.sent.append(frame)
+        if frame["type"] in self.wedge_on:
+            await asyncio.Event().wait()
         if frame["type"] == "prompt":
             self._prompted.set()
 
@@ -91,11 +99,13 @@ class StubTransport:
 @pytest.fixture
 def stub(monkeypatch, tmp_path):
     """Install a stub transport factory; returns a dict that captures the run."""
-    seen = {"script": [], "hang": False}
+    seen = {"script": [], "hang": False, "fail_on": None, "wedge_on": None, "opens": 0}
 
     async def fake_open(argv, *, cwd, env):
         seen["argv"], seen["cwd"], seen["env"] = argv, cwd, env
-        t = StubTransport(seen["script"], hang=seen["hang"])
+        seen["opens"] += 1
+        t = StubTransport(seen["script"], hang=seen["hang"], fail_on=seen["fail_on"],
+                          wedge_on=seen["wedge_on"])
         seen["transport"] = t
         return t
 
@@ -315,6 +325,44 @@ class TestRun:
         assert exc.value.partial.text == "so far"
         assert exc.value.stderr_tail == "stub stderr"
         assert {"type": "abort"} in stub["transport"].sent
+
+    def test_timeout_is_hard_when_abort_wedges(self, stub, monkeypatch):
+        # Pi stopped reading stdin: the abort write never completes. The run
+        # must still end close to timeout_s, not hang on the abort.
+        monkeypatch.setattr(pb, "ABORT_WRITE_TIMEOUT_S", 0.2, raising=False)
+        stub["script"] += [_assistant_end("so far"), TURN_END]
+        stub["hang"] = True
+        stub["wedge_on"] = ("abort",)
+
+        async def bounded():
+            return await asyncio.wait_for(
+                run_agent("p", model=SPEC, timeout_s=0.3, max_turns=10), timeout=5)
+
+        with pytest.raises(AgentRunTimeout) as exc:
+            _run(bounded())
+        assert exc.value.partial.text == "so far"
+        assert stub["transport"].closed
+
+    @pytest.mark.parametrize("err", [BrokenPipeError(32, "Broken pipe"),
+                                     ConnectionResetError("Connection lost")])
+    def test_pipe_error_on_prompt_raises_agent_run_error(self, stub, err):
+        # e.g. a model missing from models.json: Pi exits before reading the prompt.
+        stub["fail_on"] = {"prompt": err}
+        with pytest.raises(AgentRunError) as exc:
+            _run(run_agent("p", model=SPEC, max_attempts=2, retry_backoff_s=0))
+        assert type(exc.value) is AgentRunError
+        assert exc.value.stderr_tail == "stub stderr"
+        assert exc.value.partial is not None
+        assert exc.value.attempts == 2 and stub["opens"] == 2
+        assert stub["transport"].closed
+
+    def test_pipe_error_on_max_turns_abort_keeps_partial(self, stub):
+        stub["script"] += [_assistant_end("one"), TURN_END]
+        stub["fail_on"] = {"abort": BrokenPipeError(32, "Broken pipe")}
+        with pytest.raises(AgentRunError) as exc:
+            _run(run_agent("p", model=SPEC, max_turns=1))
+        assert exc.value.partial.text == "one"
+        assert exc.value.stderr_tail == "stub stderr"
 
     def test_final_model_error_raises(self, stub):
         stub["script"] += [_assistant_end(stop="error", error="429: rate limited"),

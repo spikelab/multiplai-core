@@ -60,6 +60,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..aio import hard_timeout
 from ..agent_runner import (
     AgentRunError,
     AgentRunResult,
@@ -96,6 +97,10 @@ THINKING_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 # How long to keep reading after `abort` before giving up on Pi settling.
 ABORT_GRACE_S = 10.0
+
+# How long writing `abort` may take. A Pi that has stopped reading stdin never
+# drains the pipe, so the write is bounded or timeout_s would not be a limit.
+ABORT_WRITE_TIMEOUT_S = 5.0
 
 _INSTALL_HINT = (
     "Install the Pi coding agent so `pi` is on PATH and configure the model in "
@@ -178,6 +183,23 @@ class PiRunOutcome:
     """Pi said ``agent_settled``: nothing more is coming for this prompt."""
     aborted_reason: str = ""
     """``"max_turns"`` or ``"timeout"`` when this side ended the run."""
+    pipe_error: str = ""
+    """Writing to Pi failed (it exited, so its stdin is closed); empty otherwise."""
+
+
+async def _send_abort(rpc: Any, out: PiRunOutcome) -> None:
+    """Send ``abort``, bounded by :data:`ABORT_WRITE_TIMEOUT_S`.
+
+    A failed write is recorded in *out* and a wedged one is given up on; the
+    caller closes the process either way.
+    """
+    try:
+        await hard_timeout(rpc.abort(), ABORT_WRITE_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        logger.warning("pi backend: abort write did not finish in %.0fs; closing pi",
+                       ABORT_WRITE_TIMEOUT_S)
+    except OSError as e:
+        out.pipe_error = out.pipe_error or f"{type(e).__name__}: {e}"
 
 
 async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> None:
@@ -186,9 +208,14 @@ async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> No
     ``pi --mode rpc`` is a long-lived server: its stdout does not close when a
     run is over, so ``agent_settled``, not EOF, ends a run. Reaching
     *max_turns* sends ``abort`` and keeps reading for :data:`ABORT_GRACE_S`, so
-    the events already in flight still land in the result.
+    the events already in flight still land in the result. A write that fails
+    because Pi has exited is recorded in ``out.pipe_error``, not raised.
     """
-    await rpc.prompt(prompt)
+    try:
+        await rpc.prompt(prompt)
+    except OSError as e:  # BrokenPipeError / ConnectionResetError: Pi exited
+        out.pipe_error = f"{type(e).__name__}: {e}"
+        return
     stream = rpc.events()
     deadline: float | None = None
     loop = asyncio.get_running_loop()
@@ -211,7 +238,7 @@ async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> No
             return
         if deadline is None and max_turns and out.turns >= max_turns:
             out.aborted_reason = "max_turns"
-            await rpc.abort()
+            await _send_abort(rpc, out)
             deadline = loop.time() + ABORT_GRACE_S
 
 
@@ -219,18 +246,17 @@ async def supervise(rpc: Any, prompt: str, *, max_turns: int, timeout_s: float) 
     """Run one prompt on *rpc* within *max_turns* and *timeout_s*.
 
     The timeout does not depend on Pi sending events: a model that hangs
-    mid-tool-call is cut off on time. Everything read before the cut stays in
-    the returned outcome.
+    mid-tool-call is cut off on time. It is a hard limit: neither the cut nor
+    the ``abort`` that follows waits on a Pi that has stopped reading stdin, so
+    this returns within *timeout_s* plus :data:`ABORT_WRITE_TIMEOUT_S`.
+    Everything read before the cut stays in the returned outcome.
     """
     out = PiRunOutcome()
     try:
-        await asyncio.wait_for(_drive(rpc, prompt, out, max_turns), timeout=timeout_s)
+        await hard_timeout(_drive(rpc, prompt, out, max_turns), timeout_s)
     except asyncio.TimeoutError:
         out.aborted_reason = "timeout"
-        try:
-            await rpc.abort()
-        except Exception:  # noqa: BLE001 — a wedged transport must not mask the timeout
-            pass
+        await _send_abort(rpc, out)
     return out
 
 
@@ -515,6 +541,12 @@ async def run_pi_agent(
             last = AgentRunError(
                 f"pi run [{label}] failed: {error[:500]}",
                 reason=f"failed: {error[:200]}", attempts=attempt + 1,
+                stderr_tail=stderr_tail, partial=result)
+        elif outcome.pipe_error and not outcome.settled:
+            last = AgentRunError(
+                f"pi run [{label}] lost the pipe to pi ({outcome.pipe_error}); "
+                "pi exited early, see stderr_tail",
+                reason="pi exited (write to pi failed)", attempts=attempt + 1,
                 stderr_tail=stderr_tail, partial=result)
         elif not outcome.settled and outcome.aborted_reason != "max_turns":
             last = AgentRunError(
