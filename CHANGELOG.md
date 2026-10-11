@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.18.0] – 2026-10-11
+
 ### Added
 
 - **A check that a cited `path:line` range at a commit contains a quote**, so
@@ -737,7 +739,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/spikelab/multiplai-core/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/spikelab/multiplai-core/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/spikelab/multiplai-core/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/spikelab/multiplai-core/compare/v0.14.0...v0.15.0
