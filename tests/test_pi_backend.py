@@ -256,6 +256,58 @@ class TestUsage:
         assert usage.cost_usd == 0 and not reported
 
 
+class TestToolCalls:
+    """Pi's tool arguments come back under Claude Code's argument names, so a
+    ToolCall reads the same whichever backend ran (pi-mono tools/*.ts schemas)."""
+
+    def _calls(self, *tools):
+        events = []
+        for i, (name, args) in enumerate(tools):
+            events += [_ev(2 * i, e) for e in _tool(name, args)]
+        return pb.tool_calls_from_events(events)
+
+    def test_read_write_use_file_path(self):
+        assert self._calls(("read", {"path": "a.py", "offset": 3, "limit": 10}),
+                           ("write", {"path": "b.py", "content": "x"})) == (
+            agent_runner.ToolCall("Read", {"file_path": "a.py", "offset": 3, "limit": 10}),
+            agent_runner.ToolCall("Write", {"file_path": "b.py", "content": "x"}),
+        )
+
+    def test_single_edit_flattens_to_old_and_new_string(self):
+        (call,) = self._calls(("edit", {"path": "a.py", "edits": [{"oldText": "a", "newText": "b"}]}))
+        assert call == agent_runner.ToolCall(
+            "Edit", {"file_path": "a.py", "old_string": "a", "new_string": "b"})
+
+    def test_legacy_top_level_edit_keys(self):
+        (call,) = self._calls(("edit", {"path": "a.py", "oldText": "a", "newText": "b"}))
+        assert call.input == {"file_path": "a.py", "old_string": "a", "new_string": "b"}
+
+    def test_several_edits_keep_a_list_with_claude_keys(self):
+        (call,) = self._calls(("edit", {"path": "a.py", "edits": [
+            {"oldText": "a", "newText": "b"}, {"oldText": "c", "newText": "d"}]}))
+        assert call.input == {"file_path": "a.py", "edits": [
+            {"old_string": "a", "new_string": "b"}, {"old_string": "c", "new_string": "d"}]}
+
+    def test_bash_timeout_seconds_become_milliseconds(self):
+        (call,) = self._calls(("bash", {"command": "ls", "timeout": 5}))
+        assert call == agent_runner.ToolCall("Bash", {"command": "ls", "timeout": 5000})
+
+    def test_grep_and_find_options(self):
+        assert self._calls(
+            ("grep", {"pattern": "x", "path": "src", "glob": "*.py", "ignoreCase": True,
+                      "context": 2, "limit": 5, "literal": True}),
+            ("find", {"pattern": "*.py", "path": "src", "limit": 9}),
+        ) == (
+            agent_runner.ToolCall("Grep", {"pattern": "x", "path": "src", "glob": "*.py", "-i": True,
+                                           "-C": 2, "head_limit": 5, "literal": True}),
+            agent_runner.ToolCall("Glob", {"pattern": "*.py", "path": "src", "limit": 9}),
+        )
+
+    def test_unmapped_tool_keeps_its_name_and_args(self):
+        (call,) = self._calls(("ls", {"path": "src"}))
+        assert call == agent_runner.ToolCall("ls", {"path": "src"})
+
+
 class TestFilesChanged:
     def _events(self):
         return [_ev(0, e) for e in _tool("write", {"path": "src/made_by_event.py"})] + [
@@ -290,7 +342,7 @@ class TestRun:
         assert isinstance(r, agent_runner.AgentRunResult)
         assert r.text == "done" and r.turns == 2
         assert r.files_changed == ["a.py"]
-        assert r.tool_calls == (agent_runner.ToolCall("Write", {"path": "a.py", "content": "x"}),)
+        assert r.tool_calls == (agent_runner.ToolCall("Write", {"file_path": "a.py", "content": "x"}),)
         assert (r.usage.input_tokens, r.usage.output_tokens) == (15, 3)
         assert r.usage.cost_usd == pytest.approx(0.0015)
         assert r.stderr_tail == ""

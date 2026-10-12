@@ -344,14 +344,54 @@ def usage_from_events(events: list[Event]) -> tuple[AgentUsage, bool]:
                       cost_usd=cost), cost_reported
 
 
+# Pi argument name -> Claude Code argument name, per Pi tool (schemas in
+# pi-mono packages/coding-agent/src/core/tools/*.ts). A key with no Claude Code
+# equivalent (find/grep ``limit`` aside, grep ``literal``) keeps Pi's name.
+_CLAUDE_ARGS = {
+    "read": {"path": "file_path"},
+    "write": {"path": "file_path"},
+    "edit": {"path": "file_path", "oldText": "old_string", "newText": "new_string"},
+    "grep": {"ignoreCase": "-i", "context": "-C", "limit": "head_limit"},
+}
+_EDIT_KEYS = {"oldText": "old_string", "newText": "new_string"}
+
+
+def claude_tool_input(pi_tool: str, args: dict) -> dict:
+    """Pi tool arguments under Claude Code's argument names.
+
+    Pi's edit takes ``edits: [{oldText, newText}, ...]``: one edit becomes
+    ``old_string``/``new_string`` (Claude Code's Edit), several keep the
+    ``edits`` list with each entry's keys renamed. Pi's bash ``timeout`` is in
+    seconds and Claude Code's in milliseconds, so the value is converted.
+    """
+    renames = _CLAUDE_ARGS.get(pi_tool, {})
+    out = {renames.get(k, k): v for k, v in args.items()}
+    if pi_tool == "edit" and isinstance(out.get("edits"), list):
+        edits = [{_EDIT_KEYS.get(k, k): v for k, v in e.items()} if isinstance(e, dict) else e
+                 for e in out["edits"]]
+        if len(edits) == 1 and isinstance(edits[0], dict) and "old_string" not in out:
+            del out["edits"]
+            out.update(edits[0])
+        else:
+            out["edits"] = edits
+    if pi_tool == "bash" and isinstance(out.get("timeout"), (int, float)) \
+            and not isinstance(out["timeout"], bool):
+        out["timeout"] = out["timeout"] * 1000
+    return out
+
+
 def tool_calls_from_events(events: list[Event]) -> tuple[ToolCall, ...]:
-    """Every tool call Pi started, in order, with Claude Code tool names where one exists."""
+    """Every tool call Pi started, in order, with Claude Code tool and argument
+    names where one exists (an unmapped tool keeps Pi's name and arguments)."""
     calls: list[ToolCall] = []
     for ev in events:
         if ev.kind is not Kind.TOOL_START or not ev.tool_name:
             continue
-        name = _CLAUDE_NAME.get(ev.tool_name, ev.tool_name)
-        calls.append(ToolCall(name=name, input=dict(ev.tool_input)))
+        if ev.tool_name in _CLAUDE_NAME:
+            calls.append(ToolCall(name=_CLAUDE_NAME[ev.tool_name],
+                                  input=claude_tool_input(ev.tool_name, dict(ev.tool_input))))
+        else:
+            calls.append(ToolCall(name=ev.tool_name, input=dict(ev.tool_input)))
     return tuple(calls)
 
 
