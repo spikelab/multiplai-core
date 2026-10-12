@@ -51,6 +51,7 @@ from .env import (
     pick_model_spec,
     resolve_effort,
     resolve_model,
+    resolve_model_spec,
 )
 from .text import extract_json
 from .log_utils import (
@@ -91,7 +92,10 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
         TOOL_UNIVERSE,
         AgentUsage,
         ToolCall,
+        UnknownAgentBackendError,
         deny_list,
+        register_agent_backend,
+        registered_agent_backends,
         run_agent,
     )
     from .aio import hard_timeout, swallow_task_result
@@ -148,7 +152,8 @@ _LAZY_ATTRS: dict[str, str] = {
         (
             "run_agent", "AgentRunResult", "AgentRunError", "AgentRunTimeout",
             "AgentUsage", "MAX_PROMPT_BYTES", "TOOL_UNIVERSE", "deny_list",
-            "ToolCall", "agent_runner",
+            "ToolCall", "UnknownAgentBackendError", "register_agent_backend",
+            "registered_agent_backends", "agent_runner",
         ),
         "agent_runner",
     ),
@@ -214,6 +219,9 @@ __all__ = [
     "MAX_PROMPT_BYTES",
     "TOOL_UNIVERSE",
     "deny_list",
+    "register_agent_backend",
+    "registered_agent_backends",
+    "UnknownAgentBackendError",
     # paths
     "Paths",
     "get_paths",
@@ -271,6 +279,7 @@ __all__ = [
     "ModelSpec",
     "parse_model_spec",
     "pick_model_spec",
+    "resolve_model_spec",
     "DEFAULT_PROVIDER",
     # async helpers
     "hard_timeout",

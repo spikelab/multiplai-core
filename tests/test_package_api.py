@@ -87,3 +87,25 @@ def test_dir_lists_the_public_names():
     listed = set(dir(multiplai_core))
     assert set(PUBLIC_NAMES) <= listed
     assert set(_LAZY_ATTRS) <= listed
+
+
+@pytest.mark.parametrize("name", [
+    "resolve_model_spec", "register_agent_backend", "registered_agent_backends",
+    "UnknownAgentBackendError",
+])
+def test_model_per_step_names_are_exported(name):
+    """The per-step model and agent-backend API (0.18) is public: in `__all__`,
+    resolvable lazily, and importable from the package root."""
+    assert name in PUBLIC_NAMES
+    if name != "resolve_model_spec":
+        assert _LAZY_ATTRS[name] == "agent_runner"
+    result = _run(f"from multiplai_core import {name}")
+    assert result.returncode == 0, result.stderr
+
+
+def test_importing_agent_runner_leaves_pi_unloaded():
+    result = _run(
+        "import multiplai_core.agent_runner, sys; "
+        "assert 'multiplai_core.pi' not in sys.modules"
+    )
+    assert result.returncode == 0, result.stderr

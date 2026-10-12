@@ -21,7 +21,8 @@ own drifting copy:
 | `multiplai_core.aio` | `hard_timeout()` and async task helpers. |
 | `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, dated rotation, retention. `hook_run(name, logger)` / `HookRun` — ENTRY/EXIT timing pair that makes a killed hook diagnosable. |
 | `multiplai_core.model_client` | `create_client()` — Agent SDK first, Anthropic API fallback — plus the [provider seam](#provider-seam) (`create_client_for`, `register_provider`). |
-| `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting). |
+| `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting), and the [agent backend](#agent-backends) registry (`register_agent_backend`). |
+| `multiplai_core.pi` | The `pi` agent backend: `run_agent(model="pi:<model-id>@<provider>")` through `pi --mode rpc`. Imported on first use only. |
 | `multiplai_core.structured` | `parse_answer()` / `reformat_prompt()` — validate an agent's answer against a pydantic schema, and build the no-tools re-ask that reformats one that did not parse. No call loop: the retry policy stays in each pipeline. |
 | `multiplai_core.budget` | `SpendLedger` — per-run token and cost ledger with a circuit breaker (`BudgetExceededError`), checkpointable spend, and ContextVar helpers (`start`/`get`/`record`/`check`) for one ledger per asyncio task. |
 | `multiplai_core.checkpoint` | `save_model()` / `load_model()` — atomic JSON checkpoint of a pydantic model. |
@@ -183,9 +184,51 @@ client = await create_client_for(spec)     # UnknownProviderError if unregistere
   Claude tier ranking and the `MULTIPLAI_MODEL` ceiling are meaningless for
   another vendor's model, and coercing it to a Claude tier would defeat the point
   of naming a cross-family model.
-- **No non-Anthropic backend ships here.** Choosing a provider means choosing
-  whose API key and whose bill — a human decision, not a default. Registering one
-  from the outside is three lines.
+- **No non-Anthropic model client ships here.** Choosing a provider means
+  choosing whose API key and whose bill — a human decision, not a default.
+  Registering one from the outside is three lines. The `pi` *agent* backend
+  below is the one exception, and it keeps the rule's point: it runs only when
+  a caller names a `pi:` spec, and the keys and the bill live in Pi's own
+  configuration, not here.
+
+### Picking a model from an ordered list
+
+`resolve_model_spec(chain, *, ceiling=None)` resolves the first non-empty entry
+of an ordered list, most specific first. A plugin decides which config keys go
+into the list (for buildme: the step, then its stage, then the default); core
+only resolves it. An Anthropic spec — `opus`, `fable`, `claude:sonnet`,
+`anthropic:claude-opus-4-8` — is normalised to the current ID and capped by the
+`MULTIPLAI_MODEL` ceiling, exactly like `pick_model_spec`. Any other spec passes
+through unchanged. All entries empty returns `None`, so the caller keeps its own
+default.
+
+`fable` (`claude-fable-5-1`) ranks above `opus`: an `opus` ceiling turns a
+`fable` request into opus, and only a `fable` ceiling lets it through.
+`claude:` is an alias of `anthropic:`.
+
+## Agent backends
+
+`run_agent(model=...)` takes the same `provider:model` specs. An Anthropic spec
+(bare, `anthropic:` or `claude:`) runs on the Claude Agent SDK exactly as
+before, with the prefix removed. Any other provider runs on the backend
+registered for it:
+
+```python
+from multiplai_core import register_agent_backend, registered_agent_backends
+
+async def my_runner(prompt, **kwargs) -> AgentRunResult: ...   # run_agent's keywords
+register_agent_backend("mine", my_runner)
+await run_agent("…", model="mine:some-model")    # UnknownAgentBackendError if unregistered
+```
+
+One backend ships: `pi`, for `pi:<model-id>@<provider>` (for example
+`pi:deepseek/deepseek-v4-flash@fireworks`). It drives `pi --mode rpc` (binary
+`pi` on `PATH`, or `MULTIPLAI_PI_BIN`), maps `allowed_tools` onto Pi's `-t`
+allow-list, maps `effort` onto `--thinking`, enforces `max_turns` and
+`timeout_s`, and sums usage and cost from Pi's own events. It loads the first
+time a `pi:` spec runs, so importing `agent_runner` never imports it. Installing
+and configuring Pi is not covered here; a missing binary is an error, never a
+silent fall back to Claude.
 
 ## Prompt caching
 

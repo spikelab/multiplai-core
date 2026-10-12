@@ -19,6 +19,7 @@ from multiplai_core.env import (
     pick_model_spec,
     resolve_effort,
     resolve_model,
+    resolve_model_spec,
 )
 
 
@@ -347,3 +348,81 @@ class TestEffortTiers:
         _write_conf(tmp_path, "")
         assert pick_effort("xhigh") == "high"
         assert pick_effort("max") == "high"
+
+
+class TestClaudeAlias:
+    def test_claude_prefix_means_anthropic(self):
+        assert parse_model_spec("claude:fable") == ModelSpec("anthropic", "fable")
+        assert parse_model_spec("CLAUDE:opus").is_anthropic
+
+    @pytest.mark.parametrize("raw", ["claude:opus", "anthropic:opus", "opus"])
+    def test_every_spelling_resolves_to_the_same_id(self, monkeypatch, tmp_path, raw):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, f'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL={raw}\n')
+        assert pick_model_spec("haiku", task="t") == ModelSpec(
+            "anthropic", CURRENT_MODEL["opus"])
+
+
+class TestFable:
+    def test_fable_is_a_known_family(self):
+        assert CURRENT_MODEL["fable"] == "claude-fable-5-1"
+        assert parse_model_spec("fable") == parse_model_spec("claude:fable")
+
+    def test_opus_ceiling_turns_fable_into_opus(self):
+        assert resolve_model(CURRENT_MODEL["fable"], ceiling=CURRENT_MODEL["opus"]) == (
+            CURRENT_MODEL["opus"])
+
+    def test_fable_ceiling_lets_fable_through(self):
+        assert resolve_model(CURRENT_MODEL["fable"], ceiling=CURRENT_MODEL["fable"]) == (
+            CURRENT_MODEL["fable"])
+
+    def test_fable_ranks_above_opus(self):
+        assert env_mod._tier("claude-fable-5-1") > env_mod._tier("claude-opus-4-8")
+
+    def test_pick_model_fable_task_override(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-fable-5-1"\n[t]\nMODEL=fable\n')
+        assert pick_model("opus", task="t") == "claude-fable-5-1"
+
+
+class TestResolveModelSpec:
+    def test_first_non_empty_wins(self):
+        spec = resolve_model_spec([None, "", "  ", "sonnet", "opus"])
+        assert spec == ModelSpec("anthropic", CURRENT_MODEL["sonnet"])
+
+    def test_all_empty_gives_none(self):
+        assert resolve_model_spec([None, "", None]) is None
+        assert resolve_model_spec([]) is None
+
+    def test_anthropic_spec_is_capped_by_explicit_ceiling(self):
+        spec = resolve_model_spec(["claude:fable"], ceiling=CURRENT_MODEL["opus"])
+        assert spec == ModelSpec("anthropic", CURRENT_MODEL["opus"])
+
+    def test_anthropic_spec_is_capped_by_env_ceiling(self, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_MODEL", CURRENT_MODEL["haiku"])
+        assert resolve_model_spec(["opus"]).model == CURRENT_MODEL["haiku"]
+
+    def test_anthropic_spec_is_capped_by_conf_ceiling(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-sonnet-5"\n')
+        assert resolve_model_spec(["opus"]).model == "claude-sonnet-5"
+
+    def test_fable_passes_under_a_fable_ceiling(self):
+        spec = resolve_model_spec(["fable"], ceiling=CURRENT_MODEL["fable"])
+        assert spec.qualified == "anthropic:claude-fable-5-1"
+
+    def test_family_names_and_dated_ids_normalise(self):
+        ceiling = CURRENT_MODEL["fable"]
+        assert resolve_model_spec(["anthropic:opus"], ceiling=ceiling).model == (
+            CURRENT_MODEL["opus"])
+        assert resolve_model_spec(["claude-opus-4-2"], ceiling=ceiling).model == (
+            CURRENT_MODEL["opus"])
+
+    def test_pi_spec_passes_through_uncapped(self, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_MODEL", CURRENT_MODEL["haiku"])
+        spec = resolve_model_spec([None, "pi:deepseek/deepseek-v4-flash@fireworks", "opus"])
+        assert spec == ModelSpec("pi", "deepseek/deepseek-v4-flash@fireworks")
+
+    def test_malformed_first_entry_raises(self):
+        with pytest.raises(ValueError):
+            resolve_model_spec(["pi:", "opus"])

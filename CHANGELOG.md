@@ -18,6 +18,63 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **A model per step, and a Pi backend for `run_agent`.** Every change is an
+  addition: with no new config, every call runs on the model and the code path
+  it ran on before. No new dependency.
+  - `fable` is a model family: `CURRENT_MODEL["fable"] == "claude-fable-5-1"`
+    (checked against the `claude-api` skill's model catalog, cached
+    2026-10-06). It ranks above `opus` against the `MULTIPLAI_MODEL` ceiling,
+    so an `opus` ceiling turns a `fable` request into opus and only a `fable`
+    ceiling lets it through. The `haiku`, `sonnet` and `opus` IDs are
+    unchanged.
+  - `parse_model_spec` reads `claude:` as an alias of `anthropic:`, so
+    `claude:fable`, `anthropic:fable` and `fable` name the same model.
+  - `resolve_model_spec(chain, *, ceiling=None) -> ModelSpec | None` resolves
+    the first non-empty entry of an ordered list (most specific first). An
+    Anthropic spec is normalised and capped exactly like `pick_model_spec`; any
+    other spec passes through unchanged; an all-empty list returns `None` so
+    the caller keeps its own default. Which keys go into the list stays in each
+    plugin.
+  - `run_agent(model=...)` accepts a `provider:model` spec. Anthropic specs
+    (bare, `anthropic:`, `claude:`) take the Claude Agent SDK path unchanged,
+    with the prefix removed; a Bedrock model ID or ARN, whose colon is part of
+    the ID, also stays there. Any other provider runs on the backend added with
+    `register_agent_backend(provider, runner)`, which receives the spec with
+    the provider lower-cased and stripped (`PI: m@p` arrives as `pi:m@p`);
+    `registered_agent_backends()`
+    lists them, and an unknown provider raises `UnknownAgentBackendError` (an
+    `AgentRunError`, so an existing `except AgentRunError` catches it).
+  - `multiplai_core.pi`: the `pi` backend, for
+    `model="pi:<model-id>@<provider>"`. It drives `pi --mode rpc` (`pi` on
+    `PATH`, or `MULTIPLAI_PI_BIN`), maps `allowed_tools` onto Pi's `-t`
+    allow-list (none means `--no-tools`), `effort` onto `--thinking` (`None`
+    leaves it off), enforces `max_turns` and `timeout_s` (a hard limit: a Pi
+    that has stopped reading stdin cannot hold the run past it plus a few
+    seconds of cleanup), and returns the same
+    `AgentRunResult`, usage and `tool_calls` included. Each tool call carries
+    Claude Code's tool and argument names (`path` becomes `file_path`, an edit's
+    `oldText`/`newText` become `old_string`/`new_string`, bash `timeout`
+    becomes milliseconds); a Pi option with no Claude Code equivalent keeps
+    Pi's name, and a Pi tool with no mapping keeps its own name and arguments.
+    As on the SDK path,
+    `files_changed` lists only the paths of write/edit tool calls (bash writes
+    are not reported), and a run with no `cwd` runs in
+    `$CLAUDE_CONFIG_DIR/hook-sessions`. Cost comes from Pi's own
+    events; when Pi reports none the cost-ledger record has `cost_usd: 0` and
+    `cost_unreported: true`. `MULTIPLAI_PI_GATE_EXT` names an optional Pi
+    extension that gates bash. A missing binary raises `AgentRunError` with an
+    install hint and never falls back to Claude. A Pi that exits mid-run (so a
+    write to it fails with a broken pipe) raises `AgentRunError` with its
+    stderr tail and the partial result, and is retried under `max_attempts`.
+    So does a Pi that cannot be started (the spawn fails, e.g. a `cwd` that
+    does not exist) and a Pi that rejects the prompt (a `response` with
+    `success: false`, which carries Pi's error text); neither waits for
+    `timeout_s`. It is imported the first time
+    a `pi:` spec runs, so `import multiplai_core.agent_runner` does not load
+    it. Installing and configuring Pi is not covered.
+
 ## [0.18.0] – 2026-10-11
 
 ### Added
