@@ -93,6 +93,17 @@ class TestRegisteredBackend:
         assert seen["effort"] == "low"
         assert seen["component"] == "c"
 
+    def test_backend_gets_the_spec_as_dispatch_read_it(self):
+        seen = {}
+
+        async def fake(prompt, **kwargs):
+            seen.update(kwargs)
+            return _result("from fake")
+
+        register_agent_backend("fake", fake)
+        _run(run_agent("p", model="  FAKE: m@x "))
+        assert seen["model"] == "fake:m@x"
+
     def test_registered_list_includes_builtins_and_new(self):
         register_agent_backend("Fake", lambda *a, **k: None)
         names = registered_agent_backends()

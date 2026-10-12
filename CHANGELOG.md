@@ -41,7 +41,9 @@ not backfilled; their contents are recoverable from `git log`.
     (bare, `anthropic:`, `claude:`) take the Claude Agent SDK path unchanged,
     with the prefix removed; a Bedrock model ID or ARN, whose colon is part of
     the ID, also stays there. Any other provider runs on the backend added with
-    `register_agent_backend(provider, runner)`; `registered_agent_backends()`
+    `register_agent_backend(provider, runner)`, which receives the spec with
+    the provider lower-cased and stripped (`PI: m@p` arrives as `pi:m@p`);
+    `registered_agent_backends()`
     lists them, and an unknown provider raises `UnknownAgentBackendError` (an
     `AgentRunError`, so an existing `except AgentRunError` catches it).
   - `multiplai_core.pi`: the `pi` backend, for
@@ -60,7 +62,11 @@ not backfilled; their contents are recoverable from `git log`.
     extension that gates bash. A missing binary raises `AgentRunError` with an
     install hint and never falls back to Claude. A Pi that exits mid-run (so a
     write to it fails with a broken pipe) raises `AgentRunError` with its
-    stderr tail and the partial result, and is retried under `max_attempts`. It is imported the first time
+    stderr tail and the partial result, and is retried under `max_attempts`.
+    So does a Pi that cannot be started (the spawn fails, e.g. a `cwd` that
+    does not exist) and a Pi that rejects the prompt (a `response` with
+    `success: false`, which carries Pi's error text); neither waits for
+    `timeout_s`. It is imported the first time
     a `pi:` spec runs, so `import multiplai_core.agent_runner` does not load
     it. Installing and configuring Pi is not covered.
 

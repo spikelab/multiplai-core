@@ -50,7 +50,8 @@ Environment:
                            either.
 
 A missing binary raises :class:`~multiplai_core.agent_runner.AgentRunError`
-with an install hint. It never falls back to Claude.
+with an install hint. It never falls back to Claude. A spawn that fails, and a
+prompt Pi rejects (``response`` with ``success: false``), raise it too, at once.
 """
 
 from __future__ import annotations
@@ -190,6 +191,8 @@ class PiRunOutcome:
     """``"max_turns"`` or ``"timeout"`` when this side ended the run."""
     pipe_error: str = ""
     """Writing to Pi failed (it exited, so its stdin is closed); empty otherwise."""
+    rejected: str = ""
+    """Pi's error text when it answered ``prompt`` with ``success: false``."""
 
 
 async def _send_abort(rpc: Any, out: PiRunOutcome) -> None:
@@ -214,7 +217,10 @@ async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> No
     run is over, so ``agent_settled``, not EOF, ends a run. Reaching
     *max_turns* sends ``abort`` and keeps reading for :data:`ABORT_GRACE_S`, so
     the events already in flight still land in the result. A write that fails
-    because Pi has exited is recorded in ``out.pipe_error``, not raised.
+    because Pi has exited is recorded in ``out.pipe_error``, not raised. A
+    ``response`` to ``prompt`` with ``success: false`` means Pi rejected the
+    prompt and starts no run (pi docs/rpc.md), so it ends the run too, with
+    Pi's error text in ``out.rejected``.
     """
     try:
         await rpc.prompt(prompt)
@@ -240,6 +246,10 @@ async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> No
             out.turns += 1
         if event.kind is Kind.AGENT_SETTLED:
             out.settled = True
+            return
+        if (event.raw_type == "response" and event.raw.get("command") == "prompt"
+                and event.raw.get("success") is False):
+            out.rejected = str(event.raw.get("error") or "prompt rejected")
             return
         if deadline is None and max_turns and out.turns >= max_turns:
             out.aborted_reason = "max_turns"
@@ -387,13 +397,24 @@ def files_changed(events: list[Event]) -> list[str]:
 
 
 async def _open_transport(argv: list[str], *, cwd: str, env: dict[str, str]) -> Any:
-    """Start ``pi --mode rpc``. Tests replace this with an in-process stub."""
+    """Start ``pi --mode rpc``. Tests replace this with an in-process stub.
+
+    Raises :class:`AgentRunError` when Pi cannot be started: the binary is not
+    on PATH, or the spawn itself fails (a cwd that does not exist, a file exec
+    rejects).
+    """
     if shutil.which(argv[0]) is None:
         raise AgentRunError(
             f"pi binary {argv[0]!r} not found. {_INSTALL_HINT}",
             reason="pi binary not found",
         )
-    return await SubprocessTransport.spawn(argv, cwd=cwd, env=env)
+    try:
+        return await SubprocessTransport.spawn(argv, cwd=cwd, env=env)
+    except OSError as e:
+        raise AgentRunError(
+            f"pi failed to start ({type(e).__name__}: {e}); argv[0]={argv[0]!r} cwd={cwd!r}",
+            reason=f"pi failed to start: {type(e).__name__}",
+        ) from e
 
 
 def _record_cost(component: str, label: str, spec: str,
@@ -495,9 +516,19 @@ async def run_pi_agent(
     started = time.monotonic()
     last: AgentRunError | None = None
     for attempt in range(max(1, max_attempts)):
-        outcome, stderr_tail = await _attempt(
-            argv, message, workdir=workdir, env=run_env,
-            max_turns=max_turns, timeout_s=timeout_s, label=label)
+        if attempt:
+            assert last is not None
+            logger.warning("pi run [%s] %s (attempt %d/%d), retrying in %.1fs",
+                           label, last.reason, attempt, max_attempts, retry_backoff_s)
+            await asyncio.sleep(retry_backoff_s)
+        try:
+            outcome, stderr_tail = await _attempt(
+                argv, message, workdir=workdir, env=run_env,
+                max_turns=max_turns, timeout_s=timeout_s, label=label)
+        except AgentRunError as e:  # pi did not start (_open_transport)
+            e.attempts = attempt + 1
+            last = e
+            continue
         usage, cost_reported = usage_from_events(outcome.events)
         _record_cost(component, label, spec, usage, cost_reported)
         result = AgentRunResult(
@@ -513,6 +544,11 @@ async def run_pi_agent(
             last = AgentRunTimeout(
                 f"pi run [{label}] timed out after {timeout_s:.0f}s",
                 reason=f"timed out after {timeout_s:.0f}s", attempts=attempt + 1,
+                stderr_tail=stderr_tail, partial=result)
+        elif outcome.rejected:
+            last = AgentRunError(
+                f"pi run [{label}] pi rejected the prompt: {outcome.rejected[:500]}",
+                reason=f"prompt rejected: {outcome.rejected[:200]}", attempts=attempt + 1,
                 stderr_tail=stderr_tail, partial=result)
         elif error is not None:
             last = AgentRunError(
@@ -537,10 +573,6 @@ async def run_pi_agent(
                         time.monotonic() - started,
                         " (stopped at max_turns)" if outcome.aborted_reason else "")
             return result
-        if attempt + 1 < max_attempts:
-            logger.warning("pi run [%s] %s (attempt %d/%d), retrying in %.1fs",
-                           label, last.reason, attempt + 1, max_attempts, retry_backoff_s)
-            await asyncio.sleep(retry_backoff_s)
     assert last is not None
     logger.warning("FAIL pi run [%s] %s after %d attempt(s) elapsed=%.1fs",
                    label, last.reason, max_attempts, time.monotonic() - started)

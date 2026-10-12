@@ -96,6 +96,9 @@ class StubTransport:
         return "stub stderr"
 
 
+_REAL_OPEN_TRANSPORT = pb._open_transport
+
+
 @pytest.fixture
 def stub(monkeypatch, tmp_path):
     """Install a stub transport factory; returns a dict that captures the run."""
@@ -134,6 +137,20 @@ class TestParsePiSpec:
     def test_malformed(self, bad):
         with pytest.raises(pb.PiSpecError):
             pb.parse_pi_spec(bad)
+
+    @pytest.mark.parametrize("spelling", [
+        "PI:deepseek/deepseek-v4-flash@fireworks",
+        "  pi:deepseek/deepseek-v4-flash@fireworks ",
+        "Pi: deepseek/deepseek-v4-flash@fireworks",
+    ])
+    def test_run_agent_accepts_any_spelling_it_routes_to_pi(self, stub, spelling):
+        # run_agent routes on a lower-cased, stripped provider; the backend
+        # must accept the same spellings rather than reject them as not pi.
+        stub["script"] += [_assistant_end("ok"), SETTLED]
+        assert _run(run_agent("p", model=spelling)).text == "ok"
+        argv = stub["argv"]
+        assert argv[argv.index("--model") + 1] == "deepseek/deepseek-v4-flash"
+        assert argv[argv.index("--provider") + 1] == "fireworks"
 
     def test_malformed_spec_through_run_agent_is_an_agent_run_error(self):
         with pytest.raises(AgentRunError):
@@ -391,6 +408,38 @@ class TestRun:
         assert exc.value.partial.text == "one"
         assert exc.value.stderr_tail == "stub stderr"
 
+    def test_rejected_prompt_raises_pis_error_without_waiting(self, stub):
+        # Pi answers a rejected prompt with a failed `response` and starts no
+        # run, so no agent_settled ever follows. The run must end on the
+        # response with Pi's error text, not wait out timeout_s.
+        stub["script"] += [{"type": "response", "command": "prompt", "success": False,
+                            "error": "No API key found for provider fireworks"}]
+        stub["hang"] = True
+
+        async def bounded():
+            return await asyncio.wait_for(
+                run_agent("p", model=SPEC, timeout_s=30, max_attempts=2,
+                          retry_backoff_s=0), timeout=5)
+
+        with pytest.raises(AgentRunError) as exc:
+            _run(bounded())
+        assert type(exc.value) is AgentRunError
+        assert "No API key found for provider fireworks" in str(exc.value)
+        assert exc.value.stderr_tail == "stub stderr"
+        assert exc.value.attempts == 2 and stub["opens"] == 2
+        assert stub["transport"].closed
+
+    def test_accepted_prompt_response_is_not_an_error(self, stub):
+        stub["script"] += [{"type": "response", "command": "prompt", "success": True},
+                           _assistant_end("ok"), SETTLED]
+        assert _run(run_agent("p", model=SPEC)).text == "ok"
+
+    def test_failed_response_to_another_command_does_not_end_the_run(self, stub):
+        stub["script"] += [{"type": "response", "command": "abort", "success": False,
+                            "error": "nothing to abort"},
+                           _assistant_end("ok"), SETTLED]
+        assert _run(run_agent("p", model=SPEC)).text == "ok"
+
     def test_final_model_error_raises(self, stub):
         stub["script"] += [_assistant_end(stop="error", error="429: rate limited"),
                            {"type": "auto_retry_end", "success": False}, SETTLED]
@@ -441,6 +490,48 @@ class TestBinary:
         with pytest.raises(AgentRunError) as exc:
             _run(run_agent("p", model=SPEC, cwd=tmp_path))
         assert "not found" in str(exc.value) and pb.PI_BIN_ENV in str(exc.value)
+
+    def test_spawn_failure_for_missing_cwd_is_an_agent_run_error(self, monkeypatch, tmp_path):
+        pi = tmp_path / "pi"
+        pi.write_text("#!/bin/sh\nexit 0\n")
+        pi.chmod(0o755)
+        monkeypatch.setenv(pb.PI_BIN_ENV, str(pi))
+        with pytest.raises(AgentRunError) as exc:
+            _run(run_agent("p", model=SPEC, cwd=tmp_path / "gone"))
+        assert type(exc.value) is AgentRunError
+        assert "FileNotFoundError" in str(exc.value)
+
+    def test_spawn_failure_for_unexecutable_binary_is_an_agent_run_error(
+            self, monkeypatch, tmp_path):
+        # shutil.which accepts any file with the execute bit; exec still
+        # rejects one that is not a program (ENOEXEC).
+        pi = tmp_path / "pi"
+        pi.write_bytes(b"\x00\x01 not a program")
+        pi.chmod(0o755)
+        monkeypatch.setenv(pb.PI_BIN_ENV, str(pi))
+        with pytest.raises(AgentRunError) as exc:
+            _run(run_agent("p", model=SPEC, cwd=tmp_path))
+        assert type(exc.value) is AgentRunError
+        assert "failed to start" in exc.value.reason
+
+    def test_spawn_failure_is_retried(self, stub, monkeypatch, tmp_path):
+        pi = tmp_path / "pi"
+        pi.write_text("#!/bin/sh\nexit 0\n")
+        pi.chmod(0o755)
+        monkeypatch.setenv(pb.PI_BIN_ENV, str(pi))
+        monkeypatch.setattr(pb, "_open_transport", _REAL_OPEN_TRANSPORT)
+        calls = []
+
+        async def flaky_spawn(argv, *, cwd, env):
+            calls.append(argv)
+            if len(calls) == 1:
+                raise BlockingIOError(11, "Resource temporarily unavailable")
+            return StubTransport([_assistant_end("ok"), SETTLED])
+
+        monkeypatch.setattr(pb.SubprocessTransport, "spawn", flaky_spawn)
+        r = _run(run_agent("p", model=SPEC, cwd=tmp_path, max_attempts=2,
+                           retry_backoff_s=0))
+        assert r.text == "ok" and len(calls) == 2
 
     def test_gate_extension_must_exist(self, stub, monkeypatch, tmp_path):
         monkeypatch.setenv(pb.GATE_EXT_ENV, str(tmp_path / "missing.ts"))

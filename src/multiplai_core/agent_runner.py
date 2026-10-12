@@ -311,8 +311,10 @@ def register_agent_backend(provider: str, runner: AgentBackend) -> None:
     """Make :func:`run_agent` send ``<provider>:<model>`` specs to *runner*.
 
     *runner* is called as ``await runner(prompt, **kwargs)`` with every keyword
-    :func:`run_agent` takes, ``model`` holding the full spec as the caller
-    wrote it (``pi:deepseek/deepseek-v4-flash@fireworks``), and must return an
+    :func:`run_agent` takes, ``model`` holding the full spec with the provider
+    read the way dispatch read it: lower-cased, whitespace stripped
+    (``PI: deepseek/deepseek-v4-flash@fireworks`` arrives as
+    ``pi:deepseek/deepseek-v4-flash@fireworks``). It must return an
     :class:`AgentRunResult`. Registering a provider again replaces its runner.
     The Anthropic provider cannot be replaced: it is the SDK path itself.
     """
@@ -622,7 +624,7 @@ async def run_agent(
             kwargs: dict[str, Any] = dict(
                 system_prompt=system_prompt, allowed_tools=allowed_tools,
                 disallowed_tools=disallowed_tools, max_turns=max_turns,
-                model=model, effort=effort, thinking=thinking, cwd=cwd,
+                model=f"{provider}:{parsed}", effort=effort, thinking=thinking, cwd=cwd,
                 env=env, timeout_s=timeout_s, max_attempts=max_attempts,
                 retry_backoff_s=retry_backoff_s,
                 prompt_file_fallback=prompt_file_fallback, label=label,
