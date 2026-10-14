@@ -186,7 +186,11 @@ class PiRunOutcome:
     events: list[Event] = field(default_factory=list)
     turns: int = 0
     settled: bool = False
-    """Pi said ``agent_settled``: nothing more is coming for this prompt."""
+    """Nothing more is coming for this prompt: Pi said ``agent_settled``, or it
+    answered ``prompt`` with disposition ``"handled"`` and started no run."""
+    settled_aborted: bool | None = None
+    """The ``aborted`` flag of ``agent_settled`` (pi 1.1.0+): ``True`` when the
+    run ended because it was aborted. ``None`` when Pi sent no flag."""
     aborted_reason: str = ""
     """``"max_turns"`` or ``"timeout"`` when this side ended the run."""
     pipe_error: str = ""
@@ -220,7 +224,10 @@ async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> No
     because Pi has exited is recorded in ``out.pipe_error``, not raised. A
     ``response`` to ``prompt`` with ``success: false`` means Pi rejected the
     prompt and starts no run (pi docs/rpc.md), so it ends the run too, with
-    Pi's error text in ``out.rejected``.
+    Pi's error text in ``out.rejected``. A successful one with
+    ``data.disposition == "handled"`` means an extension consumed the prompt:
+    no run starts and no ``agent_settled`` follows (pi 1.2.0 docs/rpc.md, "Run
+    lifecycle"), so it ends the run as settled, with no turns.
     """
     try:
         await rpc.prompt(prompt)
@@ -246,11 +253,18 @@ async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> No
             out.turns += 1
         if event.kind is Kind.AGENT_SETTLED:
             out.settled = True
+            aborted = event.raw.get("aborted")
+            if isinstance(aborted, bool):
+                out.settled_aborted = aborted
             return
-        if (event.raw_type == "response" and event.raw.get("command") == "prompt"
-                and event.raw.get("success") is False):
-            out.rejected = str(event.raw.get("error") or "prompt rejected")
-            return
+        if event.raw_type == "response" and event.raw.get("command") == "prompt":
+            if event.raw.get("success") is False:
+                out.rejected = str(event.raw.get("error") or "prompt rejected")
+                return
+            data = event.raw.get("data")
+            if isinstance(data, dict) and data.get("disposition") == "handled":
+                out.settled = True
+                return
         if deadline is None and max_turns and out.turns >= max_turns:
             out.aborted_reason = "max_turns"
             await _send_abort(rpc, out)
