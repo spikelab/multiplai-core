@@ -8,6 +8,7 @@ transport that replays scripted Pi events. Event shapes follow a recorded
 import asyncio
 import json
 import subprocess
+import time
 
 import pytest
 
@@ -15,7 +16,7 @@ from multiplai_core import agent_runner
 from multiplai_core.agent_runner import AgentRunError, AgentRunTimeout, run_agent
 from multiplai_core.pi import backend as pb
 from multiplai_core.pi.events import Kind, parse_event
-from multiplai_core.pi.rpc import LineFramer, encode_command
+from multiplai_core.pi.rpc import LineFramer, PiRpc, encode_command
 
 SPEC = "pi:deepseek/deepseek-v4-flash@fireworks"
 
@@ -485,6 +486,51 @@ class TestRun:
         stub["script"] += [{"type": "response", "command": "prompt", "success": True},
                            _assistant_end("ok"), SETTLED]
         assert _run(run_agent("p", model=SPEC)).text == "ok"
+
+    def test_handled_prompt_ends_the_run_without_waiting(self, stub):
+        # pi 1.2.0 docs/rpc.md "Run lifecycle": a prompt an extension command or
+        # input handler consumed is answered with disposition "handled", no run
+        # starts, and no agent_settled follows. The run must end on that
+        # response with no turns, not wait out timeout_s.
+        stub["script"] += [{"type": "response", "command": "prompt", "success": True,
+                            "data": {"disposition": "handled"}}]
+        stub["hang"] = True
+
+        async def bounded():
+            return await asyncio.wait_for(
+                run_agent("p", model=SPEC, timeout_s=30), timeout=5)
+
+        started = time.monotonic()
+        r = _run(bounded())
+        assert time.monotonic() - started < 2
+        assert r.turns == 0 and r.text == ""
+        assert {"type": "abort"} not in stub["transport"].sent
+        assert stub["transport"].closed
+
+    def test_handled_prompt_outcome_is_settled_with_no_turns(self):
+        t = StubTransport([{"type": "response", "command": "prompt", "success": True,
+                            "data": {"disposition": "handled"}}], hang=True)
+        out = _run(pb.supervise(PiRpc(t), "p", max_turns=5, timeout_s=30))
+        assert out.settled is True and out.turns == 0
+        assert out.aborted_reason == ""
+
+    def test_started_prompt_still_waits_for_settled(self):
+        t = StubTransport([{"type": "response", "command": "prompt", "success": True,
+                            "data": {"disposition": "started"}},
+                           _assistant_end("ok"), TURN_END, SETTLED])
+        out = _run(pb.supervise(PiRpc(t), "p", max_turns=5, timeout_s=30))
+        assert out.settled is True and out.turns == 1
+
+    @pytest.mark.parametrize("settled, expected", [
+        ({"type": "agent_settled", "aborted": True}, True),
+        ({"type": "agent_settled", "aborted": False}, False),
+        ({"type": "agent_settled"}, None),  # pi before 1.1.0 sends no flag
+    ])
+    def test_agent_settled_aborted_flag_is_recorded(self, settled, expected):
+        t = StubTransport([_assistant_end("ok"), TURN_END, settled])
+        out = _run(pb.supervise(PiRpc(t), "p", max_turns=5, timeout_s=30))
+        assert out.settled is True
+        assert out.settled_aborted is expected
 
     def test_failed_response_to_another_command_does_not_end_the_run(self, stub):
         stub["script"] += [{"type": "response", "command": "abort", "success": False,

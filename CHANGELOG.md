@@ -18,6 +18,25 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `pi:` run no longer waits out its timeout when Pi handles the prompt
+  without a run.** Since pi 0.99.0, a prompt that a Pi extension command or
+  input handler consumes is answered with
+  `{"type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}`,
+  and no `agent_settled` follows (pi 1.2.0 `docs/rpc.md`, "Run lifecycle").
+  `run_agent(..., model="pi:…")` used to wait for `agent_settled` until
+  `timeout_s` and then raise `AgentRunTimeout`; it now returns at once with
+  `turns == 0` and empty `text`. Nothing to change on your side; runs that
+  start normally behave exactly as before. Pi 1.2.0 is the version this was
+  checked against.
+
+### Changed
+
+- The pi backend's internal `PiRunOutcome` gains `settled_aborted`: the
+  `aborted` flag pi 1.1.0+ puts on `agent_settled`, or `None` when Pi sends
+  none. Internal only; `run_agent`'s result and the public API are unchanged.
+
 ## [0.19.0] – 2026-10-12
 
 ### Added
