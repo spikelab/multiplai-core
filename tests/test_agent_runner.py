@@ -546,70 +546,73 @@ class TestTimeout:
         )
 
 
-class TestPromptFileFallback:
-    def test_big_prompt_written_to_file(self, tmp_path, monkeypatch):
+class TestLargePromptsInline:
+    """A prompt of any size goes to ``sdk.query`` unchanged.
+
+    The SDK writes every prompt to the CLI's stdin, so there is no argv limit
+    to work around. The old fallback wrote large prompts to a temp file and
+    opened ``Read`` to reach it, which under bypassPermissions gave a no-tools
+    call read access to the whole filesystem.
+    """
+
+    @staticmethod
+    def _run_big(tmp_path, monkeypatch, **kwargs):
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         import tempfile as _tf
         _tf.tempdir = None  # force TMPDIR re-resolution
-        big_prompt = "x" * (MAX_PROMPT_BYTES + 1)
-        seen = {}
-
-        async def _agen(prompt, options):
-            seen["prompt"] = prompt
-            seen["options"] = options
-            # the prompt file must exist while the agent runs
-            marker = prompt.split("Read the file ")[1].split(" using")[0]
-            seen["file_existed"] = os.path.exists(marker)
-            seen["file"] = marker
-            yield _FakeAssistantMessage([_FakeTextBlock("done")])
-
-        mock = _make_mock_sdk()
-        mock.query = MagicMock(side_effect=_agen)
-
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
-            result = _run(run_agent(big_prompt, max_turns=1))
-
-        assert result.text == "done"
-        assert "Read the file" in seen["prompt"]
-        assert seen["file_existed"] is True
-        assert not os.path.exists(seen["file"])  # cleaned up afterwards
-        opts_kwargs = mock.ClaudeAgentOptions.call_args.kwargs
-        assert "Read" in opts_kwargs["allowed_tools"]
-        assert opts_kwargs["max_turns"] >= 3
-        assert (
-            opts_kwargs["env"]["CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"] == "100000"
-        )
-        _tf.tempdir = None
-
-    def test_fallback_disabled_leaves_prompt_inline(self):
-        big_prompt = "x" * (MAX_PROMPT_BYTES + 1)
+        big_prompt = "x" * (MAX_PROMPT_BYTES + 20_001)
         mock_sdk = _make_mock_sdk()
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            _run(run_agent(big_prompt, prompt_file_fallback=False))
+        try:
+            with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+                _run(run_agent(big_prompt, **kwargs))
+        finally:
+            _tf.tempdir = None
+        return big_prompt, mock_sdk
+
+    def _assert_inline(self, tmp_path, big_prompt, mock_sdk):
         assert mock_sdk.query.call_args.kwargs["prompt"] == big_prompt
         opts_kwargs = mock_sdk.ClaudeAgentOptions.call_args.kwargs
         assert "Read" not in opts_kwargs["allowed_tools"]
+        assert "Read" in opts_kwargs["disallowed_tools"]
+        assert opts_kwargs["max_turns"] == 1
+        assert "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS" not in opts_kwargs["env"]
+        assert list(tmp_path.glob("agent_prompt_*")) == []
 
-    def test_fallback_read_survives_the_default_deny_list(self):
-        """The deny-list is computed after the fallback opens Read.
+    def test_big_prompt_default_args_stays_inline(self, tmp_path, monkeypatch):
+        big_prompt, mock_sdk = self._run_big(tmp_path, monkeypatch)
+        self._assert_inline(tmp_path, big_prompt, mock_sdk)
 
-        Otherwise the fail-closed default would deny the very tool the
-        big-prompt workaround depends on, and every large call would break.
-        """
-        big_prompt = "x" * (MAX_PROMPT_BYTES + 1)
-        mock_sdk = _make_mock_sdk()
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            _run(run_agent(big_prompt))
-        opts_kwargs = mock_sdk.ClaudeAgentOptions.call_args.kwargs
-        assert "Read" in opts_kwargs["allowed_tools"]
-        assert "Read" not in opts_kwargs["disallowed_tools"]
-        assert "Bash" in opts_kwargs["disallowed_tools"]
+    def test_fallback_true_is_a_no_op_and_warns(self, tmp_path, monkeypatch):
+        with pytest.warns(DeprecationWarning, match="prompt_file_fallback") as rec:
+            big_prompt, mock_sdk = self._run_big(
+                tmp_path, monkeypatch, prompt_file_fallback=True
+            )
+        assert sum(issubclass(w.category, DeprecationWarning) for w in rec) == 1
+        self._assert_inline(tmp_path, big_prompt, mock_sdk)
+
+    @pytest.mark.parametrize("kwargs", [{}, {"prompt_file_fallback": False}])
+    def test_fallback_false_or_omitted_does_not_warn(
+        self, tmp_path, monkeypatch, kwargs
+    ):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            big_prompt, mock_sdk = self._run_big(tmp_path, monkeypatch, **kwargs)
+        self._assert_inline(tmp_path, big_prompt, mock_sdk)
 
     def test_small_prompt_untouched(self):
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("small"))
         assert mock_sdk.query.call_args.kwargs["prompt"] == "small"
+
+    def test_max_prompt_bytes_still_exported(self):
+        import multiplai_core
+
+        assert MAX_PROMPT_BYTES == 80_000
+        assert multiplai_core.MAX_PROMPT_BYTES == 80_000
+        assert "MAX_PROMPT_BYTES" in multiplai_core.__all__
 
 
 class TestHeartbeat:
@@ -1267,20 +1270,6 @@ class TestReadRoots:
         out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
                          "tool_input": {"file_path": str(tmp_path / "a")}}, "t1", None))
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-    def test_large_prompt_file_stays_readable(self, tmp_path):
-        """The big-prompt fallback writes its temp file outside the roots; the
-        hook must still let the agent read that one file."""
-        mock_sdk = _make_mock_sdk()
-        big = "x" * (MAX_PROMPT_BYTES + 1)
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            _run(run_agent(big, read_roots=[tmp_path], cwd=tmp_path))
-        sent = mock_sdk.query.call_args.kwargs["prompt"]
-        prompt_file = re.search(r"Read the file (\S+) using", sent).group(1)
-        hook = mock_sdk.HookMatcher.call_args.kwargs["hooks"][0]
-        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
-                         "tool_input": {"file_path": prompt_file}}, "t1", None))
-        assert out == {}
 
     def test_old_sdk_without_hook_matcher_refuses(self, tmp_path):
         """Fail closed: an SDK with no HookMatcher cannot enforce the roots."""

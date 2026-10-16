@@ -32,6 +32,27 @@ not backfilled; their contents are recoverable from `git log`.
   no `HookMatcher`, `run_agent` refuses rather than run unlimited. The default,
   `None`, installs no hook.
 
+### Security
+
+- **A large prompt no longer gives the model a `Read` tool.** Before, a prompt
+  over `MAX_PROMPT_BYTES` (80,000 bytes) was written to a temp file, and
+  `run_agent` added `Read` to the allowed tools and raised `max_turns` to 3 so
+  the model could open it. Every run is under `bypassPermissions`, so that
+  `Read` could open any file the user can read. A plugin that asked for no
+  tools (`allowed_tools=None` or `[]`) got a model with filesystem read access
+  whenever its prompt grew past the limit. Now `run_agent` sends every prompt
+  unchanged, at any size: the SDK writes it to the CLI's stdin, not onto the
+  command line, so the old argument-length limit does not apply. It writes no
+  temp file, adds no tool and leaves `max_turns` as given. Checked with a
+  120,200-byte prompt on `claude-agent-sdk` 0.2.139. `MAX_PROMPT_BYTES` is
+  still exported as 80,000, as a size hint for callers that split work.
+
+### Deprecated
+
+- `run_agent(prompt_file_fallback=...)` has no effect. Passing `True` emits a
+  `DeprecationWarning`; passing `False` or omitting it does not. The argument
+  will be removed in a later minor release. Remove it from your calls.
+
 ### Fixed
 
 - The `log_utils` module docstring no longer says nothing is deleted by default;
