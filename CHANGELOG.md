@@ -18,6 +18,22 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Changed
+
+- **The `[sdk]` extra now requires `claude-agent-sdk>=0.2.168` (was
+  `>=0.2.139`).** 0.2.168 bundles Claude CLI 2.1.301, so nested agent calls run
+  the same CLI generation as an interactive session. The floor moves in step
+  with multiplai-kit's venv floor, so the shared venv re-syncs to it.
+
+  One behaviour changed underneath: since 0.2.140 a terminal error raises
+  `claude_agent_sdk.ResultError` (a `ProcessError` subclass) instead of a bare
+  "exit code 1" error. `run_agent` still wraps it in `AgentRunError`, so code
+  that catches `AgentRunError` needs no change.
+
+  What you must change: nothing, if you resolve fresh. If you pin
+  `claude-agent-sdk` yourself below 0.2.168, `multiplai-core[sdk]` will no
+  longer solve alongside it. The `<0.3` ceiling is unchanged.
+
 ## [0.23.0] – 2026-10-16
 
 ### Added
