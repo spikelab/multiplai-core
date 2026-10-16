@@ -4,8 +4,8 @@
 model client, buildme, and deep-research each used to reimplement privately:
 subprocess isolation flags, unknown-message skipping, hard timeout with
 generator teardown, in-memory stderr capture with a compact failure tail,
-big-prompt tempfile fallback, opt-in retry, and a normalized result carrying
-text, turns, usage, and files changed.
+opt-in retry, and a normalized result carrying text, turns, usage, and files
+changed.
 
 Skill-specific policy stays in the skills: trust gating (buildme), usage
 accumulation across a run (deep-research), Pydantic structured-output
@@ -62,8 +62,8 @@ import itertools
 import logging
 import os
 import re
-import tempfile
 import time
+import warnings
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,14 +74,10 @@ from .env import DEFAULT_PROVIDER, parse_model_spec
 
 logger = logging.getLogger(__name__)
 
-# The SDK passes the prompt as a CLI argument to a subprocess. Past ~100KB the
-# OS rejects it with E2BIG; we stay conservative to leave room for args/env.
+# A size hint for callers that split work across several calls (deep-research's
+# synthesis does). It is not an OS limit: the SDK writes every prompt to the
+# CLI's stdin as a stream-json message, so ``run_agent`` sends any size inline.
 MAX_PROMPT_BYTES = 80_000
-# The tempfile fallback needs turns to read the file and then answer.
-_PROMPT_FILE_MIN_TURNS = 3
-# Child CLIs don't inherit the parent's settings.json, so the default Read
-# cap (2000 lines) would truncate a large prompt file.
-_PROMPT_FILE_READ_TOKENS = "100000"
 
 # CLI stderr capture (debug-to-stderr is on, so raw volume is large). Kept in
 # memory only, never on disk; summarized into a compact tail only on failure:
@@ -566,16 +562,18 @@ async def run_agent(
     timeout_s: float = 600.0,
     max_attempts: int = 1,
     retry_backoff_s: float = 1.5,
-    prompt_file_fallback: bool = True,
+    prompt_file_fallback: bool | None = None,
     label: str = "agent",
     component: str = "",
 ) -> AgentRunResult:
     """Run one agent invocation via ``claude_agent_sdk.query()``.
 
     Args:
-        prompt: The user prompt. If it exceeds ``MAX_PROMPT_BYTES`` and
-            ``prompt_file_fallback`` is on, it is written to a temp file and
-            the agent is directed to Read it (E2BIG workaround, no data loss).
+        prompt: The user prompt, sent unchanged at any size: the SDK writes it
+            to the CLI's stdin, never onto the command line.
+        prompt_file_fallback: Deprecated; has no effect. Passing ``True``
+            emits a ``DeprecationWarning``. It will be removed in a later
+            release.
         allowed_tools: Tool allow-list; ``None``/``[]`` means a no-tools text
             call. Under bypassPermissions this alone removes nothing, so it is
             also forwarded as the SDK's ``tools`` (the *base set* of tools that
@@ -628,6 +626,13 @@ async def run_agent(
     ``effort``, :func:`multiplai_core.session.default_effort`. When neither
     finds a value the option is omitted and the CLI uses its own default.
     """
+    if prompt_file_fallback:
+        warnings.warn(
+            "run_agent(prompt_file_fallback=...) has no effect: prompts are sent "
+            "on stdin at any size. It will be removed in a later release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if not model or effort is None:
         from .session import default_effort, default_model
 
@@ -670,32 +675,7 @@ async def run_agent(
     # order ({guard, **env}) let env={"_HOOK_CHILD_SESSION": ""} disable the
     # fork-bomb guard.
     run_env: dict[str, str] = {**(env or {}), "_HOOK_CHILD_SESSION": "1"}
-    prompt_file: str | None = None
-
     prompt_bytes = len(prompt.encode("utf-8"))
-    if prompt_file_fallback and prompt_bytes > MAX_PROMPT_BYTES:
-        logger.info(
-            "run_agent [%s]: prompt too large for CLI arg (%d bytes), "
-            "writing to temp file", label, prompt_bytes,
-        )
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", prefix="agent_prompt_", delete=False
-        ) as f:
-            f.write(prompt)
-            prompt_file = f.name
-        # The directive must not encourage narration — any text emitted
-        # before reading gets captured as output.
-        prompt = (
-            f"Read the file {prompt_file} using the Read tool. "
-            f"It contains your complete instructions and data. "
-            f"After reading, follow those instructions exactly and produce "
-            f"the requested output. Do not describe what you are doing — "
-            f"just read the file and produce the output directly."
-        )
-        if "Read" not in effective_tools:
-            effective_tools.append("Read")
-        max_turns = max(max_turns, _PROMPT_FILE_MIN_TURNS)
-        run_env["CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"] = _PROMPT_FILE_READ_TOKENS
 
     # A name outside TOOL_UNIVERSE is either a tool added since the list was
     # last derived, or a typo. Both are worth a line in the log: the typo case
@@ -729,262 +709,254 @@ async def run_agent(
     any_attempt_failed = False
     timed_out = False
 
-    try:
-        for attempt in range(max_attempts):
-            # Fresh per-attempt capture: a ring of recent lines for trailing
-            # context plus a bounded list of [ERROR] lines so a fatal error is
-            # never evicted by a DEBUG burst.
-            recent_lines: deque[str] = deque(maxlen=_STDERR_RING_LINES)
-            error_lines: list[str] = []
-            debug_log = _DebugLog.open(label, component, attempt)
-            if debug_log is not None:
-                logger.info(
-                    "run_agent [%s] attempt=%d/%d CLI debug log: %s",
-                    label, attempt + 1, max_attempts, debug_log.path,
-                )
-
-            def _on_stderr(
-                line: str, _r=recent_lines, _e=error_lines, _d=debug_log,
-            ) -> None:
-                if _d is not None:
-                    _d.write(line)
-                _r.append(line)
-                if "[ERROR]" in line and len(_e) < _STDERR_ERROR_CAPTURE_CAP:
-                    _e.append(line)
-
-            opts_kwargs: dict = dict(
-                allowed_tools=effective_tools,
-                # The base set of tools that exist at all, NOT an addition to
-                # the built-in set — this is the lever that makes the tool
-                # boundary a guarantee instead of a list someone maintains.
-                # `[]` becomes `--tools ""`, i.e. no tools whatsoever, which
-                # is the right default for the text-only calls that dominate.
-                tools=list(effective_tools),
-                max_turns=max_turns,
-                permission_mode="bypassPermissions",
-                system_prompt=system_prompt,
-                model=model,
-                env=run_env,
-                cwd=str(cwd) if cwd is not None else str(_hook_session_dir()),
-                setting_sources=[],
-                extra_args={
-                    # Deliberately redundant: the pinned SDK already emits
-                    # --setting-sources= from setting_sources=[] (verified on
-                    # 0.2.129); kept as belt-and-braces against a regression.
-                    "setting-sources": "",
-                    "debug-to-stderr": None,
-                    "strict-mcp-config": None,
-                },
-                stderr=_on_stderr,
+    for attempt in range(max_attempts):
+        # Fresh per-attempt capture: a ring of recent lines for trailing
+        # context plus a bounded list of [ERROR] lines so a fatal error is
+        # never evicted by a DEBUG burst.
+        recent_lines: deque[str] = deque(maxlen=_STDERR_RING_LINES)
+        error_lines: list[str] = []
+        debug_log = _DebugLog.open(label, component, attempt)
+        if debug_log is not None:
+            logger.info(
+                "run_agent [%s] attempt=%d/%d CLI debug log: %s",
+                label, attempt + 1, max_attempts, debug_log.path,
             )
-            # Fail-closed: no explicit deny-list means deny everything the
-            # allow-list did not open. Computed from effective_tools, not the
-            # raw argument, so the big-prompt tempfile fallback's added "Read"
-            # stays reachable. An explicitly passed list (including []) is
-            # forwarded verbatim — a caller can still opt out deliberately.
-            opts_kwargs["disallowed_tools"] = (
-                deny_list(effective_tools) if disallowed_tools is None
-                else list(disallowed_tools)
-            )
-            if effort is not None:
-                opts_kwargs["effort"] = effort
-            if thinking is not None:
-                opts_kwargs["thinking"] = thinking
-            # A TypeError here is a signature mismatch with the installed SDK
-            # — deterministic, so retrying cannot help. Convert it immediately
-            # to honor the documented Raises contract (AgentRunError/
-            # AgentRunTimeout only) instead of letting a raw TypeError escape.
+
+        def _on_stderr(
+            line: str, _r=recent_lines, _e=error_lines, _d=debug_log,
+        ) -> None:
+            if _d is not None:
+                _d.write(line)
+            _r.append(line)
+            if "[ERROR]" in line and len(_e) < _STDERR_ERROR_CAPTURE_CAP:
+                _e.append(line)
+
+        opts_kwargs: dict = dict(
+            allowed_tools=effective_tools,
+            # The base set of tools that exist at all, NOT an addition to
+            # the built-in set — this is the lever that makes the tool
+            # boundary a guarantee instead of a list someone maintains.
+            # `[]` becomes `--tools ""`, i.e. no tools whatsoever, which
+            # is the right default for the text-only calls that dominate.
+            tools=list(effective_tools),
+            max_turns=max_turns,
+            permission_mode="bypassPermissions",
+            system_prompt=system_prompt,
+            model=model,
+            env=run_env,
+            cwd=str(cwd) if cwd is not None else str(_hook_session_dir()),
+            setting_sources=[],
+            extra_args={
+                # Deliberately redundant: the pinned SDK already emits
+                # --setting-sources= from setting_sources=[] (verified on
+                # 0.2.129); kept as belt-and-braces against a regression.
+                "setting-sources": "",
+                "debug-to-stderr": None,
+                "strict-mcp-config": None,
+            },
+            stderr=_on_stderr,
+        )
+        # Fail-closed: no explicit deny-list means deny everything the
+        # allow-list did not open. An explicitly passed list (including
+        # []) is forwarded verbatim — a caller can still opt out
+        # deliberately.
+        opts_kwargs["disallowed_tools"] = (
+            deny_list(effective_tools) if disallowed_tools is None
+            else list(disallowed_tools)
+        )
+        if effort is not None:
+            opts_kwargs["effort"] = effort
+        if thinking is not None:
+            opts_kwargs["thinking"] = thinking
+        # A TypeError here is a signature mismatch with the installed SDK
+        # — deterministic, so retrying cannot help. Convert it immediately
+        # to honor the documented Raises contract (AgentRunError/
+        # AgentRunTimeout only) instead of letting a raw TypeError escape.
+        try:
+            options = sdk.ClaudeAgentOptions(**opts_kwargs)
+        except TypeError as e:
+            raise AgentRunError(
+                f"run_agent [{label}] claude-agent-sdk rejected the "
+                f"constructed options (SDK signature mismatch): {e}",
+                reason=f"ClaudeAgentOptions rejected: {e}",
+            ) from e
+
+        chunks: list[str] = []
+        text_bytes = 0  # running UTF-8 size of chunks, for log lines
+        files_changed: list[str] = []
+        tool_calls: list[ToolCall] = []
+        turns = 0
+        usage = AgentUsage()
+        session_id = ""
+        attempt_start = loop.time()
+
+        async def _consume() -> None:
+            # Hold the generator explicitly and aclose() it in finally: on
+            # timeout the task is cancelled fire-and-forget, and an
+            # `async for` does not deterministically close its generator
+            # on cancellation — the CLI subprocess would linger until GC
+            # while a retry spawns a second one.
+            nonlocal turns, usage, session_id, text_bytes
+            gen = _safe_query(sdk, prompt=prompt, options=options)
+            # Two timing lines split a slow call in two: CLI startup
+            # (spawn, auth, config) versus the model request itself. A
+            # stall with neither line means the CLI never came up.
+            cli_ready_logged = False
             try:
-                options = sdk.ClaudeAgentOptions(**opts_kwargs)
-            except TypeError as e:
-                raise AgentRunError(
-                    f"run_agent [{label}] claude-agent-sdk rejected the "
-                    f"constructed options (SDK signature mismatch): {e}",
-                    reason=f"ClaudeAgentOptions rejected: {e}",
-                ) from e
-
-            chunks: list[str] = []
-            text_bytes = 0  # running UTF-8 size of chunks, for log lines
-            files_changed: list[str] = []
-            tool_calls: list[ToolCall] = []
-            turns = 0
-            usage = AgentUsage()
-            session_id = ""
-            attempt_start = loop.time()
-
-            async def _consume() -> None:
-                # Hold the generator explicitly and aclose() it in finally: on
-                # timeout the task is cancelled fire-and-forget, and an
-                # `async for` does not deterministically close its generator
-                # on cancellation — the CLI subprocess would linger until GC
-                # while a retry spawns a second one.
-                nonlocal turns, usage, session_id, text_bytes
-                gen = _safe_query(sdk, prompt=prompt, options=options)
-                # Two timing lines split a slow call in two: CLI startup
-                # (spawn, auth, config) versus the model request itself. A
-                # stall with neither line means the CLI never came up.
-                cli_ready_logged = False
-                try:
-                    async for message in gen:
-                        if not cli_ready_logged:
-                            cli_ready_logged = True
-                            child = ""
-                            if system_cls and isinstance(message, system_cls):
-                                data = getattr(message, "data", None) or {}
-                                if isinstance(data, dict):
-                                    child = data.get("session_id") or ""
+                async for message in gen:
+                    if not cli_ready_logged:
+                        cli_ready_logged = True
+                        child = ""
+                        if system_cls and isinstance(message, system_cls):
+                            data = getattr(message, "data", None) or {}
+                            if isinstance(data, dict):
+                                child = data.get("session_id") or ""
+                        logger.info(
+                            "run_agent [%s] CLI ready after %.1fs "
+                            "child_session=%s",
+                            label, loop.time() - attempt_start,
+                            child or "?",
+                        )
+                    if assistant_cls and isinstance(message, assistant_cls):
+                        if turns == 0:
                             logger.info(
-                                "run_agent [%s] CLI ready after %.1fs "
-                                "child_session=%s",
+                                "run_agent [%s] first reply after %.1fs",
                                 label, loop.time() - attempt_start,
-                                child or "?",
                             )
-                        if assistant_cls and isinstance(message, assistant_cls):
-                            if turns == 0:
-                                logger.info(
-                                    "run_agent [%s] first reply after %.1fs",
-                                    label, loop.time() - attempt_start,
-                                )
-                            turns += 1
-                            for block in message.content:
-                                if text_cls and isinstance(block, text_cls):
-                                    chunks.append(block.text)
-                                    text_bytes += len(block.text.encode("utf-8"))
-                                elif tool_use_cls and isinstance(block, tool_use_cls):
-                                    block_input = getattr(block, "input", None) or {}
-                                    tool_calls.append(ToolCall(
-                                        name=block.name,
-                                        input=copy.deepcopy(dict(block_input)),
-                                    ))
-                                    if block.name in ("Write", "Edit"):
-                                        fp = block_input.get("file_path", "")
-                                        if fp and fp not in files_changed:
-                                            files_changed.append(fp)
-                        elif result_cls and isinstance(message, result_cls):
-                            session_id = getattr(message, "session_id", "") or ""
-                            u = getattr(message, "usage", None) or {}
-                            usage = AgentUsage(
-                                input_tokens=u.get("input_tokens", 0) or 0,
-                                output_tokens=u.get("output_tokens", 0) or 0,
-                                cache_creation_tokens=u.get(
-                                    "cache_creation_input_tokens", 0
-                                ) or 0,
-                                cache_read_tokens=u.get(
-                                    "cache_read_input_tokens", 0
-                                ) or 0,
-                                cost_usd=getattr(message, "total_cost_usd", 0.0)
-                                or 0.0,
-                            )
-                finally:
-                    await gen.aclose()
-
-            async def _heartbeat(interval: float, attempt_no: int = attempt) -> None:
-                """Log liveness every *interval* seconds until cancelled.
-
-                Reads the same ``chunks``/``turns`` locals ``_consume()``
-                mutates, so the line reports real progress rather than only
-                that the task is scheduled.
-                """
-                hb_start = loop.time()
-                while True:
-                    await asyncio.sleep(interval)
-                    logger.info(
-                        "run_agent [%s] alive %.0fs attempt=%d/%d turns=%d "
-                        "text=%d bytes",
-                        label, loop.time() - hb_start, attempt_no + 1,
-                        max_attempts, turns, text_bytes,
-                    )
-
-            heartbeat_s = _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S)
-            heartbeat_task = (
-                asyncio.create_task(_heartbeat(heartbeat_s))
-                if heartbeat_s > 0
-                else None
-            )
-            backoff_s = 0.0
-
-            attempt_ok = False
-            try:
-                await hard_timeout(_consume(), timeout_s)
-                attempt_ok = True
-                elapsed = loop.time() - run_start
-                logger.info(
-                    "DONE run_agent [%s] attempt=%d/%d turns=%d text=%d bytes "
-                    "files_changed=%d elapsed=%.1fs",
-                    label, attempt + 1, max_attempts, turns, text_bytes,
-                    len(files_changed), elapsed,
-                )
-                if any_attempt_failed:
-                    logger.warning(
-                        "run_agent [%s] recovered after a failed attempt", label
-                    )
-                _record_cost(component, label, model, usage, session_id)
-                return AgentRunResult(
-                    text="".join(chunks).strip(),
-                    turns=turns,
-                    usage=usage,
-                    files_changed=files_changed,
-                    tool_calls=tuple(tool_calls),
-                    stderr_tail="",
-                )
-            except Exception as e:  # noqa: BLE001
-                last_exc = e
-                timed_out = isinstance(e, asyncio.TimeoutError)
-                # TimeoutError stringifies to "" — describe it explicitly.
-                last_reason = (
-                    f"timed out after {timeout_s:.0f}s"
-                    if timed_out
-                    else f"failed: {e}"
-                )
-                last_tail = _summarize_stderr(error_lines, list(recent_lines))
-                last_partial = AgentRunResult(
-                    text="".join(chunks).strip(),
-                    turns=turns,
-                    usage=usage,
-                    files_changed=files_changed,
-                    tool_calls=tuple(tool_calls),
-                    stderr_tail=last_tail,
-                )
-                last_session_id = session_id
-                last_debug_path = str(debug_log.path) if debug_log else ""
-                any_attempt_failed = True
-                if attempt + 1 < max_attempts:
-                    logger.warning(
-                        "run_agent [%s] %s (attempt %d/%d), retrying in %.1fs"
-                        " — CLI debug log: %s",
-                        label, last_reason, attempt + 1, max_attempts,
-                        retry_backoff_s, last_debug_path or "(none)",
-                    )
-                    backoff_s = retry_backoff_s
+                        turns += 1
+                        for block in message.content:
+                            if text_cls and isinstance(block, text_cls):
+                                chunks.append(block.text)
+                                text_bytes += len(block.text.encode("utf-8"))
+                            elif tool_use_cls and isinstance(block, tool_use_cls):
+                                block_input = getattr(block, "input", None) or {}
+                                tool_calls.append(ToolCall(
+                                    name=block.name,
+                                    input=copy.deepcopy(dict(block_input)),
+                                ))
+                                if block.name in ("Write", "Edit"):
+                                    fp = block_input.get("file_path", "")
+                                    if fp and fp not in files_changed:
+                                        files_changed.append(fp)
+                    elif result_cls and isinstance(message, result_cls):
+                        session_id = getattr(message, "session_id", "") or ""
+                        u = getattr(message, "usage", None) or {}
+                        usage = AgentUsage(
+                            input_tokens=u.get("input_tokens", 0) or 0,
+                            output_tokens=u.get("output_tokens", 0) or 0,
+                            cache_creation_tokens=u.get(
+                                "cache_creation_input_tokens", 0
+                            ) or 0,
+                            cache_read_tokens=u.get(
+                                "cache_read_input_tokens", 0
+                            ) or 0,
+                            cost_usd=getattr(message, "total_cost_usd", 0.0)
+                            or 0.0,
+                        )
             finally:
-                if debug_log is not None:
-                    keep_s = _env_float(_DEBUG_KEEP_ENV, _DEBUG_KEEP_DEFAULT_S)
-                    debug_log.close(keep=(
-                        not attempt_ok
-                        or keep_s <= 0
-                        or loop.time() - attempt_start >= keep_s
-                    ))
-                # Cancel AND await, for the same reason _consume() explicitly
-                # aclose()s its generator: on timeout the attempt is cancelled
-                # fire-and-forget, and a heartbeat left pending would keep
-                # logging a dead attempt's counters into the next one (or past
-                # the end of the call). Awaiting makes the teardown ordered.
-                if heartbeat_task is not None:
-                    heartbeat_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await heartbeat_task
+                await gen.aclose()
 
-            # Backoff sits outside the attempt so the heartbeat is already
-            # stopped: an "alive" line during the gap would report the failed
-            # attempt's turn count as if the run were still producing.
-            if backoff_s:
-                await asyncio.sleep(backoff_s)
-    finally:
-        if prompt_file:
-            try:
-                os.unlink(prompt_file)
-            except OSError:
-                pass
+        async def _heartbeat(interval: float, attempt_no: int = attempt) -> None:
+            """Log liveness every *interval* seconds until cancelled.
+
+            Reads the same ``chunks``/``turns`` locals ``_consume()``
+            mutates, so the line reports real progress rather than only
+            that the task is scheduled.
+            """
+            hb_start = loop.time()
+            while True:
+                await asyncio.sleep(interval)
+                logger.info(
+                    "run_agent [%s] alive %.0fs attempt=%d/%d turns=%d "
+                    "text=%d bytes",
+                    label, loop.time() - hb_start, attempt_no + 1,
+                    max_attempts, turns, text_bytes,
+                )
+
+        heartbeat_s = _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S)
+        heartbeat_task = (
+            asyncio.create_task(_heartbeat(heartbeat_s))
+            if heartbeat_s > 0
+            else None
+        )
+        backoff_s = 0.0
+
+        attempt_ok = False
+        try:
+            await hard_timeout(_consume(), timeout_s)
+            attempt_ok = True
+            elapsed = loop.time() - run_start
+            logger.info(
+                "DONE run_agent [%s] attempt=%d/%d turns=%d text=%d bytes "
+                "files_changed=%d elapsed=%.1fs",
+                label, attempt + 1, max_attempts, turns, text_bytes,
+                len(files_changed), elapsed,
+            )
+            if any_attempt_failed:
+                logger.warning(
+                    "run_agent [%s] recovered after a failed attempt", label
+                )
+            _record_cost(component, label, model, usage, session_id)
+            return AgentRunResult(
+                text="".join(chunks).strip(),
+                turns=turns,
+                usage=usage,
+                files_changed=files_changed,
+                tool_calls=tuple(tool_calls),
+                stderr_tail="",
+            )
+        except Exception as e:  # noqa: BLE001
+            last_exc = e
+            timed_out = isinstance(e, asyncio.TimeoutError)
+            # TimeoutError stringifies to "" — describe it explicitly.
+            last_reason = (
+                f"timed out after {timeout_s:.0f}s"
+                if timed_out
+                else f"failed: {e}"
+            )
+            last_tail = _summarize_stderr(error_lines, list(recent_lines))
+            last_partial = AgentRunResult(
+                text="".join(chunks).strip(),
+                turns=turns,
+                usage=usage,
+                files_changed=files_changed,
+                tool_calls=tuple(tool_calls),
+                stderr_tail=last_tail,
+            )
+            last_session_id = session_id
+            last_debug_path = str(debug_log.path) if debug_log else ""
+            any_attempt_failed = True
+            if attempt + 1 < max_attempts:
+                logger.warning(
+                    "run_agent [%s] %s (attempt %d/%d), retrying in %.1fs"
+                    " — CLI debug log: %s",
+                    label, last_reason, attempt + 1, max_attempts,
+                    retry_backoff_s, last_debug_path or "(none)",
+                )
+                backoff_s = retry_backoff_s
+        finally:
+            if debug_log is not None:
+                keep_s = _env_float(_DEBUG_KEEP_ENV, _DEBUG_KEEP_DEFAULT_S)
+                debug_log.close(keep=(
+                    not attempt_ok
+                    or keep_s <= 0
+                    or loop.time() - attempt_start >= keep_s
+                ))
+            # Cancel AND await, for the same reason _consume() explicitly
+            # aclose()s its generator: on timeout the attempt is cancelled
+            # fire-and-forget, and a heartbeat left pending would keep
+            # logging a dead attempt's counters into the next one (or past
+            # the end of the call). Awaiting makes the teardown ordered.
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat_task
+
+        # Backoff sits outside the attempt so the heartbeat is already
+        # stopped: an "alive" line during the gap would report the failed
+        # attempt's turn count as if the run were still producing.
+        if backoff_s:
+            await asyncio.sleep(backoff_s)
 
     elapsed = loop.time() - run_start
     logger.error(
