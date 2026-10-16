@@ -34,9 +34,10 @@ written regardless of log level — it is the signal, not the debug noise.
   as a log file — and any such legacy files are migrated to the correct
   form opportunistically.
 
-Nothing is deleted by default. ``MULTIPLAI_LOG_RETENTION_DAYS`` set to a
-positive number deletes dated ``<name>-DATE.log`` / ``<name>-DATE.jsonl``
-files older than that many days, once per process.
+Dated ``<name>-DATE.log`` / ``<name>-DATE.jsonl`` files older than
+``retention_days()`` are deleted once per process: 365 days by default, or
+``MULTIPLAI_LOG_RETENTION_DAYS`` from the environment, then
+``multiplai.conf``. ``0`` keeps every file forever.
 
 All log files live under the plugin data directory via the path resolver.
 """
