@@ -32,8 +32,8 @@ How the arguments map onto Pi:
 - ``files_changed`` → the paths of write/edit tool calls, as the agent passed
   them; bash writes are not reported. Both match the SDK path.
 - ``system_prompt`` is put ahead of the prompt in the one message Pi receives.
-  The prompt travels as a JSON line on Pi's stdin, so there is no argv limit
-  and ``prompt_file_fallback`` has nothing to do here.
+  The prompt travels as a JSON line on Pi's stdin, so there is no argv limit.
+  ``prompt_file_fallback`` is accepted and ignored, as on the SDK path.
 - Usage is summed from the ``usage`` of every assistant ``message_end`` event
   (Pi reports input, cache reads and cache writes separately, the same
   convention as Anthropic). ``cost_usd`` is Pi's own ``cost.total``; when Pi
@@ -535,7 +535,7 @@ async def run_pi_agent(
     timeout_s: float = 600.0,
     max_attempts: int = 1,
     retry_backoff_s: float = 1.5,
-    prompt_file_fallback: bool = True,
+    prompt_file_fallback: bool | None = None,
     label: str = "agent",
     component: str = "",
 ) -> AgentRunResult:
