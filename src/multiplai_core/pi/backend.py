@@ -34,6 +34,8 @@ How the arguments map onto Pi:
 - ``system_prompt`` is put ahead of the prompt in the one message Pi receives.
   The prompt travels as a JSON line on Pi's stdin, so there is no argv limit.
   ``prompt_file_fallback`` is accepted and ignored, as on the SDK path.
+- ``read_roots`` is accepted and ignored: Pi has no PreToolUse hook to deny a
+  read with, so on this path the read tools are not limited to those folders.
 - Usage is summed from the ``usage`` of every assistant ``message_end`` event
   (Pi reports input, cache reads and cache writes separately, the same
   convention as Anthropic). ``cost_usd`` is Pi's own ``cost.total``; when Pi
@@ -63,7 +65,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from ..aio import hard_timeout
 from ..agent_runner import (
@@ -538,9 +540,14 @@ async def run_pi_agent(
     prompt_file_fallback: bool | None = None,
     label: str = "agent",
     component: str = "",
+    read_roots: Sequence[str | Path] | None = None,
 ) -> AgentRunResult:
     """``run_agent`` for a ``pi:<model-id>@<provider>`` spec. See the module docstring."""
     del prompt_file_fallback  # no argv limit on this path (module docstring)
+    if read_roots is not None:
+        logger.warning("run_pi_agent [%s]: read_roots is not enforced on the pi "
+                       "backend; reads are not limited to %s", label, list(read_roots))
+    del read_roots  # not enforceable on this path (module docstring)
     spec = model or ""
     try:
         pi_model, pi_provider = parse_pi_spec(spec)

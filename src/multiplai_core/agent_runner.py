@@ -32,6 +32,12 @@ Every invocation always gets the isolation/hardening bundle:
 - default ``cwd`` = ``$CLAUDE_CONFIG_DIR/hook-sessions`` — prevents project
   settings.json pickup and keeps child sessions out of the user's history.
 
+``read_roots`` adds one more boundary, on request: a ``PreToolUse`` hook that
+denies ``Read``/``Grep``/``Glob``/``LS``/``NotebookRead`` calls whose path
+resolves outside the given folders. A hook's deny holds under
+``bypassPermissions`` (verified 2026-10-16 with a real call on
+claude-agent-sdk 0.2.139).
+
 Every run also logs an ``alive`` heartbeat at INFO while an attempt is in
 flight, every ``MULTIPLAI_AGENT_HEARTBEAT_S`` seconds (default 60; ``0`` or
 negative disables it). Set it to ``0`` if a caller's log must stay quiet.
@@ -67,7 +73,7 @@ import warnings
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Awaitable, Callable
+from typing import IO, Any, Awaitable, Callable, Sequence
 
 from .aio import hard_timeout
 from .env import DEFAULT_PROVIDER, parse_model_spec
@@ -185,6 +191,92 @@ def deny_list(allowed_tools: list[str] | None) -> list[str]:
     """
     opened = set(allowed_tools or ())
     return [t for t in TOOL_UNIVERSE if t not in opened]
+
+
+# The read tools ``read_roots`` limits, as the PreToolUse matcher spells them.
+_READ_ROOT_MATCHER = "Read|Grep|Glob|LS|NotebookRead"
+_PATH_KEYS = ("file_path", "path", "notebook_path")
+_GLOB_MAGIC = re.compile(r"[*?\[{]")
+
+
+def _glob_base(pattern: str) -> str:
+    """The leading part of a glob pattern that holds no wildcard."""
+    parts = pattern.split("/")
+    for i, part in enumerate(parts):
+        if _GLOB_MAGIC.search(part):
+            parts = parts[:i]
+            break
+    base = "/".join(parts)
+    return base or ("/" if pattern.startswith("/") else "")
+
+
+def path_allowed(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    roots: Sequence[str | Path],
+    cwd: str | Path,
+) -> bool:
+    """Whether a read tool call stays inside ``roots``.
+
+    Reads ``file_path``, ``path`` and ``notebook_path``, and for ``Glob`` the
+    part of ``pattern`` before its first wildcard. Relative paths resolve
+    against ``cwd`` (a ``Glob`` pattern against its ``path``, if given);
+    ``~`` is expanded and symlinks are followed with ``os.path.realpath``. A
+    call with no path means ``cwd``. Only paths inside a resolved root pass;
+    a value that is not a string fails.
+    """
+    base = os.path.realpath(os.fspath(cwd))
+    resolved_roots = [os.path.realpath(os.fspath(r)) for r in roots]
+
+    def inside(raw: object, against: str) -> bool:
+        if not isinstance(raw, str):
+            return False
+        target = os.path.realpath(os.path.join(against, os.path.expanduser(raw)))
+        return any(
+            target == root or target.startswith(root.rstrip(os.sep) + os.sep)
+            for root in resolved_roots
+        )
+
+    given = [tool_input[k] for k in _PATH_KEYS if tool_input.get(k) is not None]
+    if not all(inside(raw, base) for raw in given or [base]):
+        return False
+    if tool_name == "Glob" and "pattern" in tool_input:
+        pattern = tool_input["pattern"]
+        if not isinstance(pattern, str):
+            return False
+        search = tool_input.get("path")
+        search_dir = (os.path.join(base, os.path.expanduser(search))
+                      if isinstance(search, str) else base)
+        return inside(_glob_base(os.path.expanduser(pattern)), search_dir)
+    return True
+
+
+def _deny_outside(
+    roots: Sequence[str | Path], cwd: str | Path, label: str,
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    """A PreToolUse hook that denies a read tool call outside ``roots``."""
+
+    async def _hook(input_data: dict[str, Any], tool_use_id: Any, context: Any) -> dict[str, Any]:
+        name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input") or {}
+        if path_allowed(name, tool_input, roots, cwd):
+            return {}
+        logger.warning(
+            "run_agent [%s]: denied %s outside read_roots: %s",
+            label, name, {k: tool_input.get(k) for k in (*_PATH_KEYS, "pattern") if k in tool_input},
+        )
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"{name} is limited to these folders: "
+                    + ", ".join(os.fspath(r) for r in roots)
+                ),
+            }
+        }
+
+    return _hook
 
 
 def _env_float(name: str, default: float) -> float:
@@ -565,6 +657,7 @@ async def run_agent(
     prompt_file_fallback: bool | None = None,
     label: str = "agent",
     component: str = "",
+    read_roots: Sequence[str | Path] | None = None,
 ) -> AgentRunResult:
     """Run one agent invocation via ``claude_agent_sdk.query()``.
 
@@ -608,6 +701,12 @@ async def run_agent(
         component: Cost-ledger component tag (e.g. ``"buildme"``). When set,
             the run's usage is appended to the cost ledger (source ``"sdk"``);
             ledger failures never break the run. Empty = no ledger write.
+        read_roots: Folders the read tools may open. When given (even as
+            ``[]``), a ``PreToolUse`` hook denies ``Read``, ``Grep``, ``Glob``,
+            ``LS`` and ``NotebookRead`` calls whose path resolves outside them
+            (see :func:`path_allowed`). It limits those five tools only: a
+            caller that also opens ``Bash`` is not bounded by it. ``None``
+            (the default) installs no hook.
 
         model: Model ID or ``provider:model`` spec. ``None`` and Anthropic
             specs (bare, ``anthropic:``, ``claude:``) run on the Claude Agent
@@ -651,7 +750,7 @@ async def run_agent(
                 env=env, timeout_s=timeout_s, max_attempts=max_attempts,
                 retry_backoff_s=retry_backoff_s,
                 prompt_file_fallback=prompt_file_fallback, label=label,
-                component=component,
+                component=component, read_roots=read_roots,
             )
             return await runner(prompt, **kwargs)
         model = parsed
@@ -669,6 +768,14 @@ async def run_agent(
     tool_use_cls = _sdk_class(sdk, "ToolUseBlock")
     result_cls = _sdk_class(sdk, "ResultMessage")
     system_cls = _sdk_class(sdk, "SystemMessage")
+    hook_matcher_cls = getattr(sdk, "HookMatcher", None)
+    if read_roots is not None and hook_matcher_cls is None:
+        # Fail closed: without hooks the roots cannot be enforced.
+        raise AgentRunError(
+            f"run_agent [{label}]: read_roots needs claude-agent-sdk's "
+            "HookMatcher, which the installed SDK lacks",
+            reason="read_roots unsupported by installed SDK",
+        )
 
     effective_tools = list(allowed_tools or [])
     # Guard merged LAST so a caller's env can never clear it: the reversed
@@ -676,6 +783,14 @@ async def run_agent(
     # fork-bomb guard.
     run_env: dict[str, str] = {**(env or {}), "_HOOK_CHILD_SESSION": "1"}
     prompt_bytes = len(prompt.encode("utf-8"))
+
+    read_hooks: dict[str, list] | None = None
+    if read_roots is not None:
+        hook_cwd = str(cwd) if cwd is not None else str(_hook_session_dir())
+        read_hooks = {"PreToolUse": [hook_matcher_cls(
+            matcher=_READ_ROOT_MATCHER,
+            hooks=[_deny_outside(list(read_roots), hook_cwd, label)],
+        )]}
 
     # A name outside TOOL_UNIVERSE is either a tool added since the list was
     # last derived, or a typo. Both are worth a line in the log: the typo case
@@ -768,6 +883,8 @@ async def run_agent(
             opts_kwargs["effort"] = effort
         if thinking is not None:
             opts_kwargs["thinking"] = thinking
+        if read_hooks is not None:
+            opts_kwargs["hooks"] = read_hooks
         # A TypeError here is a signature mismatch with the installed SDK
         # — deterministic, so retrying cannot help. Convert it immediately
         # to honor the documented Raises contract (AgentRunError/
