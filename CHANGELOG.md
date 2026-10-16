@@ -18,6 +18,20 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`run_agent(read_roots=[...])` limits the read tools to the folders you
+  name.** When given, a `PreToolUse` hook denies `Read`, `Grep`, `Glob`, `LS`
+  and `NotebookRead` calls whose path resolves outside those folders, after
+  resolving `..`, `~` and symlinks. Agents run under `bypassPermissions`, so
+  until now nothing stopped them reading any file the user can read through an
+  absolute path. The hook's deny holds under `bypassPermissions` (checked with
+  a real call on claude-agent-sdk 0.2.139). It limits those five tools only: a
+  run that also opens `Bash` is not bounded by it. The `pi` backend accepts the
+  argument but cannot enforce it, and logs a warning. If the installed SDK has
+  no `HookMatcher`, `run_agent` refuses rather than run unlimited. The default,
+  `None`, installs no hook.
+
 ### Fixed
 
 - The `log_utils` module docstring no longer says nothing is deleted by default;

@@ -26,6 +26,7 @@ from multiplai_core.agent_runner import (
     AgentUsage,
     ToolCall,
     deny_list,
+    path_allowed,
     run_agent,
 )
 
@@ -1103,3 +1104,196 @@ class TestDefaultModelAndEffort:
         opts = self._opts()
         assert opts.get("model") is None
         assert "effort" not in opts
+
+
+class TestPathAllowed:
+    """``path_allowed`` decides whether a read tool's path is inside a root."""
+
+    def test_absolute_path_outside_is_denied(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        outside = tmp_path / "secret.txt"
+        outside.write_text("x")
+        assert not path_allowed("Read", {"file_path": str(outside)}, [root], root)
+
+    def test_absolute_path_inside_is_allowed(self, tmp_path):
+        (tmp_path / "a.py").write_text("x")
+        assert path_allowed("Read", {"file_path": str(tmp_path / "a.py")},
+                            [tmp_path], tmp_path)
+
+    def test_relative_path_resolves_against_cwd(self, tmp_path):
+        (tmp_path / "sub").mkdir()
+        assert path_allowed("Read", {"file_path": "sub/a.py"}, [tmp_path], tmp_path)
+
+    def test_dotdot_escape_is_denied(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        assert not path_allowed("Read", {"file_path": "../secret.txt"}, [root], root)
+        assert not path_allowed(
+            "Read", {"file_path": str(root / "sub" / ".." / ".." / "secret.txt")},
+            [root], root)
+
+    def test_symlink_inside_root_pointing_outside_is_denied(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("x")
+        (root / "link").symlink_to(outside)
+        assert not path_allowed("Read", {"file_path": str(root / "link" / "secret.txt")},
+                                [root], root)
+        assert not path_allowed("Grep", {"path": "link"}, [root], root)
+
+    def test_root_given_through_a_symlink_still_matches(self, tmp_path):
+        real = tmp_path / "real"
+        real.mkdir()
+        (tmp_path / "alias").symlink_to(real)
+        assert path_allowed("Read", {"file_path": str(real / "a.py")},
+                            [tmp_path / "alias"], real)
+
+    def test_grep_with_no_path_uses_cwd(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        assert path_allowed("Grep", {"pattern": "secret"}, [root], root)
+        assert not path_allowed("Grep", {"pattern": "secret"}, [root], tmp_path)
+
+    def test_glob_with_absolute_pattern_outside_is_denied(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        assert not path_allowed("Glob", {"pattern": f"{tmp_path}/**/*.txt"}, [root], root)
+        assert not path_allowed("Glob", {"pattern": "/etc/*"}, [root], root)
+
+    def test_glob_relative_pattern_inside_is_allowed(self, tmp_path):
+        assert path_allowed("Glob", {"pattern": "**/*.py"}, [tmp_path], tmp_path)
+        assert path_allowed("Glob", {"pattern": "src/*.py", "path": "pkg"},
+                            [tmp_path], tmp_path)
+
+    def test_glob_relative_pattern_escaping_is_denied(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        assert not path_allowed("Glob", {"pattern": "../*"}, [root], root)
+        assert not path_allowed("Glob", {"pattern": "*.py", "path": str(tmp_path)},
+                                [root], root)
+
+    def test_notebook_and_ls_paths_are_checked(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        assert not path_allowed("NotebookRead", {"notebook_path": str(tmp_path / "n.ipynb")},
+                                [root], root)
+        assert not path_allowed("LS", {"path": str(tmp_path)}, [root], root)
+        assert path_allowed("LS", {"path": str(root)}, [root], root)
+
+    def test_tilde_expands_to_home(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        root = tmp_path / "root"
+        home.mkdir()
+        root.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        assert not path_allowed("Read", {"file_path": "~/.ssh/id_rsa"}, [root], root)
+        assert not path_allowed("Glob", {"pattern": "~/*"}, [root], root)
+
+    def test_non_string_path_is_denied(self, tmp_path):
+        assert not path_allowed("Read", {"file_path": ["/etc/passwd"]}, [tmp_path], tmp_path)
+
+    def test_any_of_several_roots(self, tmp_path):
+        a, b = tmp_path / "a", tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        assert path_allowed("Read", {"file_path": str(b / "x")}, [a, b], a)
+
+    def test_sibling_with_shared_prefix_is_denied(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        assert not path_allowed("Read", {"file_path": str(tmp_path / "root-other" / "x")},
+                                [root], root)
+
+
+class TestReadRoots:
+    """``read_roots`` installs a PreToolUse hook that denies reads outside."""
+
+    def _opts_and_matcher(self, **kwargs):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", allowed_tools=["Read", "Grep", "Glob"], **kwargs))
+        return mock_sdk.ClaudeAgentOptions.call_args.kwargs, mock_sdk.HookMatcher
+
+    def test_no_hooks_without_read_roots(self):
+        opts, matcher = self._opts_and_matcher()
+        assert "hooks" not in opts
+        assert not matcher.called
+
+    def test_hook_installed_for_read_tools(self, tmp_path):
+        opts, matcher = self._opts_and_matcher(read_roots=[tmp_path], cwd=tmp_path)
+        assert list(opts["hooks"]) == ["PreToolUse"]
+        assert opts["hooks"]["PreToolUse"] == [matcher.return_value]
+        assert matcher.call_args.kwargs["matcher"] == "Read|Grep|Glob|LS|NotebookRead"
+        assert len(matcher.call_args.kwargs["hooks"]) == 1
+
+    def _hook(self, tmp_path, **kwargs):
+        _, matcher = self._opts_and_matcher(read_roots=[tmp_path], **kwargs)
+        return matcher.call_args.kwargs["hooks"][0]
+
+    def test_hook_denies_outside(self, tmp_path):
+        hook = self._hook(tmp_path, cwd=tmp_path)
+        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                         "tool_input": {"file_path": "/etc/passwd"}}, "t1", None))
+        spec = out["hookSpecificOutput"]
+        assert spec["hookEventName"] == "PreToolUse"
+        assert spec["permissionDecision"] == "deny"
+        assert spec["permissionDecisionReason"]
+
+    def test_hook_allows_inside(self, tmp_path):
+        hook = self._hook(tmp_path, cwd=tmp_path)
+        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                         "tool_input": {"file_path": str(tmp_path / "a.py")}}, "t1", None))
+        assert out == {}
+
+    def test_relative_paths_resolve_against_run_cwd(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        hook = self._hook(root, cwd=root)
+        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Grep",
+                         "tool_input": {"pattern": "x"}}, "t1", None))
+        assert out == {}
+        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                         "tool_input": {"file_path": "../x"}}, "t1", None))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_empty_read_roots_denies_every_read(self, tmp_path):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", allowed_tools=["Read"], read_roots=[], cwd=tmp_path))
+        hook = mock_sdk.HookMatcher.call_args.kwargs["hooks"][0]
+        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                         "tool_input": {"file_path": str(tmp_path / "a")}}, "t1", None))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_large_prompt_file_stays_readable(self, tmp_path):
+        """The big-prompt fallback writes its temp file outside the roots; the
+        hook must still let the agent read that one file."""
+        mock_sdk = _make_mock_sdk()
+        big = "x" * (MAX_PROMPT_BYTES + 1)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent(big, read_roots=[tmp_path], cwd=tmp_path))
+        sent = mock_sdk.query.call_args.kwargs["prompt"]
+        prompt_file = re.search(r"Read the file (\S+) using", sent).group(1)
+        hook = mock_sdk.HookMatcher.call_args.kwargs["hooks"][0]
+        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                         "tool_input": {"file_path": prompt_file}}, "t1", None))
+        assert out == {}
+
+    def test_old_sdk_without_hook_matcher_refuses(self, tmp_path):
+        """Fail closed: an SDK with no HookMatcher cannot enforce the roots."""
+        mock_sdk = _make_mock_sdk()
+        del mock_sdk.HookMatcher
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(AgentRunError, match="read_roots"):
+                _run(run_agent("hi", read_roots=[tmp_path]))
+        assert not mock_sdk.query.called
+
+    def test_pi_backend_accepts_read_roots(self):
+        import inspect
+        from multiplai_core.pi.backend import run_pi_agent
+        param = inspect.signature(run_pi_agent).parameters["read_roots"]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+        assert param.default is None
