@@ -38,11 +38,11 @@ negative disables it). Set it to ``0`` if a caller's log must stay quiet.
 
 Every attempt also writes the CLI's debug stderr to a file under
 ``<logs_dir>/sdk/`` as the lines arrive, so the file survives the calling
-process being killed. Every file is kept. ``MULTIPLAI_SDK_DEBUG_KEEP_S`` set
+process being killed. ``MULTIPLAI_SDK_DEBUG_KEEP_S`` set
 to a positive number deletes a successful attempt's file when the attempt was
 faster than that many seconds; ``MULTIPLAI_SDK_DEBUG_LOG=off`` turns the file
-off. Files are deleted by age only when ``MULTIPLAI_LOG_RETENTION_DAYS`` is set
-to a positive number.
+off. Files older than the log retention (``retention_days()``, 365 days by
+default) are deleted; ``MULTIPLAI_LOG_RETENTION_DAYS=0`` keeps them all.
 
 ``model`` may name a backend other than the Claude Agent SDK, as a
 ``provider:model`` spec (``pi:deepseek/deepseek-v4-flash@fireworks``). An
@@ -382,8 +382,7 @@ def _summarize_stderr(error_lines: list[str], recent_lines: list[str]) -> str:
 def _sweep_debug_logs(sdk_dir: Path) -> None:
     """Delete debug-log files older than the log retention, once per process.
 
-    Runs only when ``MULTIPLAI_LOG_RETENTION_DAYS`` is set to a positive
-    number; by default every file is kept.
+    Does nothing when the retention is ``0`` (keep forever).
     """
     global _debug_logs_swept
     if _debug_logs_swept:

@@ -4,8 +4,10 @@ Standard adopted across every Multiplai plugin:
 
 - UTC ISO-8601 line format with component + session id
 - ``MULTIPLAI_DEBUG`` / ``MULTIPLAI_LOG_LEVEL`` env-driven level
-- One file per component per UTC day, kept forever by default
-- Shared ``hook-errors.log`` for ERROR+ across all components, never shortened
+- One file per component per UTC day, kept 365 days by default
+- Shared ``hook-errors.log`` for ERROR+ across all components, never
+  shortened; a day's errors move to ``hook-errors-YYYY-MM-DD.log`` the next
+  day, and those dated files follow the same retention
 
 On top of the standard, ``log_event()`` writes a curated, human-readable
 activity stream (``activity-YYYY-MM-DD.log``) plus a machine-parseable mirror
@@ -23,6 +25,10 @@ written regardless of log level — it is the signal, not the debug noise.
   same moment loses nothing.
 - ``<name>.log`` (the undated "current" file of earlier releases) is no
   longer written; one left over from an earlier release is left in place.
+- ``hook-errors.log`` is the one undated file still written, because shell
+  hooks append to it by that name. The first process to log on a new UTC
+  day moves the previous day's file to ``hook-errors-YYYY-MM-DD.log``
+  (see ``_rotate_shared_error_log``).
 - The ``<name>.log.YYYY-MM-DD`` form produced by stdlib
   ``TimedRotatingFileHandler`` is rejected — editors don't recognise it
   as a log file — and any such legacy files are migrated to the correct
@@ -67,9 +73,9 @@ _LEVELS = {
     "ERROR": logging.ERROR,
 }
 
-# Retention when MULTIPLAI_LOG_RETENTION_DAYS is unset or invalid: 0, keep
-# every log forever. Deleting logs is opt-in.
-_DEFAULT_RETENTION_DAYS = 0
+# Retention when MULTIPLAI_LOG_RETENTION_DAYS is set neither in the
+# environment nor in multiplai.conf, or is invalid. 0 keeps every log forever.
+_DEFAULT_RETENTION_DAYS = 365
 
 # A trailing ``-YYYY-MM-DD`` before the extension marks a rotated file.
 _DATED_RE = re.compile(r"-(\d{4}-\d{2}-\d{2})\.(log|jsonl)$")
@@ -126,10 +132,15 @@ def _utc_today() -> str:
 def retention_days() -> int:
     """Resolve rotated-log retention from ``MULTIPLAI_LOG_RETENTION_DAYS``.
 
-    Returns the configured day count, or ``0`` ("keep forever", the
-    default) when unset, unparseable or negative.
+    The environment wins, then ``multiplai.conf``, so a pipeline started
+    with ``uv run`` keeps its logs exactly as long as a hook does. Returns
+    the configured day count (``0`` keeps every log forever), or
+    ``_DEFAULT_RETENTION_DAYS`` when unset, unparseable or negative.
     """
     raw = os.environ.get("MULTIPLAI_LOG_RETENTION_DAYS", "").strip()
+    if not raw:
+        from .env import load_multiplai_conf
+        raw = str(load_multiplai_conf().get("MULTIPLAI_LOG_RETENTION_DAYS") or "").strip()
     if not raw:
         return _DEFAULT_RETENTION_DAYS
     try:
@@ -167,6 +178,32 @@ def _merge_or_rename(src: Path, target: Path) -> None:
         src.rename(target)
 
 
+def _rotate_shared_error_log(logs_dir: Path) -> None:
+    """Move an earlier day's ``hook-errors.log`` to ``hook-errors-<day>.log``.
+
+    *day* is the UTC date of the file's last write. Nothing is shortened:
+    the file keeps its whole content under the dated name, which the sweep
+    then prunes like any other dated log. Shell hooks append to the undated
+    name, so it stays the file to read for today's errors.
+
+    The move is a hard link to the dated name, then an unlink of the old
+    one. ``os.link`` refuses an existing target, so two processes rotating
+    at once can never overwrite a dated file; the loser leaves the file
+    alone. A writer that still holds the old file open keeps appending to
+    the dated file. Best-effort: any OSError leaves the file in place.
+    """
+    current = logs_dir / "hook-errors.log"
+    try:
+        mtime = current.stat().st_mtime
+        day = datetime.fromtimestamp(mtime, timezone.utc).strftime("%Y-%m-%d")
+        if day >= _utc_today():
+            return
+        os.link(current, logs_dir / f"hook-errors-{day}.log")
+        current.unlink()
+    except OSError:
+        pass
+
+
 def _sweep_logs(logs_dir: Path, days: int) -> None:
     """Normalise and, only when asked, prune the logs directory.
 
@@ -175,10 +212,9 @@ def _sweep_logs(logs_dir: Path, days: int) -> None:
     1. Migrate any legacy ``<name>.log.YYYY-MM-DD`` (the rejected stdlib
        form) to the standard ``<name>-YYYY-MM-DD.log``. Nothing writes those
        names any more, so no process holds one open.
-    2. Only when *days* > 0 (``MULTIPLAI_LOG_RETENTION_DAYS`` set to a
-       positive number), delete dated ``<name>-DATE.log`` /
-       ``<name>-DATE.jsonl`` files whose mtime is older than the cutoff.
-       *days* == 0, the default, deletes nothing.
+    2. Only when *days* > 0 (see ``retention_days``; 365 by default),
+       delete dated ``<name>-DATE.log`` / ``<name>-DATE.jsonl`` files whose
+       mtime is older than the cutoff. *days* == 0 deletes nothing.
     """
     try:
         for f in list(logs_dir.glob("*.log.*")):
@@ -425,7 +461,9 @@ def setup_logging(
         logger.addHandler(file_handler)
 
         # Shared ERROR+ sink across all components (append-only, undated per
-        # the logging standard). Nothing shortens or deletes it.
+        # the logging standard). Nothing shortens it; an earlier day's file
+        # moves to its dated name first, so this one holds today's errors.
+        _rotate_shared_error_log(logs_dir)
         error_handler = logging.FileHandler(
             logs_dir / "hook-errors.log", encoding="utf-8"
         )
