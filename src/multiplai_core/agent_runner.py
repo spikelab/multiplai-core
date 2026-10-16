@@ -625,7 +625,7 @@ async def run_agent(
         UnknownAgentBackendError: ``model`` names a provider with no backend.
 
     With no ``model``, the run uses :func:`multiplai_core.session.default_model`
-    (``MULTIPLAI_MODEL``, else the Claude Code session's model); with no
+    (the configured default, else the Claude Code session's model); with no
     ``effort``, :func:`multiplai_core.session.default_effort`. When neither
     finds a value the option is omitted and the CLI uses its own default.
     """
