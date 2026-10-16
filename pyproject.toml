@@ -36,7 +36,10 @@ dependencies = [
 #
 # Floor is >=0.2.168, raised from >=0.2.139 on 2026-10-16: 0.2.168 bundles
 # Claude CLI 2.1.301, and the floor moves in step with multiplai-kit's so the
-# shared venv re-syncs to it. No 0.2.168 API is required by this code.
+# shared venv re-syncs to it. No 0.2.168 API is required by this code. This
+# overrides the loose-floor policy in .github/dependabot.yml on purpose: core
+# owns the SDK for the whole stack, so its floor sets the version every
+# consumer runs.
 #
 # The >=0.2.139 reason (raised from >=0.2.116 on 2026-08-15) still holds:
 # `run_agent` forwards `thinking` into `ClaudeAgentOptions(**opts_kwargs)`; an
