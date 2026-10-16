@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.23.0] – 2026-10-16
+
 ### Added
 
 - **`run_agent(read_roots=[...])` limits the read tools to the folders you
@@ -940,7 +942,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/spikelab/multiplai-core/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/spikelab/multiplai-core/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/spikelab/multiplai-core/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/spikelab/multiplai-core/compare/v0.19.0...v0.20.0
