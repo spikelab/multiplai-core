@@ -4,30 +4,33 @@ Standard adopted across every Multiplai plugin:
 
 - UTC ISO-8601 line format with component + session id
 - ``MULTIPLAI_DEBUG`` / ``MULTIPLAI_LOG_LEVEL`` env-driven level
-- Date-rotated per-component logs with configurable retention
-- Shared ``hook-errors.log`` for ERROR+ across all components
+- One file per component per UTC day, kept forever by default
+- Shared ``hook-errors.log`` for ERROR+ across all components, never shortened
 
 On top of the standard, ``log_event()`` writes a curated, human-readable
-activity stream (``activity.log``) plus a machine-parseable mirror
-(``activity.jsonl``). This is the human-in-the-loop view: one narrative
-line per meaningful thing the plugin does (context injected, nudge
+activity stream (``activity-YYYY-MM-DD.log``) plus a machine-parseable mirror
+(``activity-YYYY-MM-DD.jsonl``). This is the human-in-the-loop view: one
+narrative line per meaningful thing the plugin does (context injected, nudge
 fired, diary written, learnings captured, catalog rebuilt). It is
 written regardless of log level — it is the signal, not the debug noise.
 
 **File-naming convention (one rule for every log in the directory):**
 
-- ``<name>.log`` — the *current* file (no date suffix).
-- On the first write of a new UTC day the current file is rotated to
-  ``<name>-YYYY-MM-DD.log`` (date infix *before* the extension). The
-  ``<name>.log.YYYY-MM-DD`` form produced by stdlib
+- Every line is appended straight to ``<name>-YYYY-MM-DD.log`` for the
+  current UTC day (date infix *before* the extension). When the day changes
+  the writer opens the next day's file by name. No file is ever renamed,
+  merged or unlinked, so a second process appending to the same file at the
+  same moment loses nothing.
+- ``<name>.log`` (the undated "current" file of earlier releases) is no
+  longer written; one left over from an earlier release is left in place.
+- The ``<name>.log.YYYY-MM-DD`` form produced by stdlib
   ``TimedRotatingFileHandler`` is rejected — editors don't recognise it
   as a log file — and any such legacy files are migrated to the correct
   form opportunistically.
 
-Retention is governed by ``MULTIPLAI_LOG_RETENTION_DAYS`` (default 7,
-``0`` = keep forever). It applies uniformly to every rotated
-``<name>-DATE.log`` / ``<name>-DATE.jsonl`` file, including the activity
-stream.
+Nothing is deleted by default. ``MULTIPLAI_LOG_RETENTION_DAYS`` set to a
+positive number deletes dated ``<name>-DATE.log`` / ``<name>-DATE.jsonl``
+files older than that many days, once per process.
 
 All log files live under the plugin data directory via the path resolver.
 """
@@ -64,9 +67,9 @@ _LEVELS = {
     "ERROR": logging.ERROR,
 }
 
-# Default rotated-log retention when MULTIPLAI_LOG_RETENTION_DAYS is unset
-# or invalid. Matches the documented logging standard.
-_DEFAULT_RETENTION_DAYS = 7
+# Retention when MULTIPLAI_LOG_RETENTION_DAYS is unset or invalid: 0, keep
+# every log forever. Deleting logs is opt-in.
+_DEFAULT_RETENTION_DAYS = 0
 
 # A trailing ``-YYYY-MM-DD`` before the extension marks a rotated file.
 _DATED_RE = re.compile(r"-(\d{4}-\d{2}-\d{2})\.(log|jsonl)$")
@@ -76,36 +79,6 @@ _REJECTED_RE = re.compile(r"^(?P<base>.+)\.log\.(?P<date>\d{4}-\d{2}-\d{2})$")
 
 # Directory sweep (migrate + prune) runs at most once per process.
 _swept = False
-
-# Oversize ceiling for append-only logs (hook-errors.log), per the logging
-# standard: "truncated to ~100KB when oversized".
-_ERROR_LOG_MAX_BYTES = 100 * 1024
-
-
-def _truncate_oversized(path: Path, max_bytes: int = _ERROR_LOG_MAX_BYTES) -> None:
-    """Truncate an append-only log to its most recent tail when oversized.
-
-    Keeps roughly half of *max_bytes* so truncation runs infrequently.
-    Rewrites in place (same inode) so concurrent O_APPEND writers keep
-    working; a few lines may interleave during the rewrite — acceptable
-    for a best-effort error sink. Never raises.
-    """
-    try:
-        if not path.exists() or path.stat().st_size <= max_bytes:
-            return
-        keep = max_bytes // 2
-        with path.open("r+b") as f:
-            f.seek(-keep, os.SEEK_END)
-            tail = f.read()
-            nl = tail.find(b"\n")
-            if nl != -1:
-                tail = tail[nl + 1:]
-            f.seek(0)
-            f.write(b"[truncated: exceeded %d bytes]\n" % max_bytes + tail)
-            f.truncate()
-    except OSError:
-        pass
-
 
 def _get_logs_dir() -> Path:
     """Logs directory from the path resolver (imported lazily), created."""
@@ -153,9 +126,8 @@ def _utc_today() -> str:
 def retention_days() -> int:
     """Resolve rotated-log retention from ``MULTIPLAI_LOG_RETENTION_DAYS``.
 
-    Returns the configured day count, ``0`` for "keep forever", or the
-    default (7) when unset or unparseable. Negative values fall back to
-    the default.
+    Returns the configured day count, or ``0`` ("keep forever", the
+    default) when unset, unparseable or negative.
     """
     raw = os.environ.get("MULTIPLAI_LOG_RETENTION_DAYS", "").strip()
     if not raw:
@@ -195,37 +167,18 @@ def _merge_or_rename(src: Path, target: Path) -> None:
         src.rename(target)
 
 
-def _rotate_dated(base: Path, today: str | None = None) -> None:
-    """Archive *base* to ``<stem>-<its-day>.<ext>`` if it predates today.
-
-    The day a file's content belongs to is taken from its mtime (UTC).
-    A non-existent or empty file, or one already written today, is left
-    untouched. Best-effort: never raises.
-    """
-    try:
-        st = base.stat()
-        if st.st_size == 0:
-            return
-        file_day = datetime.fromtimestamp(
-            st.st_mtime, timezone.utc
-        ).strftime("%Y-%m-%d")
-        if file_day == (today or _utc_today()):
-            return
-        _merge_or_rename(
-            base, base.with_name(f"{base.stem}-{file_day}{base.suffix}")
-        )
-    except OSError:
-        pass
-
-
 def _sweep_logs(logs_dir: Path, days: int) -> None:
-    """Normalise and prune the logs directory (best-effort, once/process).
+    """Normalise and, only when asked, prune the logs directory.
+
+    Best-effort, once per process.
 
     1. Migrate any legacy ``<name>.log.YYYY-MM-DD`` (the rejected stdlib
-       form) to the standard ``<name>-YYYY-MM-DD.log``.
-    2. When *days* > 0, delete rotated ``<name>-DATE.log`` /
+       form) to the standard ``<name>-YYYY-MM-DD.log``. Nothing writes those
+       names any more, so no process holds one open.
+    2. Only when *days* > 0 (``MULTIPLAI_LOG_RETENTION_DAYS`` set to a
+       positive number), delete dated ``<name>-DATE.log`` /
        ``<name>-DATE.jsonl`` files whose mtime is older than the cutoff.
-       *days* == 0 keeps rotated files forever (migration still runs).
+       *days* == 0, the default, deletes nothing.
     """
     try:
         for f in list(logs_dir.glob("*.log.*")):
@@ -293,37 +246,85 @@ class _StandardFormatter(logging.Formatter):
         return line
 
 
+def _dated_path(base: Path, day: str) -> Path:
+    """``<stem>-<day><suffix>`` next to *base*."""
+    return base.with_name(f"{base.stem}-{day}{base.suffix}")
+
+
 class _DatedRotatingFileHandler(logging.FileHandler):
-    """Write ``<name>.log``; rotate to ``<name>-YYYY-MM-DD.log`` on day change.
+    """Append to ``<name>-YYYY-MM-DD.log`` for the current UTC day.
 
-    Hooks are short-lived, so the common rotation path is at construction:
-    a ``<name>.log`` left over from a previous UTC day is archived before
-    the stream is (re)opened. Long-lived processes are also covered — the
-    emit path re-checks the UTC day and rotates mid-run.
+    *base* is ``<name>.log``; the handler never writes that name. When the
+    UTC day changes mid-run it closes today's stream and opens the next
+    day's file by name. It never renames, merges or unlinks a file, so
+    another process appending to the same day's file (an epic child, a
+    concurrent hook) keeps every line.
 
-    Retention is not handled here; :func:`_sweep_logs` prunes uniformly
-    across the whole directory per ``MULTIPLAI_LOG_RETENTION_DAYS``.
+    Retention is not handled here; :func:`_sweep_logs` prunes only when
+    ``MULTIPLAI_LOG_RETENTION_DAYS`` asks it to.
     """
 
     def __init__(self, base: Path):
         self._base = Path(base)
-        _rotate_dated(self._base)
-        super().__init__(self._base, encoding="utf-8")
         self._day = _utc_today()
+        super().__init__(_dated_path(self._base, self._day), encoding="utf-8")
 
     def emit(self, record: logging.LogRecord) -> None:
-        if _utc_today() != self._day:
+        today = _utc_today()
+        if today != self._day:
             self.acquire()
             try:
-                if self.stream:
-                    self.stream.flush()
-                    self.stream.close()
-                _rotate_dated(self._base)
-                self.stream = self._open()
-                self._day = _utc_today()
+                if today != self._day:
+                    if self.stream:
+                        self.stream.flush()
+                        self.stream.close()
+                    self.baseFilename = os.path.abspath(
+                        _dated_path(self._base, today)
+                    )
+                    self.stream = self._open()
+                    self._day = today
             finally:
                 self.release()
         super().emit(record)
+
+
+class _CurrentStderrHandler(logging.StreamHandler):
+    """A stderr handler that writes to whatever ``sys.stderr`` is at emit time.
+
+    A package logger outlives the component that attached this handler (one
+    process may set up several components, or a test runner may swap
+    ``sys.stderr`` per test), so binding the stream once could leave it
+    writing to a closed one.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(sys.stderr)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.stream = sys.stderr
+        super().emit(record)
+
+
+def _caller_package() -> str | None:
+    """Top-level package of the module that called :func:`setup_logging`.
+
+    Read from the caller's ``__package__`` (set for ``python -m pkg`` and for
+    any module inside a package), else its ``__spec__.name``, else its
+    ``__name__`` unless that is ``__main__``. A plain script run by path has
+    none of these, and returns None.
+    """
+    frame = sys._getframe(2)  # 0: here, 1: setup_logging, 2: its caller
+    g = frame.f_globals
+    candidates = [g.get("__package__")]
+    spec = g.get("__spec__")
+    candidates.append(getattr(spec, "name", None))
+    name = g.get("__name__")
+    if name != "__main__":
+        candidates.append(name)
+    for candidate in candidates:
+        if candidate:
+            return str(candidate).split(".", 1)[0]
+    return None
 
 
 def setup_logging(
@@ -331,35 +332,45 @@ def setup_logging(
     level: int | None = None,
     session_id: str | None = None,
     *,
+    packages: tuple[str, ...] | None = None,
     propagate_loggers: tuple[str, ...] = (),
 ) -> logging.Logger:
     """Set up logging for a multiplai script.
 
-    Configures (idempotently) a stderr handler, a date-rotated per-component
-    file handler (``<name>.log`` current, ``<name>-DATE.log`` rotated), and
-    a shared ``hook-errors.log`` handler for ERROR+. When *level* is omitted
-    it is resolved from the environment via :func:`resolve_level` so
-    ``MULTIPLAI_DEBUG=1`` makes every script verbose without code changes.
+    Configures (idempotently) a stderr handler, a per-day component file
+    handler (``<name>-YYYY-MM-DD.log``), and a shared ``hook-errors.log``
+    handler for ERROR+. When *level* is omitted it is resolved from the
+    environment via :func:`resolve_level` so ``MULTIPLAI_DEBUG=1`` makes
+    every script verbose without code changes.
 
-    ``propagate_loggers`` names extra loggers (typically packages such as
-    ``"multiplai_core"``) whose records should also land in this component's
-    ``<name>.log`` and the shared ``hook-errors.log``. Those libraries log to
-    their own dotted loggers (e.g. ``multiplai_core.agent_runner``) which
-    normally propagate only to the root logger — which has no file handler in a
-    hook process, so their failure detail reaches stderr only. Attaching the
-    same file + error handlers to the named package loggers captures that
-    detail on disk without adding a second stderr stream (interactive stderr is
-    left to this component's own logger). Default ``()`` leaves behavior
-    unchanged. The attachment is idempotent — a handler already present on a
-    package logger is not attached twice.
+    Modules log to their own dotted loggers (``build_pipeline.orchestrator``,
+    ``multiplai_core.agent_runner``), not to *name*. *packages* names the
+    top-level packages whose records should also land in this component's
+    file and the shared ``hook-errors.log``, and reach stderr at WARNING and
+    above with the same format. Its default is the top-level package of the
+    module calling this function plus ``multiplai_core``, so a pipeline run as
+    ``python -m build_pipeline`` keeps its own modules' lines and core's
+    without listing them. A script run by path has no package: pass the
+    packages its modules live in (``packages=("lib", "generators")``).
+    ``multiplai_core`` is always included.
 
-    Two caveats. Once a package logger has handlers, ``logging.lastResort``
-    stops firing for it, so its WARNING+ records no longer reach stderr at all
-    in the capturing process — they land only in the files. And because a
-    logger that already has handlers makes ``setup_logging`` return early,
-    ``propagate_loggers`` takes effect only on the call that first configures
-    *name*; passing it for an already-configured *name* is silently a no-op.
+    ``propagate_loggers`` is a deprecated alias: its names are added to
+    *packages*.
+
+    The attachment is idempotent — a handler already present on a package
+    logger is not attached twice, and a package logger gets one stderr
+    handler however many components the process sets up. Because a logger
+    that already has handlers makes ``setup_logging`` return early, the
+    packages take effect only on the call that first configures *name*.
     """
+    if packages is None:
+        caller = _caller_package()
+        packages = (caller,) if caller else ()
+    pkg_names: list[str] = []
+    for pkg_name in (*packages, *propagate_loggers, "multiplai_core"):
+        if pkg_name and pkg_name != name and pkg_name not in pkg_names:
+            pkg_names.append(pkg_name)
+
     logger = logging.getLogger(name)
     resolved = level if level is not None else resolve_level()
     logger.setLevel(resolved)
@@ -389,6 +400,22 @@ def setup_logging(
     stderr_handler.setFormatter(fmt)
     logger.addHandler(stderr_handler)
 
+    # Package loggers print WARNING+ to stderr, formatted. Attached before the
+    # file handlers so it holds even when the logs dir is unavailable. Without
+    # it, the file handlers below would stop logging.lastResort from firing
+    # for these loggers, and their warnings would vanish from stderr — which
+    # is where an epic child's warnings are collected.
+    for pkg_name in pkg_names:
+        pkg_logger = logging.getLogger(pkg_name)
+        pkg_logger.setLevel(resolved)
+        # One per package logger, however many components set it up: a
+        # second would print each warning twice.
+        if not any(isinstance(h, _CurrentStderrHandler) for h in pkg_logger.handlers):
+            pkg_stderr = _CurrentStderrHandler()
+            pkg_stderr.setLevel(max(resolved, logging.WARNING))
+            pkg_stderr.setFormatter(fmt)
+            pkg_logger.addHandler(pkg_stderr)
+
     try:
         logs_dir = _get_logs_dir()
 
@@ -397,10 +424,8 @@ def setup_logging(
         file_handler.setFormatter(fmt)
         logger.addHandler(file_handler)
 
-        # Shared ERROR+ sink across all components (append-only, undated
-        # per the logging standard). Enforce the oversize ceiling before
-        # binding — nothing else ever truncates this file.
-        _truncate_oversized(logs_dir / "hook-errors.log")
+        # Shared ERROR+ sink across all components (append-only, undated per
+        # the logging standard). Nothing shortens or deletes it.
         error_handler = logging.FileHandler(
             logs_dir / "hook-errors.log", encoding="utf-8"
         )
@@ -408,14 +433,11 @@ def setup_logging(
         error_handler.setFormatter(fmt)
         logger.addHandler(error_handler)
 
-        # Route named package loggers' records into this component's file and
-        # the shared error sink. Same handler objects, no stderr handler — so
-        # library failure detail lands on disk without doubling interactive
-        # output. Root has no handlers, so no duplication; we leave each
-        # package logger's ``propagate`` untouched.
-        for pkg_name in propagate_loggers:
+        # Route package loggers' records into this component's file and the
+        # shared error sink. We leave each package logger's ``propagate``
+        # untouched.
+        for pkg_name in pkg_names:
             pkg_logger = logging.getLogger(pkg_name)
-            pkg_logger.setLevel(resolved)
             for handler in (file_handler, error_handler):
                 if handler not in pkg_logger.handlers:
                     pkg_logger.addHandler(handler)
@@ -442,10 +464,9 @@ def log_event(
     in plain language. Written regardless of configured log level and
     never raises (a logging failure must not break a hook).
 
-    Writes to the *current* files ``activity.log`` / ``activity.jsonl``
-    (no date suffix); the previous day's stream is rotated to
-    ``activity-YYYY-MM-DD.{log,jsonl}`` on the first write of a new UTC
-    day, consistent with every other log in the directory.
+    Appends to ``activity-YYYY-MM-DD.log`` / ``activity-YYYY-MM-DD.jsonl``
+    for the current UTC day, consistent with every other log in the
+    directory. Nothing is renamed or unlinked.
 
     Args:
         component: Short subsystem tag (e.g. ``context``, ``nudge``,
@@ -460,11 +481,9 @@ def log_event(
     try:
         logs_dir = _get_logs_dir()
 
-        log_path = logs_dir / "activity.log"
-        jsonl_path = logs_dir / "activity.jsonl"
         today = _utc_today()
-        _rotate_dated(log_path, today)
-        _rotate_dated(jsonl_path, today)
+        log_path = logs_dir / f"activity-{today}.log"
+        jsonl_path = logs_dir / f"activity-{today}.jsonl"
 
         now = datetime.now(timezone.utc)
         sid = _short_session(session_id)

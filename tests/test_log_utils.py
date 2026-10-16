@@ -33,6 +33,30 @@ def _unique(name: str) -> str:
     return f"{name}-{uuid.uuid4().hex[:8]}"
 
 
+def _today(logs_dir, name: str, ext: str = "log"):
+    """The file a component writes today: ``<name>-YYYY-MM-DD.<ext>``."""
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return logs_dir / f"{name}-{day}.{ext}"
+
+
+# setup_logging attaches handlers to package loggers that outlive the test:
+# multiplai_core always, and the caller's package (this module's).
+_PKG_LOGGERS = ("multiplai_core", __name__.split(".")[0], "fakepkg")
+
+
+@pytest.fixture(autouse=True)
+def _restore_package_loggers():
+    saved = {n: (list(logging.getLogger(n).handlers), logging.getLogger(n).level)
+             for n in _PKG_LOGGERS}
+    yield
+    for n, (handlers, level) in saved.items():
+        lg = logging.getLogger(n)
+        for h in list(lg.handlers):
+            if h not in handlers:
+                lg.removeHandler(h)
+        lg.setLevel(level)
+
+
 # --------------------------------------------------------------------------
 # resolve_level
 # --------------------------------------------------------------------------
@@ -85,7 +109,7 @@ def test_setup_logging_writes_standard_format(logs_dir):
     for h in logger.handlers:
         h.flush()
 
-    line = (logs_dir / f"{name}.log").read_text().strip().splitlines()[-1]
+    line = _today(logs_dir, name).read_text().strip().splitlines()[-1]
     assert re.match(
         rf"^\[\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z\] "
         rf"\[{re.escape(name)}\] \[session:--------\] INFO: hello world$",
@@ -99,7 +123,7 @@ def test_setup_logging_stamps_session_id(logs_dir):
     logger.info("x")
     for h in logger.handlers:
         h.flush()
-    line = (logs_dir / f"{name}.log").read_text().strip().splitlines()[-1]
+    line = _today(logs_dir, name).read_text().strip().splitlines()[-1]
     assert "[session:abcdefde]" in line
 
 
@@ -136,22 +160,98 @@ def test_setup_logging_captures_propagate_loggers(logs_dir, clean_pkg_logger):
     for h in logging.getLogger("multiplai_core").handlers:
         h.flush()
 
-    component = (logs_dir / f"{name}.log").read_text()
+    component = _today(logs_dir, name).read_text()
     shared = (logs_dir / "hook-errors.log").read_text()
     assert "ERROR: boom" in component
     assert "ERROR: boom" in shared
 
 
-def test_setup_logging_default_does_not_capture_packages(logs_dir, clean_pkg_logger):
-    """Back-compat: a bare setup_logging(name) must NOT route multiplai_core.*
-    records into <name>.log (guards other components from double-logging)."""
-    name = _unique("nocap")
+def test_setup_logging_captures_multiplai_core_by_default(logs_dir, clean_pkg_logger):
+    """A bare setup_logging(name) routes multiplai_core.* INFO lines into the
+    component file: core's lines were lost when a caller forgot to list it."""
+    name = _unique("defcap")
     log_utils.setup_logging(name)
-    logging.getLogger("multiplai_core.agent_runner").error("boom")
+    logging.getLogger("multiplai_core.agent_runner").info("core line")
+    for h in logging.getLogger("multiplai_core").handlers:
+        h.flush()
 
-    log_file = logs_dir / f"{name}.log"
-    text = log_file.read_text() if log_file.exists() else ""
-    assert "boom" not in text
+    assert "[multiplai_core.agent_runner]" in _today(logs_dir, name).read_text()
+    assert "INFO: core line" in _today(logs_dir, name).read_text()
+
+
+def _fake_package(tmp_path, monkeypatch):
+    """A package ``fakepkg`` whose __init__ sets up logging and whose
+    ``fakepkg.mod`` logs to ``getLogger(__name__)``, like a pipeline."""
+    pkg = tmp_path / "fakepkg_src" / "fakepkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        "from multiplai_core.log_utils import setup_logging\n"
+        "def start(name):\n"
+        "    return setup_logging(name)\n"
+    )
+    (pkg / "mod.py").write_text(
+        "import logging\n"
+        "log = logging.getLogger(__name__)\n"
+    )
+    monkeypatch.syspath_prepend(str(pkg.parent))
+    import importlib
+    import sys
+    for mod in ("fakepkg", "fakepkg.mod"):
+        sys.modules.pop(mod, None)
+    return importlib.import_module("fakepkg"), importlib.import_module("fakepkg.mod")
+
+
+def test_module_logger_in_the_callers_package_reaches_the_file(
+    logs_dir, tmp_path, monkeypatch
+):
+    fakepkg, mod = _fake_package(tmp_path, monkeypatch)
+    name = _unique("pkg")
+    fakepkg.start(name)
+    mod.log.info("module line")
+    for h in logging.getLogger("fakepkg").handlers:
+        h.flush()
+
+    text = _today(logs_dir, name).read_text()
+    assert "[fakepkg.mod]" in text
+    assert "INFO: module line" in text
+
+
+def test_package_warning_reaches_stderr_formatted(logs_dir, tmp_path, monkeypatch, capsys):
+    fakepkg, mod = _fake_package(tmp_path, monkeypatch)
+    fakepkg.start(_unique("warn"))
+    capsys.readouterr()
+    mod.log.info("quiet")
+    mod.log.warning("loud")
+
+    err = capsys.readouterr().err
+    assert "quiet" not in err
+    assert re.search(
+        r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] \[fakepkg\.mod\] "
+        r"\[session:[^\]]+\] WARNING: loud$",
+        err, re.MULTILINE,
+    ), err
+
+
+def test_package_warning_is_printed_once_with_two_components(
+    logs_dir, tmp_path, monkeypatch, capsys
+):
+    fakepkg, mod = _fake_package(tmp_path, monkeypatch)
+    fakepkg.start(_unique("one"))
+    fakepkg.start(_unique("two"))
+    capsys.readouterr()
+    mod.log.warning("once")
+    assert capsys.readouterr().err.count("WARNING: once") == 1
+
+
+def test_packages_argument_names_script_packages(logs_dir, clean_pkg_logger):
+    """A script run by path has no package; it names its own."""
+    name = _unique("explicit")
+    lg = logging.getLogger("fakepkg")
+    log_utils.setup_logging(name, packages=("fakepkg",))
+    logging.getLogger("fakepkg.lib").info("script lib line")
+    for h in lg.handlers:
+        h.flush()
+    assert "script lib line" in _today(logs_dir, name).read_text()
 
 
 def test_setup_logging_capture_no_double_write(logs_dir, clean_pkg_logger):
@@ -164,7 +264,7 @@ def test_setup_logging_capture_no_double_write(logs_dir, clean_pkg_logger):
     for h in logging.getLogger("multiplai_core").handlers:
         h.flush()
 
-    component = (logs_dir / f"{name}.log").read_text()
+    component = _today(logs_dir, name).read_text()
     assert component.count("ERROR: solo") == 1
 
 
@@ -179,7 +279,7 @@ def test_log_event_writes_human_and_jsonl(logs_dir):
     )
 
     # Current file is undated — no date in the filename.
-    human = (logs_dir / "activity.log").read_text().strip()
+    human = _today(logs_dir, "activity").read_text().strip()
     assert re.match(
         r"^\d{2}:\d{2}:\d{2}Z \[sess1234\] \[context\] "
         r"injected 2 memory · 0 skills$",
@@ -189,7 +289,7 @@ def test_log_event_writes_human_and_jsonl(logs_dir):
     # Structured fields live only in the JSONL mirror.
     assert "memory=2" not in human
 
-    rec = json.loads((logs_dir / "activity.jsonl").read_text().strip())
+    rec = json.loads(_today(logs_dir, "activity", "jsonl").read_text().strip())
     assert rec["component"] == "context"
     assert rec["event"] == "inject"
     assert rec["session"] == "sess1234"
@@ -202,7 +302,7 @@ def test_log_event_tags_non_info_severity_in_human_line(logs_dir):
     """A WARNING/ERROR event is visible in the human log, not just the JSONL."""
     log_utils.log_event("dream", "apply", "memory write failed",
                          session_id="sess1234xx", level="ERROR")
-    human = (logs_dir / "activity.log").read_text().strip()
+    human = _today(logs_dir, "activity").read_text().strip()
     assert "[ERROR]" in human
     assert "[dream] [ERROR] memory write failed" in human
 
@@ -210,7 +310,7 @@ def test_log_event_tags_non_info_severity_in_human_line(logs_dir):
 def test_log_event_info_has_no_severity_tag(logs_dir):
     """INFO events stay clean — no severity tag."""
     log_utils.log_event("context", "inject", "did a thing", session_id="s")
-    human = (logs_dir / "activity.log").read_text().strip()
+    human = _today(logs_dir, "activity").read_text().strip()
     assert "[INFO]" not in human
 
 
@@ -223,7 +323,8 @@ def test_log_event_never_raises(monkeypatch):
     log_utils.log_event("x", "y", "z")
 
 
-def test_log_event_prunes_old_activity(logs_dir):
+def test_log_event_prunes_old_activity_only_when_retention_is_set(logs_dir, monkeypatch):
+    monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "7")
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "activity-2000-01-01.log"
     old.write_text("ancient\n")
@@ -234,13 +335,30 @@ def test_log_event_prunes_old_activity(logs_dir):
     log_utils.log_event("session", "start", "fresh")
 
     assert not old.exists()
-    assert (logs_dir / "activity.log").exists()
+    assert _today(logs_dir, "activity").exists()
+
+
+def test_nothing_is_swept_by_default(logs_dir):
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    old = logs_dir / "activity-2000-01-01.log"
+    old_component = logs_dir / "build-pipeline-2000-01-01.log"
+    for p in (old, old_component):
+        p.write_text("ancient\n")
+        ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(p, (ancient, ancient))
+
+    log_utils._swept = False
+    log_utils.log_event("session", "start", "fresh")
+    log_utils.setup_logging(_unique("sweep"))
+
+    assert old.read_text() == "ancient\n"
+    assert old_component.read_text() == "ancient\n"
 
 
 def test_log_event_appends_multiple_records(logs_dir):
     for i in range(3):
         log_utils.log_event("diary", "write", f"entry {i}")
-    lines = (logs_dir / "activity.jsonl").read_text().strip().splitlines()
+    lines = _today(logs_dir, "activity", "jsonl").read_text().strip().splitlines()
     assert len(lines) == 3
     assert [json.loads(l)["msg"] for l in lines] == ["entry 0", "entry 1", "entry 2"]
 
@@ -249,53 +367,101 @@ def test_log_event_appends_multiple_records(logs_dir):
 # date-rotation + naming convention
 # --------------------------------------------------------------------------
 
-def test_log_event_rotates_prior_day_to_dated_file(logs_dir):
-    """A current activity.log from a prior UTC day rotates to
-    activity-<that-day>.log; today's write starts a fresh activity.log."""
+def test_log_event_writes_each_day_to_its_own_file(logs_dir, monkeypatch):
+    """Each UTC day's events go to activity-<day>.{log,jsonl}; a legacy
+    undated activity.log is left exactly as it was."""
     logs_dir.mkdir(parents=True, exist_ok=True)
-    cur = logs_dir / "activity.log"
-    curj = logs_dir / "activity.jsonl"
-    cur.write_text("12:00:00 [old] yesterday line\n")
-    curj.write_text('{"msg": "yesterday"}\n')
-    yday = datetime.now(timezone.utc) - timedelta(days=1)
-    stamp = yday.timestamp()
-    os.utime(cur, (stamp, stamp))
-    os.utime(curj, (stamp, stamp))
-    ystr = yday.strftime("%Y-%m-%d")
+    legacy = logs_dir / "activity.log"
+    legacy.write_text("12:00:00 [old] legacy line\n")
 
-    log_utils.log_event("session", "start", "today line")
+    monkeypatch.setattr(log_utils, "_utc_today", lambda: "2031-01-01")
+    log_utils.log_event("session", "start", "day one")
+    monkeypatch.setattr(log_utils, "_utc_today", lambda: "2031-01-02")
+    log_utils.log_event("session", "start", "day two")
 
-    # Yesterday's content archived under the dated (infix) name.
-    assert (logs_dir / f"activity-{ystr}.log").read_text() == \
-        "12:00:00 [old] yesterday line\n"
-    assert (logs_dir / f"activity-{ystr}.jsonl").read_text() == \
-        '{"msg": "yesterday"}\n'
-    # The rejected stdlib form must never appear.
-    assert not (logs_dir / f"activity.log.{ystr}").exists()
-    # Current file holds only today's line.
-    assert "today line" in (logs_dir / "activity.log").read_text()
-    assert "yesterday line" not in (logs_dir / "activity.log").read_text()
+    assert "day one" in (logs_dir / "activity-2031-01-01.log").read_text()
+    assert "day two" in (logs_dir / "activity-2031-01-02.log").read_text()
+    assert "day two" not in (logs_dir / "activity-2031-01-01.log").read_text()
+    assert json.loads((logs_dir / "activity-2031-01-02.jsonl").read_text())["msg"] == "day two"
+    assert legacy.read_text() == "12:00:00 [old] legacy line\n"
+    assert not (logs_dir / "activity.jsonl").exists()
 
 
-def test_setup_logging_rotates_stale_current_on_init(logs_dir):
-    """A <name>.log left from a prior day is archived when the next
-    run constructs the handler — no date suffix on the live file."""
+def test_setup_logging_writes_the_dated_file_and_leaves_a_legacy_one(logs_dir):
+    """The handler writes <name>-<today>.log; a <name>.log from an earlier
+    release is neither renamed nor appended to."""
     name = _unique("rot")
     logs_dir.mkdir(parents=True, exist_ok=True)
-    cur = logs_dir / f"{name}.log"
-    cur.write_text("[old] line\n")
-    yday = datetime.now(timezone.utc) - timedelta(days=2)
-    stamp = yday.timestamp()
-    os.utime(cur, (stamp, stamp))
+    legacy = logs_dir / f"{name}.log"
+    legacy.write_text("[old] line\n")
 
     logger = log_utils.setup_logging(name)
     logger.info("new line")
     for h in logger.handlers:
         h.flush()
 
-    dated = logs_dir / f"{name}-{yday.strftime('%Y-%m-%d')}.log"
-    assert dated.read_text() == "[old] line\n"
-    assert "new line" in (logs_dir / f"{name}.log").read_text()
+    assert legacy.read_text() == "[old] line\n"
+    assert "new line" in _today(logs_dir, name).read_text()
+
+
+def test_handler_switches_file_when_the_day_changes(logs_dir, monkeypatch):
+    name = _unique("daychange")
+    monkeypatch.setattr(log_utils, "_utc_today", lambda: "2031-03-01")
+    logger = log_utils.setup_logging(name)
+    logger.info("before midnight")
+    monkeypatch.setattr(log_utils, "_utc_today", lambda: "2031-03-02")
+    logger.info("after midnight")
+    for h in logger.handlers:
+        h.flush()
+
+    day1 = (logs_dir / f"{name}-2031-03-01.log").read_text()
+    day2 = (logs_dir / f"{name}-2031-03-02.log").read_text()
+    assert "before midnight" in day1 and "after midnight" not in day1
+    assert "after midnight" in day2 and "before midnight" not in day2
+
+
+_WRITER = """
+import logging, sys
+import multiplai_core.log_utils as lu
+
+name, tag, total, switch_at = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+state = {"i": 0}
+lu._utc_today = lambda: "2031-05-01" if state["i"] < switch_at else "2031-05-02"
+logger = lu.setup_logging(name, level=logging.INFO)
+for i in range(total):
+    state["i"] = i
+    logger.info("%s line %d", tag, i)
+"""
+
+
+def test_two_processes_across_midnight_lose_no_line(logs_dir, tmp_path):
+    """Two writers of one component cross a (patched) UTC midnight at
+    different moments. Both days' files together hold every line."""
+    import subprocess
+    import sys
+
+    script = tmp_path / "writer.py"
+    script.write_text(_WRITER)
+    name = _unique("race")
+    env = {**os.environ}
+    total = 1500
+    procs = [
+        subprocess.Popen([sys.executable, str(script), name, tag, str(total), str(switch)],
+                         env=env, stderr=subprocess.DEVNULL)
+        for tag, switch in (("A", 500), ("B", 1000))
+    ]
+    for p in procs:
+        assert p.wait(timeout=60) == 0
+
+    lines = []
+    for day in ("2031-05-01", "2031-05-02"):
+        lines += (logs_dir / f"{name}-{day}.log").read_text().splitlines()
+    for tag in ("A", "B"):
+        got = {int(m.group(1)) for line in lines
+               if (m := re.search(rf"INFO: {tag} line (\d+)$", line))}
+        assert got == set(range(total)), f"{tag} lost {total - len(got)} lines"
+    assert len(lines) == 2 * total
+    assert not (logs_dir / f"{name}.log").exists()
 
 
 def test_sweep_migrates_rejected_stdlib_form(logs_dir):
@@ -316,16 +482,17 @@ def test_sweep_migrates_rejected_stdlib_form(logs_dir):
 # --------------------------------------------------------------------------
 
 def test_retention_days_default_and_parsing(monkeypatch):
+    # Unset, unparseable or negative all mean 0: keep everything.
     monkeypatch.delenv("MULTIPLAI_LOG_RETENTION_DAYS", raising=False)
-    assert log_utils.retention_days() == 7
+    assert log_utils.retention_days() == 0
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "30")
     assert log_utils.retention_days() == 30
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "0")
     assert log_utils.retention_days() == 0
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "garbage")
-    assert log_utils.retention_days() == 7
+    assert log_utils.retention_days() == 0
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "-5")
-    assert log_utils.retention_days() == 7
+    assert log_utils.retention_days() == 0
 
 
 def test_retention_zero_keeps_dated_files_forever(logs_dir, monkeypatch):
@@ -360,47 +527,23 @@ def test_sweep_prunes_only_dated_files_beyond_cutoff(logs_dir):
 
 
 # --------------------------------------------------------------------------
-# oversize truncation of append-only logs (hook-errors.log)
+# the shared error log is append-only
 # --------------------------------------------------------------------------
 
-def test_truncate_oversized_keeps_recent_tail(tmp_path):
-    log = tmp_path / "hook-errors.log"
-    lines = [f"line-{i:06d}\n" for i in range(20_000)]  # ~260KB
-    log.write_text("".join(lines))
-    assert log.stat().st_size > log_utils._ERROR_LOG_MAX_BYTES
-
-    log_utils._truncate_oversized(log)
-
-    size = log.stat().st_size
-    assert size <= log_utils._ERROR_LOG_MAX_BYTES
-    content = log.read_text()
-    assert content.startswith("[truncated:")
-    # Most recent entries survive; oldest are gone.
-    assert "line-019999" in content
-    assert "line-000000" not in content
-    # Tail starts on a whole line, not mid-entry.
-    assert re.search(r"\n(line-\d{6}\n)", content)
-
-
-def test_truncate_oversized_noop_under_limit(tmp_path):
-    log = tmp_path / "hook-errors.log"
-    log.write_text("small\n")
-    log_utils._truncate_oversized(log)
-    assert log.read_text() == "small\n"
-
-    missing = tmp_path / "absent.log"
-    log_utils._truncate_oversized(missing)  # must not raise
-    assert not missing.exists()
-
-
-def test_setup_logging_truncates_oversized_hook_errors(logs_dir):
+def test_hook_errors_log_is_never_shortened(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
     err_log = logs_dir / "hook-errors.log"
-    err_log.write_text("x" * (log_utils._ERROR_LOG_MAX_BYTES * 2))
+    big = "".join(f"line-{i:06d}\n" for i in range(30_000))  # ~390KB
+    err_log.write_text(big)
 
-    log_utils.setup_logging(_unique("truncator"))
+    logger = log_utils.setup_logging(_unique("big"))
+    logger.error("appended")
+    for h in logger.handlers:
+        h.flush()
 
-    assert err_log.stat().st_size <= log_utils._ERROR_LOG_MAX_BYTES
+    text = err_log.read_text()
+    assert text.startswith(big)
+    assert "ERROR: appended" in text[len(big):]
 
 
 # --------------------------------------------------------------------------
@@ -409,7 +552,7 @@ def test_setup_logging_truncates_oversized_hook_errors(logs_dir):
 
 
 def _lines(logs_dir, name):
-    return (logs_dir / f"{name}.log").read_text().splitlines()
+    return _today(logs_dir, name).read_text().splitlines()
 
 
 def test_hook_run_writes_entry_before_the_body(logs_dir):
@@ -708,7 +851,7 @@ def _wait_for_line(logs_dir, name, needle, timeout=5.0):
 
     deadline = _time.monotonic() + timeout
     while _time.monotonic() < deadline:
-        path = logs_dir / f"{name}.log"
+        path = _today(logs_dir, name)
         if path.exists():
             hits = [ln for ln in path.read_text().splitlines() if needle in ln]
             if hits:

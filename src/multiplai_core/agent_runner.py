@@ -38,11 +38,11 @@ negative disables it). Set it to ``0`` if a caller's log must stay quiet.
 
 Every attempt also writes the CLI's debug stderr to a file under
 ``<logs_dir>/sdk/`` as the lines arrive, so the file survives the calling
-process being killed. It is deleted after a fast successful attempt and kept
-after a failed, timed-out or slow one (``MULTIPLAI_SDK_DEBUG_KEEP_S``, default
-10; ``0`` keeps every file). ``MULTIPLAI_SDK_DEBUG_LOG=off`` turns it off.
-Files older than the log retention (``MULTIPLAI_LOG_RETENTION_DAYS``) are
-deleted once per process.
+process being killed. Every file is kept. ``MULTIPLAI_SDK_DEBUG_KEEP_S`` set
+to a positive number deletes a successful attempt's file when the attempt was
+faster than that many seconds; ``MULTIPLAI_SDK_DEBUG_LOG=off`` turns the file
+off. Files are deleted by age only when ``MULTIPLAI_LOG_RETENTION_DAYS`` is set
+to a positive number.
 
 ``model`` may name a backend other than the Claude Agent SDK, as a
 ``provider:model`` spec (``pi:deepseek/deepseek-v4-flash@fireworks``). An
@@ -108,13 +108,14 @@ _HEARTBEAT_DEFAULT_S = 60.0
 # process, and it holds the CLI's own record of the call: auth check, request
 # dispatch with its x-client-request-id, first stream chunk, retries.
 _DEBUG_LOG_ENV = "MULTIPLAI_SDK_DEBUG_LOG"      # "off" disables the file
-_DEBUG_KEEP_ENV = "MULTIPLAI_SDK_DEBUG_KEEP_S"  # keep successes at least this slow
-_DEBUG_KEEP_DEFAULT_S = 10.0
+_DEBUG_KEEP_ENV = "MULTIPLAI_SDK_DEBUG_KEEP_S"  # >0: delete faster successes
+_DEBUG_KEEP_DEFAULT_S = 0.0  # keep every file
 _DEBUG_LOG_SUBDIR = "sdk"
 _debug_logs_swept = False
 # Per-process sequence number in each file name. Timestamp, label, pid and
 # attempt alone collide when two calls with the same label start in the same
-# second, and the fast one's cleanup would then delete the slow one's file.
+# second, and the fast one's cleanup (when MULTIPLAI_SDK_DEBUG_KEEP_S is set)
+# would then delete the slow one's file.
 _debug_log_seq = itertools.count(1)
 
 # Under permission_mode="bypassPermissions" ``allowed_tools`` is only an
@@ -379,7 +380,11 @@ def _summarize_stderr(error_lines: list[str], recent_lines: list[str]) -> str:
 
 
 def _sweep_debug_logs(sdk_dir: Path) -> None:
-    """Delete debug-log files older than the log retention, once per process."""
+    """Delete debug-log files older than the log retention, once per process.
+
+    Runs only when ``MULTIPLAI_LOG_RETENTION_DAYS`` is set to a positive
+    number; by default every file is kept.
+    """
     global _debug_logs_swept
     if _debug_logs_swept:
         return
@@ -585,7 +590,8 @@ async def run_agent(
             opts out of the *second* layer only; ``tools`` still bounds the run
             to the allow-list.
         effort: Reasoning effort; forwarded to the SDK only when set, so old
-            SDK versions without the option keep working.
+            SDK versions without the option keep working. ``None`` falls back
+            to the default effort (see below).
         thinking: Extended-thinking config, forwarded verbatim to the SDK and
             only when set (same old-SDK tolerance as ``effort``). The case that
             motivated it is ``{"type": "disabled"}``: measured 2026-08-09, a
@@ -609,14 +615,27 @@ async def run_agent(
         model: Model ID or ``provider:model`` spec. ``None`` and Anthropic
             specs (bare, ``anthropic:``, ``claude:``) run on the Claude Agent
             SDK; another provider runs on its registered backend (see
-            :func:`register_agent_backend`).
+            :func:`register_agent_backend`). ``None`` falls back to the
+            default model (see below).
 
     Raises:
         AgentRunTimeout: every attempt exceeded ``timeout_s``.
         AgentRunError: every attempt failed for another reason, or the SDK is
             not importable. Carries ``.partial`` with whatever was consumed.
         UnknownAgentBackendError: ``model`` names a provider with no backend.
+
+    With no ``model``, the run uses :func:`multiplai_core.session.default_model`
+    (``MULTIPLAI_MODEL``, else the Claude Code session's model); with no
+    ``effort``, :func:`multiplai_core.session.default_effort`. When neither
+    finds a value the option is omitted and the CLI uses its own default.
     """
+    if not model or effort is None:
+        from .session import default_effort, default_model
+
+        if not model:
+            model = default_model()
+        if effort is None:
+            effort = default_effort()
     if model:
         provider, parsed = _backend_provider(model)
         if provider != DEFAULT_PROVIDER:
