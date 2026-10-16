@@ -20,7 +20,7 @@ own drifting copy:
 | `multiplai_core.session` | The model and effort for a step no config names: `MULTIPLAI_MODEL` / `MULTIPLAI_EFFORT`, else the Claude Code session's own (`default_model()`, `default_effort()`, `pin_session_settings()`). |
 | `multiplai_core.text` | `extract_json()` — pull a JSON object/array out of a model response. |
 | `multiplai_core.aio` | `hard_timeout()` and async task helpers. |
-| `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, one file per component per day, kept forever unless `MULTIPLAI_LOG_RETENTION_DAYS` is set. `hook_run(name, logger)` / `HookRun` — ENTRY/EXIT timing pair that makes a killed hook diagnosable. |
+| `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, one file per component per day, kept 365 days unless `MULTIPLAI_LOG_RETENTION_DAYS` (environment, then `multiplai.conf`) says otherwise; `0` keeps them forever. `hook-errors.log` moves to `hook-errors-YYYY-MM-DD.log` each day and is never shortened. `hook_run(name, logger)` / `HookRun` — ENTRY/EXIT timing pair that makes a killed hook diagnosable. |
 | `multiplai_core.model_client` | `create_client()` — Agent SDK first, Anthropic API fallback — plus the [provider seam](#provider-seam) (`create_client_for`, `register_provider`). |
 | `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting), and the [agent backend](#agent-backends) registry (`register_agent_backend`). |
 | `multiplai_core.pi` | The `pi` agent backend: `run_agent(model="pi:<model-id>@<provider>")` through `pi --mode rpc`. Imported on first use only. |

@@ -18,6 +18,20 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Changed
+
+- **Logs are kept 365 days by default, and a pipeline reads the same setting as
+  a hook.** `retention_days()` reads `MULTIPLAI_LOG_RETENTION_DAYS` from the
+  environment, then from `multiplai.conf`, and falls back to `365` (it was `0`,
+  keep forever). Before, only processes started by the kit's `run-hook-python`
+  saw the setting, so a pipeline started with `uv run` never pruned. `0` still
+  keeps every log forever.
+- **`hook-errors.log` moves to `hook-errors-YYYY-MM-DD.log` each day.** The first
+  `setup_logging()` on a new UTC day moves the earlier day's file to its dated
+  name (a hard link, then an unlink, so two processes can never overwrite a
+  dated file). Nothing is shortened. The dated files follow the retention above;
+  before, the shared file grew without limit.
+
 ## [0.21.0] – 2026-10-16
 
 ### Added

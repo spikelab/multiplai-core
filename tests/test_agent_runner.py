@@ -968,13 +968,13 @@ class TestDebugLog:
             result = _run(run_agent("hi"))
         assert result.text == "default text"
 
-    def test_old_files_are_kept_by_default(self, sdk_logs, monkeypatch):
+    def test_files_younger_than_a_year_are_kept_by_default(self, sdk_logs, monkeypatch):
         monkeypatch.delenv("MULTIPLAI_LOG_RETENTION_DAYS", raising=False)
         sdk_logs.mkdir(parents=True)
         old = sdk_logs / "old.log"
         old.write_text("x")
-        a_year = 365 * 86400
-        os.utime(old, (old.stat().st_atime - a_year, old.stat().st_mtime - a_year))
+        months = 300 * 86400
+        os.utime(old, (old.stat().st_atime - months, old.stat().st_mtime - months))
         with patch.dict(sys.modules, {"claude_agent_sdk": _make_mock_sdk()}):
             _run(run_agent("hi"))
         assert old.exists()

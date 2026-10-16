@@ -338,21 +338,23 @@ def test_log_event_prunes_old_activity_only_when_retention_is_set(logs_dir, monk
     assert _today(logs_dir, "activity").exists()
 
 
-def test_nothing_is_swept_by_default(logs_dir):
+def test_default_sweep_keeps_a_year_of_logs(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "activity-2000-01-01.log"
-    old_component = logs_dir / "build-pipeline-2000-01-01.log"
-    for p in (old, old_component):
-        p.write_text("ancient\n")
-        ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
-        os.utime(p, (ancient, ancient))
+    recent = logs_dir / "build-pipeline-2026-01-01.log"
+    for p in (old, recent):
+        p.write_text("x\n")
+    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    os.utime(old, (ancient, ancient))
+    months = (datetime.now(timezone.utc) - timedelta(days=300)).timestamp()
+    os.utime(recent, (months, months))
 
     log_utils._swept = False
     log_utils.log_event("session", "start", "fresh")
     log_utils.setup_logging(_unique("sweep"))
 
-    assert old.read_text() == "ancient\n"
-    assert old_component.read_text() == "ancient\n"
+    assert not old.exists()
+    assert recent.read_text() == "x\n"
 
 
 def test_log_event_appends_multiple_records(logs_dir):
@@ -482,17 +484,28 @@ def test_sweep_migrates_rejected_stdlib_form(logs_dir):
 # --------------------------------------------------------------------------
 
 def test_retention_days_default_and_parsing(monkeypatch):
-    # Unset, unparseable or negative all mean 0: keep everything.
+    # Unset, unparseable or negative all mean the default, 365 days.
     monkeypatch.delenv("MULTIPLAI_LOG_RETENTION_DAYS", raising=False)
-    assert log_utils.retention_days() == 0
+    assert log_utils.retention_days() == 365
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "30")
     assert log_utils.retention_days() == 30
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "0")
     assert log_utils.retention_days() == 0
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "garbage")
-    assert log_utils.retention_days() == 0
+    assert log_utils.retention_days() == 365
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "-5")
-    assert log_utils.retention_days() == 0
+    assert log_utils.retention_days() == 365
+
+
+def test_retention_days_reads_multiplai_conf(tmp_path, monkeypatch):
+    """A pipeline started with `uv run` has no exported setting; the conf is
+    how it keeps logs as long as a hook does."""
+    monkeypatch.delenv("MULTIPLAI_LOG_RETENTION_DAYS", raising=False)
+    monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+    (tmp_path / "multiplai.conf").write_text('MULTIPLAI_LOG_RETENTION_DAYS="90"\n')
+    assert log_utils.retention_days() == 90
+    monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "12")
+    assert log_utils.retention_days() == 12  # the environment wins
 
 
 def test_retention_zero_keeps_dated_files_forever(logs_dir, monkeypatch):
@@ -544,6 +557,65 @@ def test_hook_errors_log_is_never_shortened(logs_dir):
     text = err_log.read_text()
     assert text.startswith(big)
     assert "ERROR: appended" in text[len(big):]
+
+
+def _stamp(path, when: datetime) -> None:
+    ts = when.timestamp()
+    os.utime(path, (ts, ts))
+
+
+def test_hook_errors_log_moves_to_its_dated_name_on_a_new_day(logs_dir):
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    err_log = logs_dir / "hook-errors.log"
+    err_log.write_text("yesterday's error\n")
+    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=timezone.utc))
+
+    logger = log_utils.setup_logging(_unique("rot"))
+    logger.error("today's error")
+    for h in logger.handlers:
+        h.flush()
+
+    assert (logs_dir / "hook-errors-2026-03-04.log").read_text() == "yesterday's error\n"
+    assert "today's error" in err_log.read_text()
+    assert "yesterday" not in err_log.read_text()
+
+
+def test_hook_errors_log_written_today_stays_put(logs_dir):
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    err_log = logs_dir / "hook-errors.log"
+    err_log.write_text("earlier today\n")
+
+    log_utils._rotate_shared_error_log(logs_dir)
+
+    assert err_log.read_text() == "earlier today\n"
+    assert not list(logs_dir.glob("hook-errors-*.log"))
+
+
+def test_hook_errors_rotation_never_overwrites_a_dated_file(logs_dir):
+    """Two processes rotating at once: the second finds the dated name taken
+    and leaves both files alone."""
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    dated = logs_dir / "hook-errors-2026-03-04.log"
+    dated.write_text("first rotation\n")
+    err_log = logs_dir / "hook-errors.log"
+    err_log.write_text("second\n")
+    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=timezone.utc))
+
+    log_utils._rotate_shared_error_log(logs_dir)
+
+    assert dated.read_text() == "first rotation\n"
+    assert err_log.read_text() == "second\n"
+
+
+def test_rotated_hook_errors_follow_retention(logs_dir):
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    old = logs_dir / "hook-errors-2000-01-01.log"
+    old.write_text("x\n")
+    _stamp(old, datetime(2000, 1, 1, tzinfo=timezone.utc))
+
+    log_utils._sweep_logs(logs_dir, 365)
+
+    assert not old.exists()
 
 
 # --------------------------------------------------------------------------
