@@ -18,6 +18,11 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Fixed
+
+- The `log_utils` module docstring no longer says nothing is deleted by default;
+  it describes the 365-day default that 0.22.0 introduced. Documentation only.
+
 ## [0.22.0] – 2026-10-16
 
 ### Changed
