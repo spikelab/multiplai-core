@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.22.0] – 2026-10-16
+
 ### Changed
 
 - **Logs are kept 365 days by default, and a pipeline reads the same setting as
@@ -898,7 +900,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/spikelab/multiplai-core/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/spikelab/multiplai-core/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/spikelab/multiplai-core/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/spikelab/multiplai-core/compare/v0.18.0...v0.19.0
