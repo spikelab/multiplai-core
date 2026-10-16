@@ -16,6 +16,7 @@ from _fakes import (
     _FakeToolUseBlock,
     _make_mock_sdk,
 )
+from multiplai_core.env import CURRENT_MODEL
 from multiplai_core.agent_runner import (
     MAX_PROMPT_BYTES,
     TOOL_UNIVERSE,
@@ -855,7 +856,20 @@ class TestDebugLog:
         assert "x-client-request-id=abc" in seen["text"]
         assert "memory-router-router" in seen["files"][0].name
 
-    def test_fast_success_deletes_the_file(self, sdk_logs):
+    def test_fast_success_keeps_the_file(self, sdk_logs, monkeypatch):
+        # Every attempt's file is kept by default, however fast it succeeded.
+        monkeypatch.delenv("MULTIPLAI_SDK_DEBUG_KEEP_S", raising=False)
+        mock = _make_mock_sdk(stderr_lines=["[DEBUG] hello"])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            _run(run_agent("hi"))
+        files = list(sdk_logs.glob("*.log"))
+        assert len(files) == 1
+        assert files[0].read_text() == "[DEBUG] hello\n"
+
+    def test_positive_keep_s_deletes_a_fast_success(self, sdk_logs, monkeypatch):
+        # Opt-in only: a positive MULTIPLAI_SDK_DEBUG_KEEP_S still drops fast
+        # successes.
+        monkeypatch.setenv("MULTIPLAI_SDK_DEBUG_KEEP_S", "10")
         mock = _make_mock_sdk(stderr_lines=["[DEBUG] hello"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
             _run(run_agent("hi"))
@@ -954,7 +968,18 @@ class TestDebugLog:
             result = _run(run_agent("hi"))
         assert result.text == "default text"
 
-    def test_retention_sweep_deletes_old_files(self, sdk_logs, monkeypatch):
+    def test_old_files_are_kept_by_default(self, sdk_logs, monkeypatch):
+        monkeypatch.delenv("MULTIPLAI_LOG_RETENTION_DAYS", raising=False)
+        sdk_logs.mkdir(parents=True)
+        old = sdk_logs / "old.log"
+        old.write_text("x")
+        a_year = 365 * 86400
+        os.utime(old, (old.stat().st_atime - a_year, old.stat().st_mtime - a_year))
+        with patch.dict(sys.modules, {"claude_agent_sdk": _make_mock_sdk()}):
+            _run(run_agent("hi"))
+        assert old.exists()
+
+    def test_retention_sweep_deletes_old_files_when_set(self, sdk_logs, monkeypatch):
         monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "7")
         sdk_logs.mkdir(parents=True)
         old = sdk_logs / "old.log"
@@ -1032,3 +1057,49 @@ class TestTimingLines:
             with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
                 _run(run_agent("hi"))
         assert any("child_session=?" in r.getMessage() for r in caplog.records)
+
+
+class TestDefaultModelAndEffort:
+    """With no model or effort passed, run_agent uses the session defaults."""
+
+    def _opts(self, **kwargs):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", **kwargs))
+        return mock_sdk.ClaudeAgentOptions.call_args.kwargs
+
+    def test_explicit_model_and_effort_win_over_multiplai_model(self, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_MODEL", "claude-test-default")
+        monkeypatch.setenv("MULTIPLAI_EFFORT", "max")
+        monkeypatch.setenv("MULTIPLAI_SESSION_MODEL", "claude-test-session")
+        opts = self._opts(model="claude-explicit", effort="low")
+        assert opts["model"] == "claude-explicit"
+        assert opts["effort"] == "low"
+
+    def test_multiplai_model_wins_over_the_session(self, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_MODEL", "claude-test-default")
+        monkeypatch.setenv("MULTIPLAI_EFFORT", "medium")
+        monkeypatch.setenv("MULTIPLAI_SESSION_MODEL", "claude-test-session")
+        monkeypatch.setenv("MULTIPLAI_SESSION_EFFORT", "low")
+        opts = self._opts()
+        assert opts["model"] == "claude-test-default"
+        assert opts["effort"] == "medium"
+
+    def test_the_session_is_used_when_nothing_is_set(self, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_SESSION_MODEL", "claude-test-session")
+        monkeypatch.setenv("MULTIPLAI_SESSION_EFFORT", "low")
+        opts = self._opts()
+        assert opts["model"] == "claude-test-session"
+        assert opts["effort"] == "low"
+
+    def test_multiplai_model_alone_keeps_the_session_effort(self, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_MODEL", "sonnet")
+        monkeypatch.setenv("MULTIPLAI_SESSION_EFFORT", "xhigh")
+        opts = self._opts()
+        assert opts["model"] == CURRENT_MODEL["sonnet"]
+        assert opts["effort"] == "xhigh"
+
+    def test_nothing_found_omits_both(self):
+        opts = self._opts()
+        assert opts.get("model") is None
+        assert "effort" not in opts

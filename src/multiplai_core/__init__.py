@@ -53,6 +53,15 @@ from .env import (
     resolve_model,
     resolve_model_spec,
 )
+from .session import (
+    default_effort,
+    default_effort_source,
+    default_model,
+    default_model_source,
+    pin_session_settings,
+    session_effort,
+    session_model,
+)
 from .text import extract_json
 from .log_utils import (
     HookRun,
@@ -296,6 +305,14 @@ __all__ = [
     "EFFORT_TIERS",
     "KNOWN_EFFORTS",
     "CURRENT_MODEL",
+    # session defaults: the model/effort for a step no config names
+    "session_model",
+    "session_effort",
+    "pin_session_settings",
+    "default_model",
+    "default_effort",
+    "default_model_source",
+    "default_effort_source",
     # text
     "extract_json",
     # untrusted content

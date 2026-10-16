@@ -153,9 +153,10 @@ Cross-family model support is a **registry an out-of-tree backend joins**
 (`register_provider`, `create_client_for`, `parse_model_spec`), not another
 branch inside `create_client()`. Two reasons, both load-bearing:
 
-- The tier/ceiling machinery in `env.py` ranks the **Claude family only**. A
-  provider-qualified `MODEL=` is passed through verbatim, because coercing
-  another vendor's model into a Claude tier would defeat the point of naming it.
+- The family aliases in `env.py` (`opus` → the current opus ID) cover the
+  **Claude family only**. A provider-qualified `MODEL=` is passed through
+  verbatim, because coercing another vendor's model into a Claude family would
+  defeat the point of naming it.
 - **No non-Anthropic model client ships here.** Choosing a provider means
   choosing whose API key and whose bill — a human decision, not a default.
   Registering one from the outside is three lines.

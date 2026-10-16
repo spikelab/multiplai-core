@@ -1,8 +1,11 @@
 """Environment + config loading shared across the Multiplai plugins.
 
-`.env` discovery, `multiplai.conf` parsing, and the model/effort ceiling
-resolver were copied (and drifted) across buildme and deep-research; this is
-the single source of truth.
+`.env` discovery, `multiplai.conf` parsing, and model/effort name resolution
+were copied (and drifted) across buildme and deep-research; this is the single
+source of truth.
+
+Nothing here caps a model or an effort. The default for a step no config
+names comes from :mod:`multiplai_core.session`.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -142,21 +146,14 @@ def _task_setting(conf: dict, task: str | None, key: str) -> str | None:
     return ((conf.get("_sections", {}) or {}).get(task) or {}).get(key)
 
 
-# Fable ranks above Opus (Spike, 2026-10-11): an `opus` ceiling turns a `fable`
-# request into opus, and only a `fable` ceiling lets fable through.
-_TIERS = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
-# `xhigh` sits between high and max. An earlier copy of this table (the now-dead
-# sync_skill_config.py) omitted it, which silently ranked xhigh as "unknown" and
-# capped it to high — which is why this table is now exported rather than copied.
 EFFORT_TIERS: Final[Mapping[str, int]] = MappingProxyType(
     {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
 )
-"""Effort names ranked low → high, the ordering :func:`pick_effort` caps against.
+"""Effort names ranked low → high.
 
-Exported so consumers validate against *this* table instead of mirroring it. A
-copy that drifts is worse than no copy: :func:`pick_effort` normalizes a name it
-does not recognize away and floors to ``"high"``, so a caller that believes an
-unknown name is valid loses its own "unknown → default" fallback silently.
+Exported so consumers validate against *this* table instead of mirroring it.
+Nothing caps an effort against this order any more; prefer
+:data:`KNOWN_EFFORTS` for the membership test.
 
 Read-only, and additive by policy — a future release may add a tier, so treat
 membership as the question and the integers as relative order only.
@@ -175,24 +172,17 @@ DEFAULT_PROVIDER = "anthropic"
 _PROVIDER_ALIASES = {"claude": DEFAULT_PROVIDER}
 
 
-def _tier(model: str) -> int:
-    model_lower = model.lower()
-    for name, rank in _TIERS.items():
-        if name in model_lower:
-            return rank
-    return 2  # default to sonnet
-
-
 def resolve_model(requested: str, ceiling: str | None = None) -> str:
-    """Return *requested*, or the ceiling model if requested is above it.
+    """Return *requested* unchanged.
 
-    Ceiling comes from *ceiling* or ``MULTIPLAI_MODEL`` (default sonnet).
+    Deprecated: this used to cap *requested* at a model ceiling. Nothing caps
+    a model any more, so *ceiling* is ignored. Kept importable until a later
+    release removes it.
     """
-    if ceiling is None:
-        ceiling = os.environ.get("MULTIPLAI_MODEL", CURRENT_MODEL["sonnet"])
-    if _tier(requested) > _tier(ceiling):
-        log.info("Model ceiling: %s → %s", requested, ceiling)
-        return ceiling
+    warnings.warn(
+        "resolve_model() no longer caps anything and will be removed; "
+        "use the model as is", DeprecationWarning, stacklevel=2,
+    )
     return requested
 
 
@@ -210,31 +200,24 @@ CURRENT_MODEL = {
 }
 
 
-def _normalize_tier(value: str | None) -> str | None:
-    """Map a MODEL override value to a known family key, or None.
+def expand_family(value: str) -> str:
+    """Turn a family alias (``opus``) into its current ID; keep anything else.
 
-    Accepts a family name (``opus``) or a full/dated ID (``claude-opus-4-8``);
-    returns the matching key in ``CURRENT_MODEL``. Unknown values → None so the
-    caller can fall back to its default tier.
+    Only the bare names in :data:`CURRENT_MODEL` expand. Every other string,
+    a dated ID included, passes through exactly as written: naming
+    ``claude-opus-4-6`` gets ``claude-opus-4-6``.
     """
-    if not value:
-        return None
-    v = value.strip().lower()
-    if v in CURRENT_MODEL:
-        return v
-    for family in CURRENT_MODEL:
-        if family in v:
-            return family
-    return None
+    v = value.strip()
+    return CURRENT_MODEL.get(v.lower(), v)
 
 
 @dataclass(frozen=True)
 class ModelSpec:
     """A model identifier plus the provider that serves it.
 
-    The tier/ceiling machinery above only understands the Claude family, so a
-    provider-qualified spec is the seam that lets a *non*-Anthropic model be
-    named in config without pretending it has a haiku/sonnet/opus rank.
+    The family aliases above only cover Claude models, so a provider-qualified
+    spec is the seam that lets a *non*-Anthropic model be named in config
+    without pretending it is a haiku/sonnet/opus.
     """
 
     provider: str
@@ -274,43 +257,23 @@ def pick_model_spec(default_tier: str = "opus", task: str | None = None) -> Mode
     """Provider-aware :func:`pick_model`.
 
     A ``[task] MODEL=`` value carrying a provider prefix (``openai:gpt-5``) is
-    passed through verbatim: the Claude-family tier ranking and the
-    ``MULTIPLAI_MODEL`` ceiling are meaningless for another vendor's model, and
-    silently coercing it to a Claude tier would defeat the whole point of naming
-    a cross-family model (reviewer panels want *disjoint* error sets).
+    passed through verbatim: the Claude family aliases mean nothing for
+    another vendor's model.
 
-    An ``anthropic:``-qualified value takes the SAME path as a bare one — family
-    normalization (``anthropic:opus`` → the current opus ID) and then the
-    ceiling. Resolving `spec.model` directly instead would hand back the literal
-    string ``"opus"``, which is not a model ID, and would let a dated legacy ID
-    (``anthropic:claude-opus-4-2``) survive un-pinned where the bare path pins
-    it to CURRENT_MODEL.
+    An ``anthropic:``-qualified value takes the SAME path as a bare one: a
+    family name expands to the current ID (``anthropic:opus`` → the current
+    opus ID) and any other ID is kept as written.
     """
     conf = load_multiplai_conf()
     raw = _task_setting(conf, task, "MODEL")
-    ceiling = conf.get("MULTIPLAI_MODEL")  # None → resolve_model uses env/default
     if raw and ":" in raw:
         spec = parse_model_spec(raw)
         if not spec.is_anthropic:
             log.info("Task %s uses non-Anthropic model %s", task, spec.qualified)
             return spec
         raw = spec.model  # fall through to the shared Anthropic path below
-    tier = _normalize_tier(raw) or _normalize_tier(default_tier) or "opus"
-    return ModelSpec(DEFAULT_PROVIDER, resolve_model(CURRENT_MODEL[tier], ceiling=ceiling))
-
-
-def _anthropic_id(raw: str, ceiling: str | None) -> str:
-    """Normalise an Anthropic family name or ID and cap it at *ceiling*.
-
-    The same steps :func:`pick_model_spec` applies to a bare or
-    ``anthropic:``-qualified value: a family name becomes the current ID, a
-    dated ID of a known family is pinned to that family's current ID, and an
-    unrecognised string is kept as written (it may be a real ID this table has
-    not caught up with), then capped.
-    """
-    tier = _normalize_tier(raw)
-    model = CURRENT_MODEL[tier] if tier else raw
-    return resolve_model(model, ceiling=ceiling)
+    chosen = (raw or "").strip() or (default_tier or "").strip() or "opus"
+    return ModelSpec(DEFAULT_PROVIDER, expand_family(chosen))
 
 
 def resolve_model_spec(
@@ -321,38 +284,43 @@ def resolve_model_spec(
     *chain* is an ordered list of candidate values, most specific first: a
     plugin decides which config keys go into it (``models.<step>``, then
     ``models.<stage>``, …) and core only resolves the list. Returns ``None``
-    when every entry is empty or ``None``, so the caller keeps its own default.
+    when every entry is empty or ``None``, so the caller keeps its own default
+    (typically :func:`multiplai_core.session.default_model`).
 
     An Anthropic spec (``opus``, ``claude:fable``, ``anthropic:claude-opus-4-8``)
-    takes the same path as :func:`pick_model_spec`: family normalisation, then
-    the ceiling (*ceiling*, else ``MULTIPLAI_MODEL`` from ``multiplai.conf``,
-    else the env/default :func:`resolve_model` uses). A non-Anthropic spec
-    (``pi:deepseek/deepseek-v4-flash@fireworks``) passes through unchanged:
-    the Claude tier ranking means nothing for another vendor's model.
+    has its family alias expanded; any other ID is kept as written. A
+    non-Anthropic spec (``pi:deepseek/deepseek-v4-flash@fireworks``) passes
+    through unchanged.
+
+    *ceiling* is deprecated and ignored: nothing caps a model any more.
 
     Raises:
         ValueError: the first non-empty entry is a malformed spec
             (``"pi:"``). The chain does not skip past it, because the user
             wrote that value and a silent fallback would hide the typo.
     """
+    if ceiling is not None:
+        warnings.warn(
+            "resolve_model_spec(ceiling=...) is ignored and will be removed",
+            DeprecationWarning, stacklevel=2,
+        )
     raw = next((c.strip() for c in chain if c and c.strip()), None)
     if raw is None:
         return None
     spec = parse_model_spec(raw)
     if not spec.is_anthropic:
         return spec
-    if ceiling is None:
-        ceiling = load_multiplai_conf().get("MULTIPLAI_MODEL")  # type: ignore[assignment]
-    return ModelSpec(DEFAULT_PROVIDER, _anthropic_id(spec.model, ceiling))
+    return ModelSpec(DEFAULT_PROVIDER, expand_family(spec.model))
 
 
 def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
-    """Resolve a semantic tier to a concrete, ceiling-capped model ID.
+    """Resolve a family alias or model ID to a concrete model ID.
 
     *default_tier* is the call site's choice (``opus`` for hard work, ``sonnet``
     for cheap bulk work). A ``[task] MODEL=...`` section in ``multiplai.conf``
-    overrides it per task without a code edit. The result is then capped by the
-    ``MULTIPLAI_MODEL`` ceiling, so a laptop/budget run can force all-sonnet.
+    overrides it per task without a code edit. Nothing caps the result, and
+    the session-wide default (:func:`multiplai_core.session.default_model`)
+    does not change an explicit choice made here.
 
     Returns the bare model ID.
 
@@ -375,22 +343,22 @@ def pick_model(default_tier: str = "opus", task: str | None = None) -> str:
     return spec.model
 
 
-def _effort_tier(effort: str) -> int:
-    return EFFORT_TIERS.get(effort.lower(), 3)
-
-
 def resolve_effort(requested: str, ceiling: str | None = None) -> str:
-    """Return *requested*, or the ceiling effort if requested is above it."""
-    if ceiling is None:
-        ceiling = os.environ.get("MULTIPLAI_EFFORT", "high")
-    if _effort_tier(requested) > _effort_tier(ceiling):
-        log.info("Effort ceiling: %s → %s", requested, ceiling)
-        return ceiling
+    """Return *requested* unchanged.
+
+    Deprecated: this used to cap *requested* at an effort ceiling. Nothing
+    caps an effort any more, so *ceiling* is ignored. Kept importable until a
+    later release removes it.
+    """
+    warnings.warn(
+        "resolve_effort() no longer caps anything and will be removed; "
+        "use the effort as is", DeprecationWarning, stacklevel=2,
+    )
     return requested
 
 
 def _normalize_effort(value: str | None) -> str | None:
-    """Map an EFFORT override to a known tier name, or None if unrecognized."""
+    """Map an EFFORT override to a known effort name, or None if unrecognized."""
     if not value:
         return None
     v = value.strip().lower()
@@ -398,17 +366,16 @@ def _normalize_effort(value: str | None) -> str | None:
 
 
 def pick_effort(default_effort: str = "high", task: str | None = None) -> str:
-    """Resolve a reasoning-effort tier, the second axis alongside :func:`pick_model`.
+    """Resolve a reasoning-effort name, the second axis alongside :func:`pick_model`.
 
     Model and effort form a 2-axis grid — a cheap model at high effort and an
     expensive one at low effort are different points, and tuning only the model
     leaves half the grid unexplored. A ``[task] EFFORT=`` section in
-    ``multiplai.conf`` overrides the call site's default, then the
-    ``MULTIPLAI_EFFORT`` ceiling (env or conf) caps it, mirroring
-    :func:`pick_model` exactly.
+    ``multiplai.conf`` overrides the call site's default. Nothing caps the
+    result, and the session-wide default
+    (:func:`multiplai_core.session.default_effort`) does not change an
+    explicit choice made here.
     """
     conf = load_multiplai_conf()
     override = _normalize_effort(_task_setting(conf, task, "EFFORT"))
-    effort = override or _normalize_effort(default_effort) or "high"
-    ceiling = conf.get("MULTIPLAI_EFFORT")  # None → resolve_effort uses env/default
-    return resolve_effort(effort, ceiling=ceiling)
+    return override or _normalize_effort(default_effort) or "high"

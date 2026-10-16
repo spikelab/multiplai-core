@@ -18,6 +18,69 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`multiplai_core.session`: the model and effort for a step no config
+  names.** `default_model()` returns `MULTIPLAI_MODEL` (environment, then
+  `multiplai.conf`), else the Claude Code session's model; `default_effort()`
+  does the same with `MULTIPLAI_EFFORT` and the session's effort. Model and
+  effort are resolved separately. The session's model is the last assistant
+  `model` in `$CLAUDE_CONFIG_DIR/projects/*/<CLAUDE_CODE_SESSION_ID>.jsonl`
+  (read backwards, `<synthetic>` skipped); its effort is `CLAUDE_EFFORT`.
+  `pin_session_settings()` writes both into the environment as
+  `MULTIPLAI_SESSION_MODEL` / `MULTIPLAI_SESSION_EFFORT`, so a pipeline's
+  child processes keep the values the run started with. Call it first thing
+  in a pipeline's `__main__`. Also exported: `session_model()`,
+  `session_effort()`, `default_model_source()`, `default_effort_source()`
+  (the value plus where it came from, for a progress header).
+- **`setup_logging(..., packages=…)`.** Names the packages whose module
+  loggers land in the component's file. Defaults to the calling module's
+  top-level package plus `multiplai_core`.
+
+### Changed
+
+- **Nothing caps a model or an effort any more.** `pick_model`,
+  `pick_model_spec`, `resolve_model_spec` and `pick_effort` return what the
+  call site or config asked for. `MULTIPLAI_MODEL` / `MULTIPLAI_EFFORT` are
+  now the *default* for a step no config names, not a ceiling: they never
+  change an explicit choice. If you relied on `MULTIPLAI_MODEL=sonnet` to
+  force a budget run down, set the step models explicitly instead.
+- **A dated model ID is used exactly as written.** Only the bare family
+  aliases (`haiku`, `sonnet`, `opus`, `fable`) expand through `CURRENT_MODEL`;
+  `claude-opus-4-6` used to be rewritten to the current opus ID and no longer
+  is.
+- **`run_agent` with no `model` / `effort` uses `default_model()` /
+  `default_effort()`** instead of leaving the CLI child on its own default
+  (which was not the session's model, because the child reads no settings).
+  When neither finds a value the option is omitted, as before. A caller that
+  passes a model or effort is unaffected.
+- **Every module log line reaches the component file.** `setup_logging` now
+  attaches its file and error handlers to the caller's package and
+  `multiplai_core` by default, plus a stderr handler at WARNING with the
+  standard format. Before, a package not listed in `propagate_loggers` lost its
+  INFO lines and printed WARNING+ unformatted.
+- **Logs are written straight to `<name>-YYYY-MM-DD.log`.** The undated
+  `<name>.log` (and `activity.log` / `activity.jsonl`) is no longer written;
+  the activity stream is `activity-YYYY-MM-DD.{log,jsonl}`. A day change opens
+  the next day's file by name, and no file is renamed, merged or unlinked, so
+  two processes crossing UTC midnight lose no line. A reader that opened
+  `<name>.log` must glob `<name>-*.log` instead.
+- **Nothing deletes or shortens a log by default.** `MULTIPLAI_LOG_RETENTION_DAYS`
+  defaults to `0` (keep forever) and deletes dated files only when set to a
+  positive number. `hook-errors.log` is no longer cut to its newest half when
+  it passes 100 KB. Every SDK debug log under `logs/sdk/` is kept:
+  `MULTIPLAI_SDK_DEBUG_KEEP_S` defaults to `0` and deletes a fast success's
+  file only when set to a positive number.
+
+### Deprecated
+
+- `resolve_model()` and `resolve_effort()` return their input unchanged and
+  warn; the `ceiling` argument of `resolve_model_spec()` is ignored and warns.
+  `setup_logging(propagate_loggers=…)` is an alias of `packages=`. All stay
+  importable until a later minor release removes them.
+- `EFFORT_TIERS` no longer ranks anything that is enforced; use
+  `KNOWN_EFFORTS` for membership.
+
 ## [0.20.0] – 2026-10-15
 
 ### Fixed

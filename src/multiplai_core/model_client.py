@@ -453,8 +453,8 @@ async def create_client(
 # --------------------------------------------------------------------------
 # Reviewer panels want models from *different families*, because Claude and GPT
 # reviewers empirically find largely disjoint error sets — a same-family panel
-# mostly re-finds the same things. The tier/ceiling machinery in env.py only
-# ranks the Claude family, so cross-vendor support cannot be a new branch inside
+# mostly re-finds the same things. The family aliases in env.py cover only the
+# Claude family, so cross-vendor support cannot be a new branch inside
 # create_client(); it has to be a registry that an out-of-tree backend can join.
 #
 # This is the seam only. No non-Anthropic backend ships here: choosing a

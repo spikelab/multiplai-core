@@ -30,42 +30,22 @@ def _clean_env(monkeypatch):
         monkeypatch.delenv(k, raising=False)
 
 
-class TestResolveModel:
-    def test_downgrades_above_ceiling(self):
-        assert resolve_model("claude-opus-4", "claude-sonnet-4-6") == "claude-sonnet-4-6"
+class TestDeprecatedResolvers:
+    """resolve_model / resolve_effort no longer cap; they return the input."""
 
-    def test_keeps_at_or_below_ceiling(self):
-        assert resolve_model("claude-haiku-4", "claude-sonnet-4-6") == "claude-haiku-4"
-
-    def test_ceiling_from_env(self, monkeypatch):
+    def test_resolve_model_returns_the_request_unchanged(self, monkeypatch):
         monkeypatch.setenv("MULTIPLAI_MODEL", "claude-haiku-4-5")
-        assert resolve_model("claude-opus-4") == "claude-haiku-4-5"
+        with pytest.warns(DeprecationWarning):
+            assert resolve_model("claude-opus-4", "claude-sonnet-4-6") == "claude-opus-4"
+        with pytest.warns(DeprecationWarning):
+            assert resolve_model("claude-fable-5-1") == "claude-fable-5-1"
 
-    def test_default_ceiling_sonnet(self):
-        # The invariant is "the ceiling is the CURRENT sonnet", not a literal
-        # ID — a dated ID pinned here is how the ceiling drifted a generation
-        # behind CURRENT_MODEL in the first place.
-        from multiplai_core.env import CURRENT_MODEL
-
-        assert resolve_model("claude-opus-4") == CURRENT_MODEL["sonnet"]
-
-
-class TestResolveEffort:
-    def test_downgrades(self):
-        assert resolve_effort("max", "medium") == "medium"
-
-    def test_keeps_below(self):
-        assert resolve_effort("low", "high") == "low"
-
-    def test_default_ceiling_high(self):
-        assert resolve_effort("max") == "high"
-
-    def test_xhigh_ranks_between_high_and_max(self):
-        # Regression guard: an earlier copy of the effort table omitted xhigh,
-        # which made it rank as "unknown" (= high) and silently un-capped max.
-        assert resolve_effort("xhigh", "high") == "high"
-        assert resolve_effort("xhigh", "max") == "xhigh"
-        assert resolve_effort("max", "xhigh") == "xhigh"
+    def test_resolve_effort_returns_the_request_unchanged(self, monkeypatch):
+        monkeypatch.setenv("MULTIPLAI_EFFORT", "low")
+        with pytest.warns(DeprecationWarning):
+            assert resolve_effort("max", "medium") == "max"
+        with pytest.warns(DeprecationWarning):
+            assert resolve_effort("xhigh") == "xhigh"
 
 
 class TestEnvCandidates:
@@ -133,50 +113,45 @@ def _write_conf(tmp_path, text):
 
 class TestPickModel:
     def test_default_tier_opus(self, monkeypatch, tmp_path):
-        # Ceiling of opus allows the opus family through verbatim.
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        _write_conf(tmp_path, "")
         assert pick_model() == CURRENT_MODEL["opus"]
 
     def test_explicit_sonnet_tier(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        _write_conf(tmp_path, "")
         assert pick_model("sonnet") == CURRENT_MODEL["sonnet"]
 
     def test_task_override_wins_over_default(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(
-            tmp_path,
-            'MULTIPLAI_MODEL="claude-opus-4-6"\n'
-            "[deep-research.parse]\nMODEL=sonnet\n",
-        )
+        _write_conf(tmp_path, "[deep-research.parse]\nMODEL=sonnet\n")
         assert pick_model("opus", task="deep-research.parse") == CURRENT_MODEL["sonnet"]
 
     def test_missing_task_section_falls_back_to_default(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        _write_conf(tmp_path, "")
         assert pick_model("opus", task="unconfigured.task") == CURRENT_MODEL["opus"]
 
-    def test_ceiling_caps_the_tier(self, monkeypatch, tmp_path):
-        # A sonnet ceiling downgrades an opus request to the ceiling string.
+    def test_multiplai_model_does_not_change_an_explicit_choice(self, monkeypatch, tmp_path):
+        # MULTIPLAI_MODEL is a default for unconfigured steps, never a cap.
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-sonnet-4-6"\n')
-        assert pick_model("opus") == "claude-sonnet-4-6"
+        _write_conf(tmp_path, 'MULTIPLAI_MODEL="haiku"\nMULTIPLAI_EFFORT="low"\n')
+        monkeypatch.setenv("MULTIPLAI_MODEL", "haiku")
+        monkeypatch.setenv("MULTIPLAI_EFFORT", "low")
+        assert pick_model("opus") == CURRENT_MODEL["opus"]
+        assert pick_model("fable") == CURRENT_MODEL["fable"]
+        assert pick_effort("high") == "high"
+        assert pick_effort("max") == "max"
 
-    def test_override_accepts_full_model_id(self, monkeypatch, tmp_path):
-        # A dated ID in the override normalizes to its family.
+    def test_override_keeps_a_dated_id_as_written(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(
-            tmp_path,
-            'MULTIPLAI_MODEL="claude-opus-4-6"\n'
-            "[buildme.implementer]\nMODEL=claude-opus-4-8\n",
-        )
-        assert pick_model("sonnet", task="buildme.implementer") == CURRENT_MODEL["opus"]
+        _write_conf(tmp_path, "[buildme.implementer]\nMODEL=claude-opus-4-6\n")
+        assert pick_model("sonnet", task="buildme.implementer") == "claude-opus-4-6"
 
-    def test_unknown_default_tier_falls_back_to_opus(self, monkeypatch, tmp_path):
+    def test_default_tier_may_be_a_full_id(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
-        assert pick_model("bogus") == CURRENT_MODEL["opus"]
+        _write_conf(tmp_path, "")
+        assert pick_model("claude-haiku-4-5-20251001") == "claude-haiku-4-5-20251001"
 
 
 class TestParseModelSpec:
@@ -207,51 +182,35 @@ class TestParseModelSpec:
 class TestPickModelSpec:
     def test_default_is_anthropic(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-6"\n')
+        _write_conf(tmp_path, "")
         spec = pick_model_spec("opus")
         assert spec.is_anthropic and spec.model == CURRENT_MODEL["opus"]
 
-    def test_cross_vendor_override_passes_through_uncapped(self, monkeypatch, tmp_path):
-        # The ceiling ranks the Claude family only — coercing a GPT reviewer to
-        # a Claude tier would defeat the point of a cross-family panel.
+    def test_cross_vendor_override_passes_through(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(
-            tmp_path,
-            'MULTIPLAI_MODEL="claude-haiku-4-5"\n'
-            "[buildme.reviewer2]\nMODEL=openai:gpt-5\n",
-        )
+        _write_conf(tmp_path, "[buildme.reviewer2]\nMODEL=openai:gpt-5\n")
         spec = pick_model_spec("opus", task="buildme.reviewer2")
         assert spec == ModelSpec("openai", "gpt-5")
 
-    def test_anthropic_qualified_override_still_capped(self, monkeypatch, tmp_path):
+    def test_anthropic_qualified_override_is_kept(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(
-            tmp_path,
-            'MULTIPLAI_MODEL="claude-sonnet-4-6"\n'
-            "[t]\nMODEL=anthropic:claude-opus-4-8\n",
-        )
-        assert pick_model_spec("haiku", task="t") == ModelSpec("anthropic", "claude-sonnet-4-6")
+        _write_conf(tmp_path, "[t]\nMODEL=anthropic:claude-opus-4-8\n")
+        monkeypatch.setenv("MULTIPLAI_MODEL", "claude-sonnet-4-6")
+        assert pick_model_spec("haiku", task="t") == ModelSpec("anthropic", "claude-opus-4-8")
 
     def test_anthropic_qualified_family_name_normalizes(self, monkeypatch, tmp_path):
-        # `anthropic:opus` must take the same path as a bare `opus`. Resolving
-        # the spec's model directly returned the literal string "opus", which is
-        # not a model ID — the ceiling in the sibling test hid it.
+        # `anthropic:opus` must take the same path as a bare `opus`: the
+        # literal string "opus" is not a model ID.
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(
-            tmp_path,
-            'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL=anthropic:opus\n',
-        )
+        _write_conf(tmp_path, "[t]\nMODEL=anthropic:opus\n")
         assert pick_model_spec("haiku", task="t") == ModelSpec(
             "anthropic", CURRENT_MODEL["opus"])
 
-    def test_anthropic_qualified_dated_id_is_repinned(self, monkeypatch, tmp_path):
-        """A legacy dated ID must not survive un-pinned just for being qualified."""
+    def test_anthropic_qualified_dated_id_passes_through(self, monkeypatch, tmp_path):
+        """A dated ID is used exactly as written, qualified or not."""
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(
-            tmp_path,
-            'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL=anthropic:claude-opus-4-2\n',
-        )
-        assert pick_model_spec("haiku", task="t").model == CURRENT_MODEL["opus"]
+        _write_conf(tmp_path, "[t]\nMODEL=anthropic:claude-opus-4-2\n")
+        assert pick_model_spec("haiku", task="t").model == "claude-opus-4-2"
 
     def test_pick_model_rejects_a_cross_vendor_override(self, monkeypatch, tmp_path):
         # Returning the bare "gpt-5" would reach an Anthropic client and 404 at
@@ -265,7 +224,7 @@ class TestPickModelSpec:
 
     def test_pick_model_unaffected_without_a_provider_prefix(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL=haiku\n')
+        _write_conf(tmp_path, "[t]\nMODEL=haiku\n")
         assert pick_model("opus", task="t") == CURRENT_MODEL["haiku"]
 
 
@@ -280,19 +239,15 @@ class TestPickEffort:
         _write_conf(tmp_path, "[buildme.implementer]\nEFFORT=low\n")
         assert pick_effort("high", task="buildme.implementer") == "low"
 
-    def test_ceiling_caps_the_override(self, monkeypatch, tmp_path):
+    def test_multiplai_effort_does_not_cap_the_override(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, 'MULTIPLAI_EFFORT="medium"\n[t]\nEFFORT=max\n')
-        assert pick_effort("low", task="t") == "medium"
+        assert pick_effort("low", task="t") == "max"
 
     def test_model_and_effort_are_independent_axes(self, monkeypatch, tmp_path):
         # The whole point: a cheap model at high effort is a reachable point.
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(
-            tmp_path,
-            'MULTIPLAI_MODEL="claude-opus-4-6"\nMULTIPLAI_EFFORT="max"\n'
-            "[t]\nMODEL=haiku\nEFFORT=xhigh\n",
-        )
+        _write_conf(tmp_path, "[t]\nMODEL=haiku\nEFFORT=xhigh\n")
         assert pick_model("opus", task="t") == CURRENT_MODEL["haiku"]
         assert pick_effort("low", task="t") == "xhigh"
 
@@ -331,23 +286,11 @@ class TestEffortTiers:
     def test_every_known_effort_survives_pick_effort(self, monkeypatch, tmp_path):
         # The contract that makes the table safe to validate against: a name in
         # KNOWN_EFFORTS is recognized and returned verbatim, never normalized
-        # away to "high" the way an unknown name is. Raise the ceiling to max so
-        # the default `high` ceiling isn't what's under test here.
+        # away to "high" the way an unknown name is.
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_EFFORT="max"\n')
+        _write_conf(tmp_path, "")
         for name in KNOWN_EFFORTS:
             assert pick_effort(name) == name
-
-    def test_default_ceiling_is_high_so_the_top_tiers_need_raising(
-        self, monkeypatch, tmp_path
-    ):
-        # Not a bug, and worth pinning: with no MULTIPLAI_EFFORT set the ceiling
-        # is "high", so the two tiers above it are capped rather than rejected.
-        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        monkeypatch.delenv("MULTIPLAI_EFFORT", raising=False)
-        _write_conf(tmp_path, "")
-        assert pick_effort("xhigh") == "high"
-        assert pick_effort("max") == "high"
 
 
 class TestClaudeAlias:
@@ -358,7 +301,7 @@ class TestClaudeAlias:
     @pytest.mark.parametrize("raw", ["claude:opus", "anthropic:opus", "opus"])
     def test_every_spelling_resolves_to_the_same_id(self, monkeypatch, tmp_path, raw):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, f'MULTIPLAI_MODEL="claude-opus-4-8"\n[t]\nMODEL={raw}\n')
+        _write_conf(tmp_path, f"[t]\nMODEL={raw}\n")
         assert pick_model_spec("haiku", task="t") == ModelSpec(
             "anthropic", CURRENT_MODEL["opus"])
 
@@ -368,20 +311,9 @@ class TestFable:
         assert CURRENT_MODEL["fable"] == "claude-fable-5-1"
         assert parse_model_spec("fable") == parse_model_spec("claude:fable")
 
-    def test_opus_ceiling_turns_fable_into_opus(self):
-        assert resolve_model(CURRENT_MODEL["fable"], ceiling=CURRENT_MODEL["opus"]) == (
-            CURRENT_MODEL["opus"])
-
-    def test_fable_ceiling_lets_fable_through(self):
-        assert resolve_model(CURRENT_MODEL["fable"], ceiling=CURRENT_MODEL["fable"]) == (
-            CURRENT_MODEL["fable"])
-
-    def test_fable_ranks_above_opus(self):
-        assert env_mod._tier("claude-fable-5-1") > env_mod._tier("claude-opus-4-8")
-
     def test_pick_model_fable_task_override(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
-        _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-fable-5-1"\n[t]\nMODEL=fable\n')
+        _write_conf(tmp_path, "[t]\nMODEL=fable\n")
         assert pick_model("opus", task="t") == "claude-fable-5-1"
 
 
@@ -394,31 +326,24 @@ class TestResolveModelSpec:
         assert resolve_model_spec([None, "", None]) is None
         assert resolve_model_spec([]) is None
 
-    def test_anthropic_spec_is_capped_by_explicit_ceiling(self):
-        spec = resolve_model_spec(["claude:fable"], ceiling=CURRENT_MODEL["opus"])
-        assert spec == ModelSpec("anthropic", CURRENT_MODEL["opus"])
-
-    def test_anthropic_spec_is_capped_by_env_ceiling(self, monkeypatch):
+    def test_multiplai_model_does_not_cap_a_spec(self, monkeypatch, tmp_path):
         monkeypatch.setenv("MULTIPLAI_MODEL", CURRENT_MODEL["haiku"])
-        assert resolve_model_spec(["opus"]).model == CURRENT_MODEL["haiku"]
-
-    def test_anthropic_spec_is_capped_by_conf_ceiling(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, 'MULTIPLAI_MODEL="claude-sonnet-5"\n')
-        assert resolve_model_spec(["opus"]).model == "claude-sonnet-5"
+        assert resolve_model_spec(["opus"]).model == CURRENT_MODEL["opus"]
+        assert resolve_model_spec(["claude:fable"]).model == CURRENT_MODEL["fable"]
 
-    def test_fable_passes_under_a_fable_ceiling(self):
-        spec = resolve_model_spec(["fable"], ceiling=CURRENT_MODEL["fable"])
-        assert spec.qualified == "anthropic:claude-fable-5-1"
+    def test_ceiling_argument_is_ignored_and_deprecated(self):
+        with pytest.warns(DeprecationWarning):
+            spec = resolve_model_spec(["claude:fable"], ceiling=CURRENT_MODEL["haiku"])
+        assert spec == ModelSpec("anthropic", CURRENT_MODEL["fable"])
 
-    def test_family_names_and_dated_ids_normalise(self):
-        ceiling = CURRENT_MODEL["fable"]
-        assert resolve_model_spec(["anthropic:opus"], ceiling=ceiling).model == (
-            CURRENT_MODEL["opus"])
-        assert resolve_model_spec(["claude-opus-4-2"], ceiling=ceiling).model == (
-            CURRENT_MODEL["opus"])
+    def test_family_names_expand_and_dated_ids_pass_through(self):
+        assert resolve_model_spec(["anthropic:opus"]).model == CURRENT_MODEL["opus"]
+        assert resolve_model_spec(["claude-opus-4-2"]).model == "claude-opus-4-2"
+        assert resolve_model_spec(["claude:claude-opus-4-6"]).model == "claude-opus-4-6"
 
-    def test_pi_spec_passes_through_uncapped(self, monkeypatch):
+    def test_pi_spec_passes_through(self, monkeypatch):
         monkeypatch.setenv("MULTIPLAI_MODEL", CURRENT_MODEL["haiku"])
         spec = resolve_model_spec([None, "pi:deepseek/deepseek-v4-flash@fireworks", "opus"])
         assert spec == ModelSpec("pi", "deepseek/deepseek-v4-flash@fireworks")

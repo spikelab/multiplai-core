@@ -29,16 +29,36 @@ def _scrub_plugin_env(monkeypatch):
             monkeypatch.delenv(key, raising=False)
 
 
+# The variables that choose the default model and effort for a step with none
+# configured (multiplai_core.session). Run inside a Claude Code session, the
+# real ones would hand every run_agent call the developer's session model.
+_SESSION_DEFAULT_VARS = (
+    "MULTIPLAI_MODEL",
+    "MULTIPLAI_EFFORT",
+    "MULTIPLAI_SESSION_MODEL",
+    "MULTIPLAI_SESSION_EFFORT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_EFFORT",
+)
+
+
 @pytest.fixture(autouse=True)
-def _isolate_env(monkeypatch):
+def _isolate_env(monkeypatch, tmp_path_factory):
     """Scrub ambient CLAUDE_PLUGIN_* / WORKSPACE before every test.
 
     A leaked host ``WORKSPACE`` (or ``CLAUDE_PLUGIN_OPTION_*``) would point
     resolution at the real environment and break isolation. Tests that need
     these set them explicitly via monkeypatch (applied after this autouse
     fixture).
+
+    Also clears the session-default variables and points
+    ``CLAUDE_MULTIPLAI_HOME`` at an empty directory, so the developer's
+    ``multiplai.conf`` and session transcript never set a test's model.
     """
     _scrub_plugin_env(monkeypatch)
+    for key in _SESSION_DEFAULT_VARS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path_factory.mktemp("no-conf")))
 
 
 @pytest.fixture
