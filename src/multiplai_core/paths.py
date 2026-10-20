@@ -6,7 +6,10 @@ lifetime (frozen dataclass + module-level singleton).
 
 Resolution order:
     1. Plugin env var (``CLAUDE_PLUGIN_ROOT``, ``CLAUDE_PLUGIN_DATA``,
-       ``CLAUDE_PLUGIN_OPTION_*``) — expanded and resolved to absolute.
+       ``CLAUDE_PLUGIN_OPTION_*``) — expanded and resolved to absolute. A
+       plugin option whose variable is absent (any script a skill runs) is
+       read from the plugin's saved options; see
+       :mod:`multiplai_core.plugin_options`.
     2. Workspace-scoped fallback rooted at ``$WORKSPACE/.multiplai/`` (or
        the ``workspace_dir`` plugin option's ``.multiplai/``).
     3. The nearest ancestor ``.multiplai/`` marker directory, walking up

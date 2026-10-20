@@ -18,6 +18,43 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Plugin options now reach scripts that a skill runs, not only hooks.**
+  Claude Code exports `CLAUDE_PLUGIN_OPTION_<KEY>` to hook processes only, so
+  `option()`, `option_present()` and the typed accessors returned the default
+  in every script a skill ran through Bash, whatever the user had configured.
+  When the variable is absent or blank they now read the value Claude Code
+  saved for the plugin in the user settings file
+  (`$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`,
+  `pluginConfigs["<plugin>@<marketplace>"].options`), stringified as the
+  harness would export it (`true` -> `"true"`; a `null`, an object or a list
+  holding non-strings counts as unset). A non-blank environment variable
+  always wins; a blank one falls through to the saved value.
+
+  The plugin is identified from `$CLAUDE_PLUGIN_ROOT`, else from the entry
+  script's path, matched only against Claude Code's own records under the
+  config dir (`plugins/installed_plugins.json`, then the
+  `plugins/cache/<marketplace>/<plugin>/<version>/` layout). A development
+  checkout or test run is never matched by name, so it keeps reading defaults.
+  Sensitive options (kept in secure storage), managed-policy and `--settings`
+  sources are not read. A missing or malformed file logs at debug and yields
+  the default; nothing raises. Parsed once per process.
+
+  What you gain: a script run from inside the installed plugin reads the same
+  non-sensitive user-settings options its hooks do. Anywhere else (a dev
+  checkout, `python -m`, `python -c`) it still reads defaults.
+
+  What moves: path options read through `multiplai_core.paths`
+  (`workspace_dir`, `data_dir`, the per-directory overrides) now take effect
+  in skill scripts as they already did in hooks. So a skill script whose user
+  saved `workspace_dir` now resolves under it even when `$WORKSPACE` says
+  otherwise (the hooks' order), and its data, catalogs, logs and skill state
+  land where the hooks put them. Anything a skill script wrote at the old
+  default location stays there; nothing is moved. What you must change:
+  nothing. If you passed options into a skill script yourself to work around
+  this, you can drop that.
+
 ## [0.24.0] – 2026-10-16
 
 ### Changed
