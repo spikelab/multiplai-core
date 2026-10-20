@@ -388,6 +388,8 @@ class TestAgentSDKClient:
                         await client.query("sys", [{"role": "user", "content": "x"}])
                 assert calls["n"] == 1
                 assert is_usage_limit(exc.value)
+                # The documented cause carries the reset time.
+                assert exc.value.__cause__.resets == "Oct 19, 4am (UTC)"
 
             asyncio.run(_test())
 

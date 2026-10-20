@@ -27,16 +27,26 @@ not backfilled; their contents are recoverable from `git log`.
   `max_attempts` says. Before, it was a plain `AgentRunError`: `run_agent`
   retried it, and so did every caller's own retry loop. That is how one
   `/multiplai-dev:review` run made hundreds of calls after a limit that reset
-  hours later. The error carries `.limit` (`"session"`, `"weekly"`, or `""`)
-  and `.resets` (the reset time as the CLI wrote it, or `""`). `.partial` and
-  the cost-ledger entry work as for any other failure.
+  hours later. The error carries `.limit`, the kind the CLI named,
+  lower-cased: usually `"session"` or `"weekly"`, but the set is open
+  (`"opus"`, `"monthly spend"`, ...), and `""` when it named none. It also
+  carries `.resets`, the reset time as the CLI wrote it, or `""`. `.partial`
+  and the cost-ledger entry work as for any other failure. Only the CLI's
+  result text counts, matched at its start as the CLI itself does: a 429 the
+  CLI retried, a debug line or a quoted phrase does not.
 
   `UsageLimitError` subclasses `AgentRunError`, so code that catches
   `AgentRunError` keeps catching it. **If you retry agent calls yourself,
   catch `UsageLimitError` first and stop**, saving whatever you can resume
-  from. If you wrap `AgentRunError` in your own type, as
-  `model_client.SDKQueryError` does, `is_usage_limit(exc)` still recognises
-  it: it walks the exception's cause chain.
+  from. If you wrap `AgentRunError` in your own type, call
+  `is_usage_limit(exc)`. It takes an exception or a message, and returns
+  True when the exception, or one reached from it as a traceback would show
+  (`__cause__`, and `__context__` unless you raised `from None`), is a
+  `UsageLimitError`, or has a message that starts with the CLI's limit text.
+  For an `AgentRunError` it reads `.reason`, never the captured stderr.
+  `model_client.SDKQueryError` now has the `UsageLimitError` as its
+  `__cause__` when a limit was hit, so `.limit` and `.resets` are reachable
+  there too. Any other failure still has the SDK's error as its cause.
 
 ## [0.24.1] – 2026-10-20
 

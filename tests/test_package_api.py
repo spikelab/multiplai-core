@@ -106,11 +106,9 @@ def test_model_per_step_names_are_exported(name):
 @pytest.mark.parametrize("name", ["UsageLimitError", "is_usage_limit"])
 def test_usage_limit_names_are_exported(name):
     """The usage-limit stop (0.25) is public: callers must tell it apart from
-    a retryable failure."""
+    a retryable failure. (test_every_exported_name_is_importable imports it.)"""
     assert name in PUBLIC_NAMES
     assert _LAZY_ATTRS[name] == "agent_runner"
-    result = _run(f"from multiplai_core import {name}")
-    assert result.returncode == 0, result.stderr
 
 
 def test_importing_agent_runner_leaves_pi_unloaded():

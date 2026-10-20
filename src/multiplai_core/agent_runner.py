@@ -381,12 +381,19 @@ class UnknownAgentBackendError(AgentRunError):
 # The Claude Code CLI's result text when the account's usage limit is hit, e.g.
 # "You've hit your session limit · resets 9:40am (UTC)" and
 # "You've hit your weekly limit · resets Oct 19, 4am (UTC)" (both seen in the
-# runtime logs, 2026-10-12 to 2026-10-18). `limit` is the word before "limit"
-# ("" when there is none); `resets` the time after "resets", without the
+# runtime logs, 2026-10-12 to 2026-10-18). The CLI bundled with
+# claude-agent-sdk 0.2.168 builds it as `You've hit your ${name}${resets}`
+# plus an optional " · progress saved", and other names exist there ("fast
+# limit", "monthly spend limit", "team's shared budget"). It tells them apart
+# with `startsWith("You've hit your ...")`, so the match is anchored the same
+# way: at the start of the text, or right after the SDK's "...error result:"
+# prefix. A phrase quoted mid-message (a model's answer, a debug line) does
+# not match. `limit` is the text before "limit"/"budget" ("" when none);
+# `resets` the time after "resets", without " · progress saved" or the
 # "(exit code: 1)" the SDK appends.
 _USAGE_LIMIT_RE = re.compile(
-    r"you(?:'|\u2019)ve hit your (?P<limit>[^\n·]{0,40}?)\s*limit\b"
-    r"(?:\s*·\s*resets\s+(?P<resets>[^()\n]*(?:\((?!exit code)[^()\n]*\))?))?",
+    r"(?:^|error result:\s*)you(?:'|\u2019)ve hit your (?P<limit>[^\n·.]{0,40}?)\s*(?:limit|budget)\b"
+    r"(?:\s*·\s*resets\s+(?P<resets>[^()\n·]*(?:\((?!exit code)[^()\n]*\))?))?",
     re.IGNORECASE,
 )
 
@@ -400,9 +407,11 @@ class UsageLimitError(AgentRunError):
     says. A caller with its own retry loop must catch it before
     ``AgentRunError`` and stop, keeping whatever it can resume from.
 
-    ``limit`` is the kind the CLI named (``"session"``, ``"weekly"``, or
-    ``""``); ``resets`` when it resets, as the CLI wrote it (``"9:40am (UTC)"``),
-    or ``""`` when it did not say.
+    ``limit`` is the kind the CLI named, lower-cased: ``"session"`` and
+    ``"weekly"`` are the common ones, but the set is open (``"opus"``,
+    ``"monthly spend"``, ...), and ``""`` when it named none. ``resets`` is when
+    it resets, as the CLI wrote it (``"9:40am (UTC)"``), or ``""`` when it did
+    not say.
     """
 
     def __init__(self, message: str, *, limit: str = "", resets: str = "", **kwargs: Any) -> None:
@@ -418,12 +427,16 @@ def _usage_limit_match(text: str) -> "re.Match[str] | None":
 def is_usage_limit(error: BaseException | str) -> bool:
     """Whether *error* is, or was caused by, a hit Claude usage limit.
 
-    True for a :class:`UsageLimitError` anywhere in the exception's
-    ``__cause__``/``__context__`` chain, or for a message there (or the string
-    itself) that holds the CLI's limit text. This lets a caller that wraps
-    ``AgentRunError`` in its own type (``model_client.SDKQueryError``, a
-    skill's error class) still tell a usage limit from a failure worth
-    retrying.
+    *error* is an exception or a message. An exception counts when it, or one
+    reached from it the way Python's traceback does (``__cause__``, and
+    ``__context__`` unless suppressed by ``raise ... from None``), is a
+    :class:`UsageLimitError` or has a message that starts with the CLI's
+    limit text (``You've hit your ... limit``), alone or after the SDK's
+    ``...error result:`` prefix. For an ``AgentRunError`` the message is its
+    ``reason``, never its captured CLI stderr, so a debug line that echoes the
+    phrase does not count. This lets a caller that wraps ``AgentRunError`` in
+    its own type (``model_client.SDKQueryError``, a skill's error class) still
+    tell a usage limit from a failure worth retrying.
     """
     if isinstance(error, str):
         return _usage_limit_match(error) is not None
@@ -434,9 +447,13 @@ def is_usage_limit(error: BaseException | str) -> bool:
         if id(e) in seen:
             continue
         seen.add(id(e))
-        if isinstance(e, UsageLimitError) or _usage_limit_match(str(e)):
+        text = e.reason if isinstance(e, AgentRunError) else str(e)
+        if isinstance(e, UsageLimitError) or _usage_limit_match(text):
             return True
-        todo.extend(x for x in (e.__cause__, e.__context__) if x is not None)
+        if e.__cause__ is not None:
+            todo.append(e.__cause__)
+        if e.__context__ is not None and not e.__suppress_context__:
+            todo.append(e.__context__)
     return False
 
 
@@ -1113,14 +1130,15 @@ async def run_agent(
                 # debug log and the heartbeat; no backoff, no next attempt.
                 logger.error(
                     "FAIL run_agent [%s] usage limit hit, not retried: %s "
-                    "after %d attempt(s) elapsed=%.1fs CLI debug log: %s",
+                    "after %d attempt(s) elapsed=%.1fs CLI debug log: %s\n"
+                    "--- captured CLI stderr (errors) ---\n%s",
                     label, last_reason, attempt + 1, loop.time() - run_start,
-                    last_debug_path or "(none)",
+                    last_debug_path or "(none)", last_tail or "(none)",
                 )
                 _record_cost(component, label, model, last_partial.usage, last_session_id)
                 raise UsageLimitError(
                     f"run_agent [{label}] {last_reason} after {attempt + 1} attempt(s)",
-                    limit=(limit_hit.group("limit") or "").strip(),
+                    limit=(limit_hit.group("limit") or "").strip().lower(),
                     resets=(limit_hit.group("resets") or "").strip(),
                     reason=last_reason,
                     attempts=attempt + 1,
