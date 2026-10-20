@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.25.0] – 2026-10-20
+
 ### Added
 
 - **`UsageLimitError` and `is_usage_limit()`: a hit Claude usage limit is now
@@ -1038,7 +1040,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/spikelab/multiplai-core/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/spikelab/multiplai-core/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/spikelab/multiplai-core/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/spikelab/multiplai-core/compare/v0.22.0...v0.23.0
