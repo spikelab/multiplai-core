@@ -358,6 +358,41 @@ class TestAgentSDKClient:
                 assert "after 2 attempts" in str(exc.value)
                 assert "persistent failure" in str(exc.value)
                 assert "cli: fatal" in exc.value.stderr_tail
+                # Unchanged for a failure that is not a usage limit: the SDK's error is the cause.
+                assert isinstance(exc.value.__cause__, RuntimeError)
+                assert str(exc.value.__cause__) == "persistent failure"
+
+            asyncio.run(_test())
+
+    def test_usage_limit_is_not_retried_and_stays_recognisable(self):
+        """WHEN the CLI reports a hit usage limit THEN the call is made once
+        and the SDKQueryError it raises is recognised by is_usage_limit."""
+        from multiplai_core import is_usage_limit
+
+        calls = {"n": 0}
+        mock_sdk = _make_mock_sdk()
+
+        async def _agen(prompt, options):
+            calls["n"] += 1
+            raise RuntimeError(
+                "Claude Code returned an error result: You've hit your weekly "
+                "limit \u00b7 resets Oct 19, 4am (UTC) (exit code: 1)"
+            )
+            yield  # pragma: no cover
+
+        mock_sdk.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            from multiplai_core import model_client
+            client = model_client.AgentSDKClient()
+
+            async def _test():
+                with patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0):
+                    with pytest.raises(model_client.SDKQueryError) as exc:
+                        await client.query("sys", [{"role": "user", "content": "x"}])
+                assert calls["n"] == 1
+                assert is_usage_limit(exc.value)
+                # The documented cause carries the reset time.
+                assert exc.value.__cause__.resets == "Oct 19, 4am (UTC)"
 
             asyncio.run(_test())
 

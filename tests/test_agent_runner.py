@@ -25,7 +25,9 @@ from multiplai_core.agent_runner import (
     AgentRunTimeout,
     AgentUsage,
     ToolCall,
+    UsageLimitError,
     deny_list,
+    is_usage_limit,
     path_allowed,
     run_agent,
 )
@@ -474,6 +476,209 @@ class TestFailures:
                 _run(run_agent("hi", max_attempts=2, retry_backoff_s=0))
         assert exc.value.attempts == 2
         assert "after 2 attempt(s)" in str(exc.value)
+
+
+# The CLI's result text for a hit usage limit, as logged by run_agent on
+# 2026-10-18 (session) and 2026-10-17 (weekly) in the multiplai runtime logs.
+SESSION_LIMIT = (
+    "Claude Code returned an error result: You've hit your session limit "
+    "\u00b7 resets 9:40am (UTC) (exit code: 1)"
+)
+WEEKLY_LIMIT = (
+    "Claude Code returned an error result: You've hit your weekly limit "
+    "\u00b7 resets Oct 19, 4am (UTC) (exit code: 1)"
+)
+
+
+class _ResultError(Exception):
+    """Stands in for claude_agent_sdk's ResultError."""
+
+
+class TestUsageLimit:
+    """A hit usage limit resets hours later: run_agent must not retry it."""
+
+    def _counting_sdk(self, message: str):
+        calls = {"n": 0}
+        mock = _make_mock_sdk()
+
+        async def _agen(prompt, options):
+            calls["n"] += 1
+            raise _ResultError(message)
+            yield  # pragma: no cover — makes this an async generator
+
+        mock.query = MagicMock(side_effect=_agen)
+        return mock, calls
+
+    @pytest.mark.parametrize("message,limit,resets", [
+        (SESSION_LIMIT, "session", "9:40am (UTC)"),
+        (WEEKLY_LIMIT, "weekly", "Oct 19, 4am (UTC)"),
+    ])
+    def test_limit_raises_usage_limit_error_without_retry(self, message, limit, resets):
+        mock_sdk, calls = self._counting_sdk(message)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(UsageLimitError) as exc:
+                _run(run_agent("hi", max_attempts=3, retry_backoff_s=0))
+        assert calls["n"] == 1
+        assert exc.value.attempts == 1
+        assert exc.value.limit == limit
+        assert exc.value.resets == resets
+        assert isinstance(exc.value, AgentRunError)  # old `except AgentRunError` still catches it
+        assert "hit your " + limit + " limit" in str(exc.value)
+        assert isinstance(exc.value.__cause__, _ResultError)
+
+    @pytest.mark.parametrize("stderr", [
+        "[ERROR] API rate_limit after retries: This request would exceed your account's rate limit.",
+        "[DEBUG] tool result: You've hit your session limit \u00b7 resets 9:40am (UTC)",
+    ])
+    def test_stderr_text_never_makes_a_usage_limit(self, stderr):
+        """A 429 the CLI retried is transient, and debug lines can echo any text: only the
+        result text says a limit was hit."""
+        mock_sdk = _make_mock_sdk(fail=RuntimeError("Command failed with exit code 1"), stderr_lines=[stderr])
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(AgentRunError) as exc:
+                _run(run_agent("hi"))
+        assert not isinstance(exc.value, UsageLimitError)
+        assert not is_usage_limit(exc.value)
+
+    def test_the_phrase_quoted_inside_a_result_is_not_a_usage_limit(self):
+        """The CLI's message starts with the phrase (it classifies it with startsWith)."""
+        mock_sdk, calls = self._counting_sdk(
+            "Claude Code returned an error result: the finding says \"You've hit your session limit\" (exit code: 1)")
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(AgentRunError) as exc:
+                _run(run_agent("hi", max_attempts=2, retry_backoff_s=0))
+        assert not isinstance(exc.value, UsageLimitError) and calls["n"] == 2
+
+    @pytest.mark.parametrize("message,limit,resets", [
+        ("Claude Code returned an error result: You've hit your session limit \u00b7 resets 5pm "
+         "\u00b7 progress saved (exit code: 1)", "session", "5pm"),
+        ("Claude Code returned an error result: You've hit your Opus limit \u00b7 resets 9:40am (UTC) "
+         "\u00b7 progress saved", "opus", "9:40am (UTC)"),
+        ("Claude Code returned an error result: You've hit your team's shared budget. /model to switch models.",
+         "team's shared", ""),
+        ("Claude Code returned an error result: You've hit your session limit \u00b7 resets 5pm (exit code: 1)",
+         "session", "5pm"),
+        ("Claude Code returned an error result: You've hit your Opus 4.1 limit (exit code: 1)", "opus 4.1", ""),
+        ("You've hit your limit (exit code: 1)", "", ""),
+    ])
+    def test_other_wordings_of_the_bundled_cli(self, message, limit, resets):
+        """Shapes the CLI bundled with claude-agent-sdk 0.2.168 builds: `You've hit your ${name}${resets}${saved}`."""
+        mock_sdk, _ = self._counting_sdk(message)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(UsageLimitError) as exc:
+                _run(run_agent("hi"))
+        assert (exc.value.limit, exc.value.resets) == (limit, resets)
+
+    def test_limit_logs_one_fail_line_with_the_stderr_and_no_retry_line(self, caplog):
+        mock_sdk, _ = self._counting_sdk(SESSION_LIMIT)
+        mock_sdk.ClaudeAgentOptions = _make_mock_sdk(stderr_lines=["[ERROR] cli: limit reached"]).ClaudeAgentOptions
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with caplog.at_level(logging.WARNING, logger="multiplai_core.agent_runner"):
+                with pytest.raises(UsageLimitError):
+                    _run(run_agent("hi", max_attempts=3, retry_backoff_s=0, label="verify"))
+        fails = [r.getMessage() for r in caplog.records if r.getMessage().startswith("FAIL")]
+        assert len(fails) == 1 and "usage limit hit, not retried" in fails[0]
+        assert "--- captured CLI stderr (errors) ---" in fails[0] and "cli: limit reached" in fails[0]
+        assert "retrying" not in caplog.text
+
+    def test_limit_records_partial_usage(self, tmp_workspace):
+        from multiplai_core.costing import iter_ledger
+
+        async def _agen(prompt, options):
+            yield _FakeAssistantMessage([_FakeTextBlock("some")])
+            yield _FakeResultMessage(usage={"input_tokens": 10, "output_tokens": 2})
+            raise _ResultError(SESSION_LIMIT)
+
+        mock_sdk = _make_mock_sdk()
+        mock_sdk.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(UsageLimitError) as exc:
+                _run(run_agent("p", component="review"))
+        assert exc.value.partial is not None and exc.value.partial.text == "some"
+        assert len(list(iter_ledger())) == 1
+
+
+class TestIsUsageLimit:
+    def test_true_for_a_wrapper_whose_cause_is_one(self):
+        class Wrapper(Exception):
+            pass
+
+        try:
+            try:
+                raise UsageLimitError("run_agent [verify] failed", limit="session")
+            except UsageLimitError as e:
+                raise Wrapper("agent call failed") from e
+        except Wrapper as w:
+            assert is_usage_limit(w)
+
+    def test_true_for_a_wrapper_raised_without_from(self):
+        """Reachable only through __context__, as when a caller wraps without `from`."""
+        try:
+            try:
+                raise UsageLimitError("run_agent [verify] failed", limit="session")
+            except UsageLimitError:
+                raise RuntimeError("verify step failed")
+        except RuntimeError as w:
+            assert w.__cause__ is None
+            assert is_usage_limit(w)
+
+    def test_false_when_the_context_is_suppressed(self):
+        try:
+            try:
+                raise UsageLimitError("run_agent [verify] failed", limit="session")
+            except UsageLimitError:
+                raise RuntimeError("unrelated") from None
+        except RuntimeError as w:
+            assert not is_usage_limit(w)
+
+    def test_stderr_holding_the_sdk_message_does_not_count_through_any_wrapper(self):
+        """The phrase, with the SDK's own prefix, in a stderr line: neither the
+        AgentRunError nor a wrapper whose str() includes that stderr counts."""
+        from multiplai_core.model_client import SDKQueryError
+
+        line = "[DEBUG] Claude Code returned an error result: You've hit your session limit"
+        e = AgentRunError("run_agent [x] failed: exit 1", reason="failed: exit 1", stderr_tail=line)
+        assert not is_usage_limit(e)
+        try:
+            try:
+                raise e
+            except AgentRunError as inner:
+                raise SDKQueryError("claude_agent_sdk.query() failed: exit 1 after 2 attempts",
+                                    stderr_tail=line) from inner
+        except SDKQueryError as w:
+            assert line in str(w)
+            assert not is_usage_limit(w)
+
+    def test_a_message_quoting_the_sdk_message_does_not_count(self):
+        assert not is_usage_limit(
+            "Claude Code returned an error result: finding F1: 'Claude Code returned an error result: "
+            "You've hit your session limit'")
+
+    def test_true_for_the_raw_message_anywhere_in_the_chain(self):
+        try:
+            try:
+                raise _ResultError(WEEKLY_LIMIT)
+            except _ResultError as e:
+                raise RuntimeError("query failed") from e
+        except RuntimeError as w:
+            assert is_usage_limit(w)
+
+    def test_true_for_a_string(self):
+        assert is_usage_limit(SESSION_LIMIT)
+
+    @pytest.mark.parametrize("value", [
+        RuntimeError("Command failed with exit code 1"),
+        AgentRunError("run_agent [x] timed out after 600s"),
+        "This request would exceed your account's rate limit. Please try again later.",
+        "",
+    ])
+    def test_false_otherwise(self, value):
+        assert not is_usage_limit(value)
+
+    def test_a_cause_cycle_terminates(self):
+        a, b = RuntimeError("a"), RuntimeError("b")
+        a.__cause__, b.__cause__ = b, a
+        assert not is_usage_limit(a)
 
 
 class TestTimeout:

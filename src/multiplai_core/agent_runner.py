@@ -378,6 +378,81 @@ class UnknownAgentBackendError(AgentRunError):
     """``model`` names a provider no agent backend is registered for."""
 
 
+# The CLI's result text for a hit usage limit, e.g. "You've hit your session
+# limit · resets 9:40am (UTC)". The CLI (bundled with claude-agent-sdk
+# 0.2.168) tells these apart with `startsWith("You've hit your ...")`, so the
+# match is anchored the same way: at the start of the text, after at most the
+# SDK's "Claude Code returned an error result:" prefix.
+_USAGE_LIMIT_RE = re.compile(
+    r"\A(?:[^\n:]*error result:\s*)?you(?:'|\u2019)ve hit your (?P<limit>[^\n·]{0,60}?)\s*(?:limit|budget)\b"
+    r"(?:\s*·\s*resets\s+(?P<resets>[^()\n·]*(?:\((?!exit code)[^()\n]*\))?))?",
+    re.IGNORECASE,
+)
+
+
+class UsageLimitError(AgentRunError):
+    """The account's Claude usage limit (session, weekly, ...) was hit.
+
+    Never retry it: the limit resets hours later, and every call until then
+    fails the same way after spending a CLI start-up. :func:`run_agent` raises
+    it on the first attempt that reports the limit, whatever ``max_attempts``
+    says. A caller with its own retry loop must catch it before
+    ``AgentRunError`` and stop, keeping whatever it can resume from.
+
+    ``limit`` is the kind the CLI named, lower-cased: ``"session"`` and
+    ``"weekly"`` are the common ones, but the set is open (``"opus"``,
+    ``"monthly spend"``, ...), and ``""`` when it named none. ``resets`` is when
+    it resets, as the CLI wrote it (``"9:40am (UTC)"``), or ``""`` when it did
+    not say.
+    """
+
+    def __init__(self, message: str, *, limit: str = "", resets: str = "", **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.limit = limit
+        self.resets = resets
+
+
+def _usage_limit_match(text: str) -> "re.Match[str] | None":
+    return _USAGE_LIMIT_RE.search(text) if text else None
+
+
+def is_usage_limit(error: BaseException | str) -> bool:
+    """Whether *error* is, or was caused by, a hit Claude usage limit.
+
+    *error* is an exception or a message. A message counts when it starts
+    with the CLI's limit text (``You've hit your ... limit``), alone or after
+    the SDK's ``Claude Code returned an error result:`` prefix; the phrase
+    anywhere else (a quote, a stderr line a wrapper appended) does not. An
+    exception counts when it, or one reached from it the way Python's
+    traceback does (``__cause__``, and ``__context__`` unless suppressed by
+    ``raise ... from None``), is a :class:`UsageLimitError`, or is not an
+    ``AgentRunError`` and has such a message (the SDK's own error). This lets
+    a caller that wraps ``AgentRunError`` in its own type
+    (``model_client.SDKQueryError``, a skill's error class) still tell a usage
+    limit from a failure worth retrying.
+    """
+    if isinstance(error, str):
+        return _usage_limit_match(error) is not None
+    seen: set[int] = set()
+    todo: list[BaseException] = [error]
+    while todo:
+        e = todo.pop()
+        if id(e) in seen:
+            continue
+        seen.add(id(e))
+        if isinstance(e, UsageLimitError):
+            return True
+        # run_agent raises UsageLimitError itself, so another AgentRunError's
+        # text (which carries the CLI's stderr) is not read.
+        if not isinstance(e, AgentRunError) and _usage_limit_match(str(e)):
+            return True
+        if e.__cause__ is not None:
+            todo.append(e.__cause__)
+        if e.__context__ is not None and not e.__suppress_context__:
+            todo.append(e.__context__)
+    return False
+
+
 AgentBackend = Callable[..., Awaitable["AgentRunResult"]]
 """An agent backend: ``async (prompt, *, <run_agent's keywords>) -> AgentRunResult``."""
 
@@ -719,6 +794,8 @@ async def run_agent(
         AgentRunError: every attempt failed for another reason, or the SDK is
             not importable. Carries ``.partial`` with whatever was consumed.
         UnknownAgentBackendError: ``model`` names a provider with no backend.
+        UsageLimitError: the CLI reported a hit usage limit. Raised on that
+            attempt, never retried; see the class.
 
     With no ``model``, the run uses :func:`multiplai_core.session.default_model`
     (the configured default, else the Claude Code session's model); with no
@@ -1043,6 +1120,28 @@ async def run_agent(
             last_session_id = session_id
             last_debug_path = str(debug_log.path) if debug_log else ""
             any_attempt_failed = True
+            limit_hit = None if timed_out else _usage_limit_match(str(e))
+            if limit_hit is not None:
+                # Raised from inside the attempt so `finally` still closes the
+                # debug log and the heartbeat; no backoff, no next attempt.
+                logger.error(
+                    "FAIL run_agent [%s] usage limit hit, not retried: %s "
+                    "after %d attempt(s) elapsed=%.1fs CLI debug log: %s\n"
+                    "--- captured CLI stderr (errors) ---\n%s",
+                    label, last_reason, attempt + 1, loop.time() - run_start,
+                    last_debug_path or "(none)", last_tail or "(none)",
+                )
+                _record_cost(component, label, model, last_partial.usage, last_session_id)
+                raise UsageLimitError(
+                    f"run_agent [{label}] {last_reason} after {attempt + 1} attempt(s)",
+                    limit=(limit_hit.group("limit") or "").strip().lower(),
+                    resets=(limit_hit.group("resets") or "").strip(),
+                    reason=last_reason,
+                    attempts=attempt + 1,
+                    stderr_tail=last_tail,
+                    partial=last_partial,
+                    debug_log_path=last_debug_path,
+                ) from e
             if attempt + 1 < max_attempts:
                 logger.warning(
                     "run_agent [%s] %s (attempt %d/%d), retrying in %.1fs"

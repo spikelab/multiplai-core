@@ -14,6 +14,7 @@ from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 from .agent_runner import (
     AgentRunError,
+    UsageLimitError,
     _env_float,
     _summarize_stderr,  # noqa: F401 — re-exported for compat
     run_agent,
@@ -269,10 +270,13 @@ class AgentSDKClient:
                 component=self._component,
             )
         except AgentRunError as e:
+            # A usage limit stays the cause, so its `.limit` and `.resets`
+            # are reachable (and `is_usage_limit` finds it) through the
+            # SDKQueryError; any other failure keeps the SDK error as cause.
             raise SDKQueryError(
                 f"claude_agent_sdk.query() {e.reason} after {e.attempts} attempts",
                 stderr_tail=e.stderr_tail,
-            ) from (e.__cause__ or e)
+            ) from (e if isinstance(e, UsageLimitError) else (e.__cause__ or e))
         return ModelResponse(content=result.text)
 
 

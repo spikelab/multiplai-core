@@ -18,6 +18,45 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`UsageLimitError` and `is_usage_limit()`: a hit Claude usage limit is now
+  its own error, and `run_agent` never retries it.** When the CLI reports
+  `You've hit your session limit · resets 9:40am (UTC)` (or `weekly`, or any
+  other kind), `run_agent` raises `UsageLimitError` on that attempt, whatever
+  `max_attempts` says. Before, it was a plain `AgentRunError`: `run_agent`
+  retried it, and so did every caller's own retry loop. That is how one
+  `/multiplai-dev:review` run made hundreds of calls after a limit that reset
+  hours later. The error carries `.limit`, the kind the CLI named,
+  lower-cased: usually `"session"` or `"weekly"`, but the set is open
+  (`"opus"`, `"monthly spend"`, ...), and `""` when it named none. It also
+  carries `.resets`, the reset time as the CLI wrote it, or `""`. `.partial`
+  and the cost-ledger entry work as for any other failure. Only the CLI's
+  result text counts, matched at its start as the CLI itself does: a 429 the
+  CLI retried, a debug line or a quoted phrase does not.
+
+  `UsageLimitError` subclasses `AgentRunError`, so code that catches
+  `AgentRunError` keeps catching it. **If you retry agent calls yourself,
+  catch `UsageLimitError` first and stop**, saving whatever you can resume
+  from. If you wrap `AgentRunError` in your own type, call
+  `is_usage_limit(exc)`. It takes an exception or a message. A message
+  counts when it starts with the CLI's limit text, alone or after the SDK's
+  `Claude Code returned an error result:` prefix; the phrase anywhere else
+  does not. An exception counts when it, or one reached from it as a
+  traceback would show (`__cause__`, and `__context__` unless you raised
+  `from None`), is a `UsageLimitError`, or is not an `AgentRunError` and
+  has such a message (the SDK's own error). The text of any other
+  `AgentRunError`, which carries the CLI's stderr, is not read.
+
+### Changed
+
+- **`model_client.SDKQueryError` has the `UsageLimitError` as its
+  `__cause__` when a usage limit was hit** (before, the SDK's error), so
+  `.limit` and `.resets` are reachable from it. If you check
+  `isinstance(exc.__cause__, <an SDK error class>)` on that path, a usage
+  limit no longer matches; use `is_usage_limit(exc)`. The cause is
+  unchanged for any other failure.
+
 ## [0.24.1] – 2026-10-20
 
 ### Fixed
