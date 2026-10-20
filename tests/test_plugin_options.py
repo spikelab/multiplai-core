@@ -181,13 +181,7 @@ class TestNoLowercaseReadsSurvive:
         )
 
 
-# ---------------------------------------------------------------------------
-# Fallback to the options Claude Code saved in the user's settings file.
-#
-# The harness exports CLAUDE_PLUGIN_OPTION_<KEY> to hook processes only. A
-# script a skill runs through Bash sees none of them, so without this fallback
-# every such script silently ran on defaults.
-# ---------------------------------------------------------------------------
+# --- Fallback to the plugin's saved options in the user settings file -------
 
 import json  # noqa: E402
 import sys  # noqa: E402
@@ -321,6 +315,14 @@ class TestSettingsFallback:
         install.run_as(install.script)
         assert option("skills_dir") == "/x/y"
 
+    def test_saved_key_matches_regardless_of_case_like_the_env_var(self, install):
+        """The env var's name is uppercased, so a hook reads ``Router_Mode``
+        and ``router_mode`` alike; a skill script must resolve the same."""
+        install.options({"Router_Mode": "llm"})
+        install.run_as(install.script)
+        assert option("router_mode") == "llm"
+        assert option("ROUTER_MODE") == "llm"
+
     def test_option_present_sees_saved_option(self, install):
         install.options({"enable_skills": True})
         install.run_as(install.script)
@@ -356,7 +358,7 @@ class TestSettingsFileProblems:
         install.run_as(install.script)
         with caplog.at_level(logging.DEBUG, logger="multiplai_core.plugin_options"):
             assert option("memory_router", "token_overlap") == "token_overlap"
-        assert "settings" in caplog.text.lower()
+        assert "cannot read settings file" in caplog.text
 
     @pytest.mark.parametrize(
         "raw",
@@ -377,6 +379,19 @@ class TestSettingsFileProblems:
         install.options({"memory_router": "llm"})
         install.run_as(install.script)
         assert option("memory_router") == "llm"
+
+    def test_unknown_home_uses_default_instead_of_raising(
+        self, install, monkeypatch
+    ):
+        install.options({"memory_router": "llm"})
+        install.run_as(install.script)
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR")
+
+        def no_home():
+            raise RuntimeError("Could not determine home directory.")
+
+        monkeypatch.setattr(plugin_options.Path, "home", staticmethod(no_home))
+        assert option("memory_router", "token_overlap") == "token_overlap"
 
     def test_config_dir_defaults_to_home_dot_claude(self, install, monkeypatch, tmp_path):
         home = tmp_path / "home"
@@ -452,6 +467,26 @@ class TestPluginIdentification:
         install.options({"memory_router": "llm"})
         install.run_as(venv_main)
         assert option("memory_router", "token_overlap") == "token_overlap"
+
+    @pytest.mark.parametrize("argv0", ["-c", "-", ""])
+    def test_no_entry_script_identifies_nothing(
+        self, install, monkeypatch, argv0
+    ):
+        """``python -c`` / stdin have no script; the cwd must not decide."""
+        install.options({"memory_router": "llm"})
+        monkeypatch.chdir(install.root / "scripts")
+        monkeypatch.setitem(sys.modules, "__main__", types.ModuleType("__main__"))
+        monkeypatch.setattr(sys, "argv", [argv0])
+        plugin_options._reset_cache()
+        assert option("memory_router", "token_overlap") == "token_overlap"
+
+    def test_unreadable_install_record_is_named_in_the_log(self, install, caplog):
+        (install.config / "plugins" / "installed_plugins.json").write_text("{oops")
+        install.options({"memory_router": "llm"})
+        install.run_as(install.script)
+        with caplog.at_level(logging.DEBUG, logger="multiplai_core.plugin_options"):
+            option("memory_router")
+        assert "cannot read install record" in caplog.text
 
     def test_falls_back_to_argv_when_main_has_no_file(self, install, monkeypatch):
         install.options({"memory_router": "llm"})

@@ -38,7 +38,9 @@ variable is unset), at ``pluginConfigs["<plugin>@<marketplace>"].options``.
 The value is stringified the way the harness stringifies it for a hook
 (JavaScript ``String(value)``: ``true`` -> ``"true"``, ``30.0`` -> ``"30"``,
 ``["a", "b"]`` -> ``"a,b"``), so a hook and a skill script read the same string.
-A ``null`` or object value counts as unset.
+A ``null``, an object, or a list holding anything but strings counts as unset
+(where JS would print ``"null"`` or ``"[object Object]"``), and a non-integer
+float uses Python's shortest repr, which matches JS except in exponent form.
 
 Precedence: the environment variable always wins; the settings file is only
 consulted when it is absent or blank.
@@ -59,7 +61,8 @@ Which plugin is this? The process's plugin directory is
 ``$CLAUDE_PLUGIN_ROOT`` when set (hooks), otherwise the directory of the entry
 script (``__main__.__file__``, else ``sys.argv[0]``) -- skills invoke scripts by
 their path inside the installed plugin. A path under ``site-packages`` is never
-used, so ``python -m`` runs identify nothing. That path names a plugin only by
+used, so ``python -m`` runs identify nothing; nor do ``python -c`` and stdin,
+which have no script. That path names a plugin only by
 one of two records Claude Code itself keeps under the config dir:
 
 1. ``plugins/installed_plugins.json`` -- the entry whose ``installPath`` is the
@@ -127,7 +130,8 @@ def option_var(name: str) -> str:
 
 
 def option_present(name: str) -> bool:
-    """Whether the harness delivered a non-empty value for *name*.
+    """Whether a non-empty value exists for *name*: from the harness's
+    environment variable or, failing that, the plugin's saved options.
 
     Distinguishes "the user configured this" from "this fell back to its
     default" — the distinction that made this bug class invisible for eight
@@ -153,7 +157,7 @@ def _raw(name: str) -> str:
     value = os.environ.get(option_var(name), "").strip()
     if value:
         return value
-    return _saved_options().get(name, "")
+    return _saved_options().get(name.upper(), "")
 
 
 def _reset_cache() -> None:
@@ -161,19 +165,26 @@ def _reset_cache() -> None:
     _saved_options.cache_clear()
 
 
-def _config_dir() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+def _config_dir() -> Path | None:
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    if configured:
+        return Path(configured)
+    try:
+        return Path.home() / ".claude"
+    except RuntimeError as exc:  # no resolvable home directory
+        logger.debug("plugin options: no config dir: %s", exc)
+        return None
 
 
-def _read_json(path: Path):
-    """Parsed JSON at *path*, or ``None`` (logged at debug) when it is missing
-    or unreadable. Never raises."""
+def _read_json(path: Path, what: str):
+    """Parsed JSON at *path*, or ``None`` (logged at debug, naming the file as
+    *what*) when it is missing or unreadable. Never raises."""
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        logger.debug("plugin options: %s does not exist", path)
+        logger.debug("plugin options: %s %s does not exist", what, path)
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        logger.debug("plugin options: cannot read settings file %s: %s", path, exc)
+        logger.debug("plugin options: cannot read %s %s: %s", what, path, exc)
     return None
 
 
@@ -190,8 +201,10 @@ def _plugin_path() -> Path | None:
     if root:
         return _resolve(Path(root))
     main = getattr(sys.modules.get("__main__"), "__file__", None)
-    entry = main or (sys.argv[0] if sys.argv and sys.argv[0] else None)
-    if not entry:
+    entry = main or (sys.argv[0] if sys.argv else None)
+    # `python -c` / stdin leave "-c" / "-" here: there is no script, and the
+    # working directory must not decide which plugin this is.
+    if not entry or entry in ("-c", "-"):
         return None
     path = _resolve(Path(entry))
     if path is None or {"site-packages", "dist-packages"} & set(path.parts):
@@ -202,7 +215,9 @@ def _plugin_path() -> Path | None:
 def _plugin_id(config: Path, where: Path) -> str | None:
     """The ``<plugin>@<marketplace>`` key *where* belongs to, from Claude
     Code's own records under *config* only (see the module docstring)."""
-    installed = _read_json(config / "plugins" / "installed_plugins.json")
+    installed = _read_json(
+        config / "plugins" / "installed_plugins.json", "install record"
+    )
     plugins = installed.get("plugins") if isinstance(installed, dict) else None
     best: tuple[int, str] | None = None
     if isinstance(plugins, dict):
@@ -248,18 +263,21 @@ def _as_harness_string(value) -> str | None:
 
 @functools.lru_cache(maxsize=1)
 def _saved_options() -> dict[str, str]:
-    """This plugin's saved options as stripped, non-empty strings. Parsed
-    once per process; empty when anything is missing or malformed."""
+    """This plugin's saved options as stripped, non-empty strings, keyed by
+    the **uppercased** option key -- the same case-folding the env var name
+    gets, so a hook and a skill script resolve a name alike. Parsed once per
+    process; empty when anything is missing or malformed."""
     where = _plugin_path()
     if where is None:
         return {}
-    config = _resolve(_config_dir())
+    config_dir = _config_dir()
+    config = _resolve(config_dir) if config_dir is not None else None
     if config is None:
         return {}
     plugin_id = _plugin_id(config, where)
     if plugin_id is None:
         return {}
-    settings = _read_json(config / "settings.json")
+    settings = _read_json(config / "settings.json", "settings file")
     configs = settings.get("pluginConfigs") if isinstance(settings, dict) else None
     block = configs.get(plugin_id) if isinstance(configs, dict) else None
     saved = block.get("options") if isinstance(block, dict) else None
@@ -270,7 +288,7 @@ def _saved_options() -> dict[str, str]:
     for key, value in saved.items():
         text = _as_harness_string(value)
         if text is not None and text.strip():
-            out[key] = text.strip()
+            out[str(key).upper()] = text.strip()
     return out
 
 
