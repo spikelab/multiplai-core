@@ -53,12 +53,22 @@ def _isolate_env(monkeypatch, tmp_path_factory):
 
     Also clears the session-default variables and points
     ``CLAUDE_MULTIPLAI_HOME`` at an empty directory, so the developer's
-    ``multiplai.conf`` and session transcript never set a test's model.
+    ``multiplai.conf`` and session transcript never set a test's model; and
+    points ``CLAUDE_CONFIG_DIR`` at an empty directory, so the developer's
+    saved plugin options never set a test's option.
     """
     _scrub_plugin_env(monkeypatch)
     for key in _SESSION_DEFAULT_VARS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path_factory.mktemp("no-conf")))
+    # Plugin options fall back to the saved ones in $CLAUDE_CONFIG_DIR's
+    # settings.json; an empty config dir keeps the developer's real saved
+    # options out of every test, and the per-process cache must not carry a
+    # parse from one test into the next.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("no-claude-config")))
+    from multiplai_core.plugin_options import _reset_cache as _reset_options
+
+    _reset_options()
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ own drifting copy:
 | Module | Purpose |
 |---|---|
 | `multiplai_core.paths` | Path-resolver cascade: `CLAUDE_PLUGIN_OPTION_*` → workspace → `CLAUDE_PLUGIN_DATA` → `~/.multiplai`. |
-| `multiplai_core.plugin_options` | Reads plugin `userConfig` options under the name the harness exports (`CLAUDE_PLUGIN_OPTION_<KEY>`, key **uppercased**). Pass the bare option name. |
+| `multiplai_core.plugin_options` | Reads plugin `userConfig` options under the name the harness exports (`CLAUDE_PLUGIN_OPTION_<KEY>`, key **uppercased**). Pass the bare option name. Outside a hook, where the harness exports nothing, falls back to the plugin's saved options in `$CLAUDE_CONFIG_DIR/settings.json` → `pluginConfigs`. |
 | `multiplai_core.config` | YAML/JSON load-save, memory-file reads, atomic session-state I/O. |
 | `multiplai_core.env` | `.env` discovery/loading, `multiplai.conf` parsing, model/effort name resolution (family aliases), provider-qualified `ModelSpec`s. |
 | `multiplai_core.session` | The model and effort for a step no config names: `MULTIPLAI_MODEL` / `MULTIPLAI_EFFORT`, else the Claude Code session's own (`default_model()`, `default_effort()`, `pin_session_settings()`). |

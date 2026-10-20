@@ -18,6 +18,34 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Plugin options now reach scripts that a skill runs, not only hooks.**
+  Claude Code exports `CLAUDE_PLUGIN_OPTION_<KEY>` to hook processes only, so
+  `option()`, `option_present()` and the typed accessors returned the default
+  in every script a skill ran through Bash, whatever the user had configured.
+  When the variable is absent or blank they now read the value Claude Code
+  saved for the plugin in the user settings file
+  (`$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`,
+  `pluginConfigs["<plugin>@<marketplace>"].options`), stringified as the
+  harness would export it (`true` -> `"true"`). The environment variable still
+  wins whenever it is set.
+
+  The plugin is identified from `$CLAUDE_PLUGIN_ROOT`, else from the entry
+  script's path, matched only against Claude Code's own records under the
+  config dir (`plugins/installed_plugins.json`, then the
+  `plugins/cache/<marketplace>/<plugin>/<version>/` layout). A development
+  checkout or test run is never matched by name, so it keeps reading defaults.
+  Sensitive options (kept in secure storage), managed-policy and `--settings`
+  sources are not read. A missing or malformed file logs at debug and yields
+  the default; nothing raises. Parsed once per process.
+
+  What you gain: a skill script reads the same options its hooks do. Path
+  options read through `multiplai_core.paths` (`workspace_dir`, `data_dir`, the
+  per-directory overrides) now take effect in skill scripts too. What you must
+  change: nothing. If you worked around this by passing options into a skill
+  script yourself, that workaround can go.
+
 ## [0.24.0] – 2026-10-16
 
 ### Changed
