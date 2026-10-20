@@ -18,6 +18,26 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`UsageLimitError` and `is_usage_limit()`: a hit Claude usage limit is now
+  its own error, and `run_agent` never retries it.** When the CLI reports
+  `You've hit your session limit · resets 9:40am (UTC)` (or `weekly`, or any
+  other kind), `run_agent` raises `UsageLimitError` on that attempt, whatever
+  `max_attempts` says. Before, it was a plain `AgentRunError`: `run_agent`
+  retried it, and so did every caller's own retry loop. That is how one
+  `/multiplai-dev:review` run made hundreds of calls after a limit that reset
+  hours later. The error carries `.limit` (`"session"`, `"weekly"`, or `""`)
+  and `.resets` (the reset time as the CLI wrote it, or `""`). `.partial` and
+  the cost-ledger entry work as for any other failure.
+
+  `UsageLimitError` subclasses `AgentRunError`, so code that catches
+  `AgentRunError` keeps catching it. **If you retry agent calls yourself,
+  catch `UsageLimitError` first and stop**, saving whatever you can resume
+  from. If you wrap `AgentRunError` in your own type, as
+  `model_client.SDKQueryError` does, `is_usage_limit(exc)` still recognises
+  it: it walks the exception's cause chain.
+
 ## [0.24.1] – 2026-10-20
 
 ### Fixed

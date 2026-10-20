@@ -25,7 +25,9 @@ from multiplai_core.agent_runner import (
     AgentRunTimeout,
     AgentUsage,
     ToolCall,
+    UsageLimitError,
     deny_list,
+    is_usage_limit,
     path_allowed,
     run_agent,
 )
@@ -474,6 +476,152 @@ class TestFailures:
                 _run(run_agent("hi", max_attempts=2, retry_backoff_s=0))
         assert exc.value.attempts == 2
         assert "after 2 attempt(s)" in str(exc.value)
+
+
+# The CLI's result text for a hit usage limit, as logged by run_agent on
+# 2026-10-18 (session) and 2026-10-17 (weekly) in the multiplai runtime logs.
+SESSION_LIMIT = (
+    "Claude Code returned an error result: You've hit your session limit "
+    "\u00b7 resets 9:40am (UTC) (exit code: 1)"
+)
+WEEKLY_LIMIT = (
+    "Claude Code returned an error result: You've hit your weekly limit "
+    "\u00b7 resets Oct 19, 4am (UTC) (exit code: 1)"
+)
+
+
+class _ResultError(Exception):
+    """Stands in for claude_agent_sdk's ResultError."""
+
+
+class TestUsageLimit:
+    """A hit usage limit resets hours later: run_agent must not retry it."""
+
+    def _counting_sdk(self, message: str):
+        calls = {"n": 0}
+        mock = _make_mock_sdk()
+
+        async def _agen(prompt, options):
+            calls["n"] += 1
+            raise _ResultError(message)
+            yield  # pragma: no cover — makes this an async generator
+
+        mock.query = MagicMock(side_effect=_agen)
+        return mock, calls
+
+    @pytest.mark.parametrize("message,limit,resets", [
+        (SESSION_LIMIT, "session", "9:40am (UTC)"),
+        (WEEKLY_LIMIT, "weekly", "Oct 19, 4am (UTC)"),
+    ])
+    def test_limit_raises_usage_limit_error_without_retry(self, message, limit, resets):
+        mock_sdk, calls = self._counting_sdk(message)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(UsageLimitError) as exc:
+                _run(run_agent("hi", max_attempts=3, retry_backoff_s=0))
+        assert calls["n"] == 1
+        assert exc.value.attempts == 1
+        assert exc.value.limit == limit
+        assert exc.value.resets == resets
+        assert isinstance(exc.value, AgentRunError)  # old `except AgentRunError` still catches it
+        assert "hit your " + limit + " limit" in str(exc.value)
+        assert isinstance(exc.value.__cause__, _ResultError)
+
+    def test_other_failures_still_retry(self):
+        mock_sdk, calls = self._counting_sdk("Command failed with exit code 1")
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(AgentRunError) as exc:
+                _run(run_agent("hi", max_attempts=2, retry_backoff_s=0))
+        assert not isinstance(exc.value, UsageLimitError)
+        assert calls["n"] == 2
+
+    def test_api_rate_limit_in_stderr_is_not_a_usage_limit(self):
+        """A 429 the CLI retried is transient; only the result text says a limit was hit."""
+        mock_sdk = _make_mock_sdk(
+            fail=RuntimeError("Command failed with exit code 1"),
+            stderr_lines=["[ERROR] API rate_limit after retries: This request would exceed "
+                          "your account's rate limit. Please try again later."],
+        )
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(AgentRunError) as exc:
+                _run(run_agent("hi"))
+        assert not isinstance(exc.value, UsageLimitError)
+
+    def test_limit_without_reset_time(self):
+        mock_sdk, _ = self._counting_sdk("You've hit your limit (exit code: 1)")
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(UsageLimitError) as exc:
+                _run(run_agent("hi"))
+        assert exc.value.limit == ""
+        assert exc.value.resets == ""
+
+    def test_limit_logs_one_fail_line_and_no_retry_line(self, caplog):
+        mock_sdk, _ = self._counting_sdk(SESSION_LIMIT)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with caplog.at_level(logging.WARNING, logger="multiplai_core.agent_runner"):
+                with pytest.raises(UsageLimitError):
+                    _run(run_agent("hi", max_attempts=3, retry_backoff_s=0, label="verify"))
+        text = caplog.text
+        assert "retrying" not in text
+        assert "usage limit" in text and "not retried" in text
+
+    def test_limit_records_partial_usage(self, tmp_workspace):
+        from multiplai_core.costing import iter_ledger
+
+        async def _agen(prompt, options):
+            yield _FakeAssistantMessage([_FakeTextBlock("some")])
+            yield _FakeResultMessage(usage={"input_tokens": 10, "output_tokens": 2})
+            raise _ResultError(SESSION_LIMIT)
+
+        mock_sdk = _make_mock_sdk()
+        mock_sdk.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            with pytest.raises(UsageLimitError) as exc:
+                _run(run_agent("p", component="review"))
+        assert exc.value.partial is not None and exc.value.partial.text == "some"
+        assert len(list(iter_ledger())) == 1
+
+
+class TestIsUsageLimit:
+    def test_true_for_the_error_itself(self):
+        assert is_usage_limit(UsageLimitError("x", limit="session"))
+
+    def test_true_for_a_wrapper_whose_cause_is_one(self):
+        class Wrapper(Exception):
+            pass
+
+        try:
+            try:
+                raise UsageLimitError("run_agent [verify] failed", limit="session")
+            except UsageLimitError as e:
+                raise Wrapper("agent call failed") from e
+        except Wrapper as w:
+            assert is_usage_limit(w)
+
+    def test_true_for_the_raw_message_anywhere_in_the_chain(self):
+        try:
+            try:
+                raise _ResultError(WEEKLY_LIMIT)
+            except _ResultError as e:
+                raise RuntimeError("query failed") from e
+        except RuntimeError as w:
+            assert is_usage_limit(w)
+
+    def test_true_for_a_string(self):
+        assert is_usage_limit(SESSION_LIMIT)
+
+    @pytest.mark.parametrize("value", [
+        RuntimeError("Command failed with exit code 1"),
+        AgentRunError("run_agent [x] timed out after 600s"),
+        "This request would exceed your account's rate limit. Please try again later.",
+        "",
+    ])
+    def test_false_otherwise(self, value):
+        assert not is_usage_limit(value)
+
+    def test_a_cause_cycle_terminates(self):
+        a, b = RuntimeError("a"), RuntimeError("b")
+        a.__cause__, b.__cause__ = b, a
+        assert not is_usage_limit(a)
 
 
 class TestTimeout:
