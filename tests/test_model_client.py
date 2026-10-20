@@ -358,6 +358,9 @@ class TestAgentSDKClient:
                 assert "after 2 attempts" in str(exc.value)
                 assert "persistent failure" in str(exc.value)
                 assert "cli: fatal" in exc.value.stderr_tail
+                # Unchanged for a failure that is not a usage limit: the SDK's error is the cause.
+                assert isinstance(exc.value.__cause__, RuntimeError)
+                assert str(exc.value.__cause__) == "persistent failure"
 
             asyncio.run(_test())
 

@@ -39,14 +39,23 @@ not backfilled; their contents are recoverable from `git log`.
   `AgentRunError` keeps catching it. **If you retry agent calls yourself,
   catch `UsageLimitError` first and stop**, saving whatever you can resume
   from. If you wrap `AgentRunError` in your own type, call
-  `is_usage_limit(exc)`. It takes an exception or a message, and returns
-  True when the exception, or one reached from it as a traceback would show
-  (`__cause__`, and `__context__` unless you raised `from None`), is a
-  `UsageLimitError`, or has a message that starts with the CLI's limit text.
-  For an `AgentRunError` it reads `.reason`, never the captured stderr.
-  `model_client.SDKQueryError` now has the `UsageLimitError` as its
-  `__cause__` when a limit was hit, so `.limit` and `.resets` are reachable
-  there too. Any other failure still has the SDK's error as its cause.
+  `is_usage_limit(exc)`. It takes an exception or a message. A message
+  counts when it starts with the CLI's limit text, alone or after the SDK's
+  `Claude Code returned an error result:` prefix; the phrase anywhere else
+  does not. An exception counts when it, or one reached from it as a
+  traceback would show (`__cause__`, and `__context__` unless you raised
+  `from None`), is a `UsageLimitError`, or is not an `AgentRunError` and
+  has such a message (the SDK's own error). The text of any other
+  `AgentRunError`, which carries the CLI's stderr, is not read.
+
+### Changed
+
+- **`model_client.SDKQueryError` has the `UsageLimitError` as its
+  `__cause__` when a usage limit was hit** (before, the SDK's error), so
+  `.limit` and `.resets` are reachable from it. If you check
+  `isinstance(exc.__cause__, <an SDK error class>)` on that path, a usage
+  limit no longer matches; use `is_usage_limit(exc)`. The cause is
+  unchanged for any other failure.
 
 ## [0.24.1] – 2026-10-20
 

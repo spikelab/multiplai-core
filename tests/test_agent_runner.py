@@ -556,6 +556,10 @@ class TestUsageLimit:
          "\u00b7 progress saved", "opus", "9:40am (UTC)"),
         ("Claude Code returned an error result: You've hit your team's shared budget. /model to switch models.",
          "team's shared", ""),
+        ("Claude Code returned an error result: You've hit your session limit \u00b7 resets 5pm (exit code: 1)",
+         "session", "5pm"),
+        ("Claude Code returned an error result: You've hit your Opus 4.1 limit (exit code: 1)", "opus 4.1", ""),
+        ("You've hit your limit (exit code: 1)", "", ""),
     ])
     def test_other_wordings_of_the_bundled_cli(self, message, limit, resets):
         """Shapes the CLI bundled with claude-agent-sdk 0.2.168 builds: `You've hit your ${name}${resets}${saved}`."""
@@ -564,14 +568,6 @@ class TestUsageLimit:
             with pytest.raises(UsageLimitError) as exc:
                 _run(run_agent("hi"))
         assert (exc.value.limit, exc.value.resets) == (limit, resets)
-
-    def test_limit_without_reset_time(self):
-        mock_sdk, _ = self._counting_sdk("You've hit your limit (exit code: 1)")
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            with pytest.raises(UsageLimitError) as exc:
-                _run(run_agent("hi"))
-        assert exc.value.limit == ""
-        assert exc.value.resets == ""
 
     def test_limit_logs_one_fail_line_with_the_stderr_and_no_retry_line(self, caplog):
         mock_sdk, _ = self._counting_sdk(SESSION_LIMIT)
@@ -603,9 +599,6 @@ class TestUsageLimit:
 
 
 class TestIsUsageLimit:
-    def test_true_for_the_error_itself(self):
-        assert is_usage_limit(UsageLimitError("x", limit="session"))
-
     def test_true_for_a_wrapper_whose_cause_is_one(self):
         class Wrapper(Exception):
             pass
@@ -638,10 +631,28 @@ class TestIsUsageLimit:
         except RuntimeError as w:
             assert not is_usage_limit(w)
 
-    def test_an_agent_run_error_is_judged_by_its_reason_not_its_stderr(self):
-        e = AgentRunError("run_agent [x] failed: exit 1", reason="failed: exit 1",
-                          stderr_tail="[DEBUG] You've hit your session limit")
+    def test_stderr_holding_the_sdk_message_does_not_count_through_any_wrapper(self):
+        """The phrase, with the SDK's own prefix, in a stderr line: neither the
+        AgentRunError nor a wrapper whose str() includes that stderr counts."""
+        from multiplai_core.model_client import SDKQueryError
+
+        line = "[DEBUG] Claude Code returned an error result: You've hit your session limit"
+        e = AgentRunError("run_agent [x] failed: exit 1", reason="failed: exit 1", stderr_tail=line)
         assert not is_usage_limit(e)
+        try:
+            try:
+                raise e
+            except AgentRunError as inner:
+                raise SDKQueryError("claude_agent_sdk.query() failed: exit 1 after 2 attempts",
+                                    stderr_tail=line) from inner
+        except SDKQueryError as w:
+            assert line in str(w)
+            assert not is_usage_limit(w)
+
+    def test_a_message_quoting_the_sdk_message_does_not_count(self):
+        assert not is_usage_limit(
+            "Claude Code returned an error result: finding F1: 'Claude Code returned an error result: "
+            "You've hit your session limit'")
 
     def test_true_for_the_raw_message_anywhere_in_the_chain(self):
         try:

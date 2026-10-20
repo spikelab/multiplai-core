@@ -378,21 +378,13 @@ class UnknownAgentBackendError(AgentRunError):
     """``model`` names a provider no agent backend is registered for."""
 
 
-# The Claude Code CLI's result text when the account's usage limit is hit, e.g.
-# "You've hit your session limit · resets 9:40am (UTC)" and
-# "You've hit your weekly limit · resets Oct 19, 4am (UTC)" (both seen in the
-# runtime logs, 2026-10-12 to 2026-10-18). The CLI bundled with
-# claude-agent-sdk 0.2.168 builds it as `You've hit your ${name}${resets}`
-# plus an optional " · progress saved", and other names exist there ("fast
-# limit", "monthly spend limit", "team's shared budget"). It tells them apart
-# with `startsWith("You've hit your ...")`, so the match is anchored the same
-# way: at the start of the text, or right after the SDK's "...error result:"
-# prefix. A phrase quoted mid-message (a model's answer, a debug line) does
-# not match. `limit` is the text before "limit"/"budget" ("" when none);
-# `resets` the time after "resets", without " · progress saved" or the
-# "(exit code: 1)" the SDK appends.
+# The CLI's result text for a hit usage limit, e.g. "You've hit your session
+# limit · resets 9:40am (UTC)". The CLI (bundled with claude-agent-sdk
+# 0.2.168) tells these apart with `startsWith("You've hit your ...")`, so the
+# match is anchored the same way: at the start of the text, after at most the
+# SDK's "Claude Code returned an error result:" prefix.
 _USAGE_LIMIT_RE = re.compile(
-    r"(?:^|error result:\s*)you(?:'|\u2019)ve hit your (?P<limit>[^\n·.]{0,40}?)\s*(?:limit|budget)\b"
+    r"\A(?:[^\n:]*error result:\s*)?you(?:'|\u2019)ve hit your (?P<limit>[^\n·]{0,60}?)\s*(?:limit|budget)\b"
     r"(?:\s*·\s*resets\s+(?P<resets>[^()\n·]*(?:\((?!exit code)[^()\n]*\))?))?",
     re.IGNORECASE,
 )
@@ -427,16 +419,17 @@ def _usage_limit_match(text: str) -> "re.Match[str] | None":
 def is_usage_limit(error: BaseException | str) -> bool:
     """Whether *error* is, or was caused by, a hit Claude usage limit.
 
-    *error* is an exception or a message. An exception counts when it, or one
-    reached from it the way Python's traceback does (``__cause__``, and
-    ``__context__`` unless suppressed by ``raise ... from None``), is a
-    :class:`UsageLimitError` or has a message that starts with the CLI's
-    limit text (``You've hit your ... limit``), alone or after the SDK's
-    ``...error result:`` prefix. For an ``AgentRunError`` the message is its
-    ``reason``, never its captured CLI stderr, so a debug line that echoes the
-    phrase does not count. This lets a caller that wraps ``AgentRunError`` in
-    its own type (``model_client.SDKQueryError``, a skill's error class) still
-    tell a usage limit from a failure worth retrying.
+    *error* is an exception or a message. A message counts when it starts
+    with the CLI's limit text (``You've hit your ... limit``), alone or after
+    the SDK's ``Claude Code returned an error result:`` prefix; the phrase
+    anywhere else (a quote, a stderr line a wrapper appended) does not. An
+    exception counts when it, or one reached from it the way Python's
+    traceback does (``__cause__``, and ``__context__`` unless suppressed by
+    ``raise ... from None``), is a :class:`UsageLimitError`, or is not an
+    ``AgentRunError`` and has such a message (the SDK's own error). This lets
+    a caller that wraps ``AgentRunError`` in its own type
+    (``model_client.SDKQueryError``, a skill's error class) still tell a usage
+    limit from a failure worth retrying.
     """
     if isinstance(error, str):
         return _usage_limit_match(error) is not None
@@ -447,8 +440,11 @@ def is_usage_limit(error: BaseException | str) -> bool:
         if id(e) in seen:
             continue
         seen.add(id(e))
-        text = e.reason if isinstance(e, AgentRunError) else str(e)
-        if isinstance(e, UsageLimitError) or _usage_limit_match(text):
+        if isinstance(e, UsageLimitError):
+            return True
+        # run_agent raises UsageLimitError itself, so another AgentRunError's
+        # text (which carries the CLI's stderr) is not read.
+        if not isinstance(e, AgentRunError) and _usage_limit_match(str(e)):
             return True
         if e.__cause__ is not None:
             todo.append(e.__cause__)
