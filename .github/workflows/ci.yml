@@ -45,4 +45,4 @@ jobs:
       # `uv run` resolves the declared deps itself; --python pins the
       # interpreter so the matrix leg tests what it says it tests.
       - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} --extra dev pytest -q
+        run: uv run --python ${{ matrix.python-version }} --extra dev pytest -q -n auto
