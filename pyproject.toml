@@ -81,3 +81,8 @@ packages = ["src/multiplai_core"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+required-version = "==0.17.1"
+extend-exclude = []
+# no line-length (88 default), no select/extend-select
