@@ -18,6 +18,44 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`multiplai_core.specs`: the `specs/` directory format, for a plugin that
+  writes a change's requirements or builds from them.** It is buildme's
+  `change_manager.py` code, moved here with its behaviour unchanged, so two
+  plugins can read and write the same change directory without one importing
+  the other. All names below are also exported from `multiplai_core`.
+  - Requirement files: `parse_requirements(text)` returns the
+    `RequirementBlock`s (`name`, `section` such as `"ADDED"` or `None`,
+    `body`, `scenarios` of `ScenarioBlock(name, body)`);
+    `valid_requirement_text(text)` / `valid_requirement(path)` say whether
+    every requirement has a name and, outside `## REMOVED Requirements`, a
+    scenario with a `WHEN` and a `THEN`. `expected_capabilities(proposal)`
+    lists the backticked names under the proposal's `## Capabilities`.
+  - The registry: `apply_delta(main, delta)` applies a change's
+    ADDED/MODIFIED/REMOVED sections to a registry file's text,
+    `merge_delta_requirements(change_dir, registry_dir)` does it for every
+    `requirements/*.md`, and `archive_change(change_dir, specs_dir, *,
+    merge_specs=True, today=None)` merges, then moves the change to
+    `specs/archive/YYYY-MM-DD-<name>/`. `archived_change_dirs(specs_dir, name)`
+    and `normalize_change_name(name)` are the naming rules.
+  - The ready record, four keys in `.change.yaml`: `spec_status` (`draft` |
+    `ready`), `spec_revision`, `spec_checked_at` and `spec_issues`.
+    `spec_revision(change_dir)` is a sha256 over `proposal.md`,
+    `use-cases.md` and `requirements/*.md` (paths included, line endings
+    normalised to LF; the docstring gives the exact algorithm).
+    `mark_ready(change_dir, now=None)` records the files as they are;
+    `is_ready(change_dir)` returns `(True, "")` only while they still hash
+    to that revision, else `(False, reason)` with a one-line reason, including
+    for a `.change.yaml` written before these keys existed. `mark_draft`,
+    `set_spec_issues`, `clear_spec_issues`, `read_change_meta` and
+    `write_change_meta` (which keeps every key it was not asked to set) are
+    the rest.
+
+  If you parse requirement files or merge them into `specs/registry/`
+  yourself, you can switch to these; nothing you use today changes. No new
+  dependency: `pyyaml` already was one.
+
 ## [0.25.0] – 2026-10-20
 
 ### Added

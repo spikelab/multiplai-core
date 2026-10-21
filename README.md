@@ -29,6 +29,7 @@ own drifting copy:
 | `multiplai_core.checkpoint` | `save_model()` / `load_model()` — atomic JSON checkpoint of a pydantic model. |
 | `multiplai_core.progress` | `ProgressWriter` — tailable `[<UTC>Z] STAGE/DONE/FAILED …` progress file. |
 | `multiplai_core.stage_config` | `conf_value()`, `read_yaml_mapping()`, `coerce_int()`, `check_effort()` — the shared half of a pipeline's `<name>.yaml` > `multiplai.conf` > defaults config loader. |
+| `multiplai_core.specs` | The `specs/` directory format buildme and pm-spec share: requirement-file parsing and validation (`parse_requirements`, `valid_requirement_text`, `expected_capabilities`), the delta merge into `specs/registry/` (`apply_delta`, `merge_delta_requirements`, `archive_change`), and the ready record in `.change.yaml` (`spec_revision`, `mark_ready`, `is_ready`). |
 
 ## Install
 
