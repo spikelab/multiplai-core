@@ -139,6 +139,31 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
     from .progress import ProgressWriter
     from .stage_config import check_effort, coerce_int, conf_value, read_yaml_mapping
     from .structured import StructuredAnswerError, parse_answer, reformat_prompt
+    from .specs import (
+        CHANGE_META_FILE,
+        SPEC_STATUS_DRAFT,
+        SPEC_STATUS_READY,
+        RequirementBlock,
+        ScenarioBlock,
+        apply_delta,
+        archive_change,
+        archived_change_dirs,
+        clear_spec_issues,
+        expected_capabilities,
+        is_ready,
+        mark_draft,
+        mark_ready,
+        merge_delta_requirements,
+        normalize_change_name,
+        parse_requirements,
+        read_change_meta,
+        set_spec_issues,
+        spec_files,
+        spec_revision,
+        valid_requirement,
+        valid_requirement_text,
+        write_change_meta,
+    )
 
 # Which lazily-imported submodule serves each deferred public name. The three
 # module names themselves are included so `multiplai_core.agent_runner` (and
@@ -148,7 +173,7 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
 # none is listed here: `from multiplai_core.costing import …` imports the
 # submodule directly and never reaches `__getattr__`. The pipeline modules
 # (`budget`, `checkpoint`, `progress`, `stage_config`, `structured`,
-# `citations`) are the exception: they are listed by module name too, because
+# `citations`, `specs`) are the exception: they are listed by module name too, because
 # `budget`'s ContextVar helpers are public API spelled
 # `multiplai_core.budget.start(...)`, and `citations.file_at.cache_clear()` is
 # how a caller drops the cached file text.
@@ -198,6 +223,18 @@ _LAZY_ATTRS: dict[str, str] = {
     **dict.fromkeys(
         ("parse_answer", "reformat_prompt", "StructuredAnswerError", "structured"),
         "structured",
+    ),
+    **dict.fromkeys(
+        (
+            "CHANGE_META_FILE", "SPEC_STATUS_DRAFT", "SPEC_STATUS_READY",
+            "RequirementBlock", "ScenarioBlock", "apply_delta", "archive_change",
+            "archived_change_dirs", "clear_spec_issues", "expected_capabilities",
+            "is_ready", "mark_draft", "mark_ready", "merge_delta_requirements",
+            "normalize_change_name", "parse_requirements", "read_change_meta",
+            "set_spec_issues", "spec_files", "spec_revision", "valid_requirement",
+            "valid_requirement_text", "write_change_meta", "specs",
+        ),
+        "specs",
     ),
 }
 
@@ -347,5 +384,30 @@ __all__ = [
     "normalise_ws",
     "GIT_ARGV",
     "git_env",
+    # the specs/ directory format: requirement files, registry merge,
+    # archive, and the ready record in .change.yaml
+    "CHANGE_META_FILE",
+    "SPEC_STATUS_DRAFT",
+    "SPEC_STATUS_READY",
+    "RequirementBlock",
+    "ScenarioBlock",
+    "apply_delta",
+    "archive_change",
+    "archived_change_dirs",
+    "clear_spec_issues",
+    "expected_capabilities",
+    "is_ready",
+    "mark_draft",
+    "mark_ready",
+    "merge_delta_requirements",
+    "normalize_change_name",
+    "parse_requirements",
+    "read_change_meta",
+    "set_spec_issues",
+    "spec_files",
+    "spec_revision",
+    "valid_requirement",
+    "valid_requirement_text",
+    "write_change_meta",
     "__version__",
 ]
