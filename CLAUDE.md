@@ -72,7 +72,7 @@ silent tag.
 It requires `main`, clean, in sync with origin, then runs two gates —
 **neither is optional and there is no flag to skip either**:
 
-1. **Test gate** — `uv run --extra dev pytest` must pass. You cannot tag a
+1. **Test gate** — `uv run --extra dev pytest -q -n auto` must pass. You cannot tag a
    broken library, because you cannot withdraw the tag.
 2. **Changelog gate** — `## [Unreleased]` must be non-empty. It is then
    retitled `## [X.Y.Z] – <date>`, a fresh empty `[Unreleased]` is opened, and
@@ -140,8 +140,10 @@ tests/                # pytest suite
 ```
 
 ```bash
-uv run --extra dev pytest                      # the suite, in the project venv
-uv run --python 3.11 --extra dev pytest -q     # the floor CI also tests
+uv run --extra dev pytest -n auto              # the suite, in the project venv, in parallel (pytest-xdist)
+uv run --python 3.11 --extra dev pytest -q -n auto  # the floor CI also tests
+uvx ruff@0.17.1 check .                        # lint (CI runs this; version pinned in pyproject.toml)
+uvx ruff@0.17.1 format --check .               # formatting (CI runs this; `format .` to apply)
 ```
 
 `requires-python = ">=3.11"`, so 3.11 is a supported floor, not an aspiration —

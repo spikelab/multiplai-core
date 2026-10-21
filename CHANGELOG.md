@@ -56,6 +56,16 @@ not backfilled; their contents are recoverable from `git log`.
   yourself, you can switch to these; nothing you use today changes. No new
   dependency: `pyyaml` already was one.
 
+### Changed
+
+- **Tooling only — no public API or behaviour change.** The code is now linted
+  and formatted with ruff 0.17.1 under its default rules (`[tool.ruff]` in
+  `pyproject.toml`; violations that predate it are ignored per file), CI runs
+  `ruff check` and `ruff format --check`, and the test suite runs in parallel
+  with pytest-xdist (`-n auto`, now in the `dev` extra) in CI and in
+  `release.sh`'s test gate. `.git-blame-ignore-revs` lists the autofix and
+  format commits.
+
 ## [0.25.0] – 2026-10-20
 
 ### Added
