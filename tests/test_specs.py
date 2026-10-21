@@ -7,7 +7,7 @@ with `ChangeManager` replaced by the module-level functions and
 `cm.create_change` by a plain directory.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -18,12 +18,21 @@ from multiplai_core.specs import (
     apply_delta,
     archive_change,
     archived_change_dirs,
+    clear_spec_issues,
     expected_capabilities,
+    is_ready,
+    mark_draft,
+    mark_ready,
     merge_delta_requirements,
     normalize_change_name,
     parse_requirements,
+    read_change_meta,
+    set_spec_issues,
+    spec_files,
+    spec_revision,
     valid_requirement,
     valid_requirement_text,
+    write_change_meta,
 )
 
 SPEC_EXTRACT_SAMPLE = Path(__file__).parent / "fixtures" / "spec_extract_registry_sample.md"
@@ -353,3 +362,216 @@ class TestValidRequirement:
 
     def test_spec_extract_registry_file_is_valid(self):
         assert valid_requirement_text(SPEC_EXTRACT_SAMPLE.read_text())
+
+
+# --- the ready record ---
+
+
+def _what_docs(change: Path) -> Path:
+    change.mkdir(parents=True, exist_ok=True)
+    (change / "proposal.md").write_text("## Why\nBecause.\n\n## Capabilities\n- `auth`\n")
+    (change / "use-cases.md").write_text("## Use cases\n- Ana wants to log in so that she sees her page\n")
+    (change / "requirements").mkdir(exist_ok=True)
+    (change / "requirements" / "auth.md").write_text(
+        "## ADDED Requirements\n\n### Requirement: Login\nLogs in.\n\n"
+        "#### Scenario: ok\n- **WHEN** valid\n- **THEN** in\n")
+    return change
+
+
+@pytest.fixture
+def change(tmp_path):
+    c = _what_docs(tmp_path / "specs" / "changes" / "add-auth")
+    (c / ".change.yaml").write_text("schema: spec-driven\ncreated: '2026-10-21'\n")
+    return c
+
+
+class TestChangeMeta:
+    def test_missing_or_empty_file_reads_as_empty(self, tmp_path):
+        assert read_change_meta(tmp_path) == {}
+        (tmp_path / ".change.yaml").write_text("")
+        assert read_change_meta(tmp_path) == {}
+
+    def test_damaged_file_raises_naming_it(self, tmp_path):
+        (tmp_path / ".change.yaml").write_text("a: [unclosed\n")
+        with pytest.raises(ValueError, match=r"\.change\.yaml is not valid YAML"):
+            read_change_meta(tmp_path)
+        (tmp_path / ".change.yaml").write_text("- a list\n")
+        with pytest.raises(ValueError, match="does not hold a mapping"):
+            read_change_meta(tmp_path)
+
+    def test_write_keeps_unknown_keys_in_order(self, change):
+        (change / ".change.yaml").write_text(
+            "schema: spec-driven\ncreated: '2026-10-21'\nplane_refs:\n- SPK-12\nspec_status: draft\n")
+        written = write_change_meta(change, {"spec_status": "ready", "spec_issues": None})
+        assert list(written) == ["schema", "created", "plane_refs", "spec_status", "spec_issues"]
+        assert read_change_meta(change) == {
+            "schema": "spec-driven", "created": "2026-10-21", "plane_refs": ["SPK-12"],
+            "spec_status": "ready", "spec_issues": None}
+        assert "spec_issues: null" in (change / ".change.yaml").read_text()
+
+    def test_write_creates_the_file(self, tmp_path):
+        write_change_meta(tmp_path, {"spec_status": "draft"})
+        assert read_change_meta(tmp_path) == {"spec_status": "draft"}
+        assert [p.name for p in tmp_path.iterdir()] == [".change.yaml"], "no temporary file left"
+
+    def test_write_refuses_to_overwrite_a_damaged_file(self, tmp_path):
+        (tmp_path / ".change.yaml").write_text("a: [unclosed\n")
+        with pytest.raises(ValueError):
+            write_change_meta(tmp_path, {"spec_status": "draft"})
+        assert (tmp_path / ".change.yaml").read_text() == "a: [unclosed\n"
+
+
+class TestSpecRevision:
+    def test_is_the_documented_algorithm(self, change):
+        import hashlib
+        h = hashlib.sha256()
+        for rel in ("proposal.md", "requirements/auth.md", "use-cases.md"):
+            data = (change / rel).read_bytes()
+            h.update(rel.encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
+        assert spec_revision(change) == h.hexdigest()
+        assert [p.relative_to(change).as_posix() for p in spec_files(change)] == [
+            "proposal.md", "requirements/auth.md", "use-cases.md"]
+
+    def test_only_the_what_documents_count(self, change):
+        before = spec_revision(change)
+        (change / "design.md").write_text("## Decisions\n")
+        (change / "interview.md").write_text("Q&A\n")
+        (change / "requirements" / "notes.txt").write_text("not markdown\n")
+        (change / "requirements" / "nested").mkdir()
+        (change / "requirements" / "nested" / "deep.md").write_text("### Requirement: X\n")
+        write_change_meta(change, {"spec_status": "ready"})
+        assert spec_revision(change) == before
+
+    def test_lf_normalisation(self, tmp_path):
+        lf = _what_docs(tmp_path / "lf")
+        crlf = _what_docs(tmp_path / "crlf")
+        cr = _what_docs(tmp_path / "cr")
+        for p in spec_files(crlf):
+            p.write_bytes(p.read_bytes().replace(b"\n", b"\r\n"))
+        for p in spec_files(cr):
+            p.write_bytes(p.read_bytes().replace(b"\n", b"\r"))
+        assert b"\r\n" in (crlf / "proposal.md").read_bytes()
+        assert spec_revision(lf) == spec_revision(crlf) == spec_revision(cr)
+
+    def test_content_add_remove_and_rename_change_it(self, change):
+        seen = {spec_revision(change)}
+        (change / "requirements" / "auth.md").write_text(
+            (change / "requirements" / "auth.md").read_text() + "\n")
+        seen.add(spec_revision(change))
+        (change / "requirements" / "auth.md").rename(change / "requirements" / "login.md")
+        seen.add(spec_revision(change))
+        (change / "requirements" / "extra.md").write_text("")
+        seen.add(spec_revision(change))
+        (change / "use-cases.md").unlink()
+        seen.add(spec_revision(change))
+        assert len(seen) == 5
+
+    def test_moving_text_between_files_changes_it(self, tmp_path):
+        a = tmp_path / "a"
+        (a / "requirements").mkdir(parents=True)
+        (a / "requirements" / "x.md").write_text("ab")
+        (a / "requirements" / "y.md").write_text("")
+        b = tmp_path / "b"
+        (b / "requirements").mkdir(parents=True)
+        (b / "requirements" / "x.md").write_text("a")
+        (b / "requirements" / "y.md").write_text("b")
+        assert spec_revision(a) != spec_revision(b)
+
+    def test_empty_change_hashes_the_empty_input(self, tmp_path):
+        assert spec_revision(tmp_path) == (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+
+class TestIsReady:
+    def test_ready(self, change):
+        revision = mark_ready(change, now=datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc))
+        assert is_ready(change) == (True, "")
+        meta = read_change_meta(change)
+        assert meta["spec_status"] == "ready"
+        assert meta["spec_revision"] == revision == spec_revision(change)
+        assert meta["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
+        assert meta["schema"] == "spec-driven" and meta["created"] == "2026-10-21"
+
+    def test_draft(self, change):
+        mark_ready(change)
+        mark_draft(change)
+        ok, reason = is_ready(change)
+        assert not ok and reason == "spec_status is 'draft', not 'ready'"
+        assert read_change_meta(change)["spec_revision"] == spec_revision(change), "last check kept"
+
+    def test_edited_file_after_ready(self, change):
+        mark_ready(change)
+        (change / "requirements" / "auth.md").write_text(
+            (change / "requirements" / "auth.md").read_text().replace("Logs in.", "Logs in fast."))
+        ok, reason = is_ready(change)
+        assert not ok
+        assert reason.startswith("the specs changed after they were marked ready")
+        mark_ready(change)
+        assert is_ready(change) == (True, "")
+
+    def test_line_ending_change_after_ready_is_still_ready(self, change):
+        mark_ready(change)
+        p = change / "proposal.md"
+        p.write_bytes(p.read_bytes().replace(b"\n", b"\r\n"))
+        assert is_ready(change) == (True, "")
+
+    def test_old_change_yaml_without_the_keys(self, change):
+        """A `.change.yaml` buildme wrote before the ready record existed."""
+        ok, reason = is_ready(change)
+        assert not ok and reason == "spec_status is not set: the specs were never marked ready"
+
+    def test_ready_without_a_revision(self, change):
+        write_change_meta(change, {"spec_status": "ready"})
+        assert is_ready(change) == (False, "spec_status is ready but spec_revision is missing")
+
+    def test_no_change_yaml(self, tmp_path):
+        ok, reason = is_ready(tmp_path)
+        assert not ok and reason == f"no .change.yaml in {tmp_path}"
+
+    def test_damaged_change_yaml_is_one_line(self, change):
+        (change / ".change.yaml").write_text("a: [unclosed\n")
+        ok, reason = is_ready(change)
+        assert not ok and reason.startswith(".change.yaml cannot be read:") and "\n" not in reason
+
+    def test_open_spec_issues_do_not_change_readiness(self, change):
+        mark_ready(change)
+        set_spec_issues(change, change / "spec-issues.md")
+        assert is_ready(change) == (True, "")
+
+
+class TestMarkReady:
+    def test_naive_now_is_utc_and_aware_now_is_converted(self, change):
+        mark_ready(change, now=datetime(2026, 10, 21, 9, 30))
+        assert read_change_meta(change)["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
+        mark_ready(change, now=datetime(2026, 10, 21, 11, 30, tzinfo=timezone(timedelta(hours=2))))
+        assert read_change_meta(change)["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
+
+    def test_default_now_is_the_current_utc_time(self, change):
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+        mark_ready(change)
+        checked = datetime.fromisoformat(read_change_meta(change)["spec_checked_at"])
+        assert before <= checked <= datetime.now(timezone.utc)
+
+    def test_leaves_spec_issues_alone(self, change):
+        set_spec_issues(change, "spec-issues.md")
+        mark_ready(change)
+        assert read_change_meta(change)["spec_issues"] == "spec-issues.md"
+
+
+class TestSpecIssues:
+    def test_path_inside_the_change_is_saved_relative(self, change):
+        set_spec_issues(change, change / "spec-issues.md")
+        assert read_change_meta(change)["spec_issues"] == "spec-issues.md"
+        set_spec_issues(change, "spec-issues.md")
+        assert read_change_meta(change)["spec_issues"] == "spec-issues.md"
+
+    def test_path_outside_is_saved_as_given(self, change, tmp_path):
+        outside = tmp_path / "elsewhere" / "spec-issues.md"
+        set_spec_issues(change, outside)
+        assert read_change_meta(change)["spec_issues"] == str(outside)
+
+    def test_clear_writes_null(self, change):
+        set_spec_issues(change, "spec-issues.md")
+        clear_spec_issues(change)
+        meta = read_change_meta(change)
+        assert "spec_issues" in meta and meta["spec_issues"] is None

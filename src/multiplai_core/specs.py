@@ -30,12 +30,19 @@ Standard library plus ``pyyaml`` (already a core dependency). No model call.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import re
 import shutil
+import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 log = logging.getLogger(__name__)
 
@@ -313,3 +320,189 @@ def archive_change(change_dir: Path, specs_dir: Path, *, merge_specs: bool = Tru
     shutil.move(str(change_dir), str(dest))
     log.info("Archived change '%s' to %s", change_dir.name, dest)
     return dest
+
+
+# --- the ready record in .change.yaml ----------------------------------------
+
+
+def read_change_meta(change_dir: Path) -> dict[str, Any]:
+    """The mapping in ``<change_dir>/.change.yaml``; ``{}`` when there is no
+    such file or it is empty.
+
+    Raises ValueError, naming the file, when it is not valid YAML or does not
+    hold a mapping, so a damaged record is never read as an empty one.
+    """
+    path = Path(change_dir) / CHANGE_META_FILE
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path} is not valid YAML: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} does not hold a mapping (found {type(data).__name__})")
+    return data
+
+
+def write_change_meta(change_dir: Path, updates: Mapping[str, Any]) -> dict[str, Any]:
+    """Set the keys in *updates* in ``<change_dir>/.change.yaml`` and return
+    the whole mapping written.
+
+    Every other key already in the file is kept, in its order; new keys go at
+    the end. A value of None is written as null, not removed. The file is
+    replaced atomically (a temporary file in the same directory, then
+    ``os.replace``), so a stop part way leaves the old record or the new one.
+    Raises ValueError as ``read_change_meta`` does when the existing file is
+    damaged, rather than overwriting it.
+    """
+    change_dir = Path(change_dir)
+    meta = read_change_meta(change_dir)
+    meta.update(updates)
+    text = yaml.safe_dump(meta, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    fd, tmp = tempfile.mkstemp(dir=change_dir, prefix=".change.", suffix=".yaml.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, change_dir / CHANGE_META_FILE)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return meta
+
+
+def spec_files(change_dir: Path) -> list[Path]:
+    """The files ``spec_revision`` hashes, in the order it hashes them:
+    ``proposal.md``, ``use-cases.md`` and ``requirements/*.md`` (not
+    recursive), those that exist as files, sorted by their path relative to
+    *change_dir* in POSIX form."""
+    change_dir = Path(change_dir)
+    candidates = [change_dir / "proposal.md", change_dir / "use-cases.md"]
+    req_dir = change_dir / "requirements"
+    if req_dir.is_dir():
+        candidates.extend(req_dir.glob("*.md"))
+    files = [p for p in candidates if p.is_file()]
+    return sorted(files, key=lambda p: p.relative_to(change_dir).as_posix())
+
+
+def spec_revision(change_dir: Path) -> str:
+    r"""A sha256 hex digest of a change's "what" documents.
+
+    The algorithm, exactly:
+
+    1. Take ``spec_files(change_dir)``: ``proposal.md``, ``use-cases.md`` and
+       ``requirements/*.md`` (not recursive) that exist as regular files.
+    2. Sort them by their path relative to *change_dir*, in POSIX form
+       (``proposal.md`` < ``requirements/a.md`` < ``use-cases.md``), comparing
+       the strings by code point.
+    3. For each file, read its bytes and normalise line endings to LF:
+       every ``\r\n`` becomes ``\n``, then every remaining ``\r`` becomes
+       ``\n``. Nothing else is changed (no decoding, no trailing-whitespace or
+       final-newline changes).
+    4. Feed one sha256 with, per file in that order: the relative path encoded
+       as UTF-8, a NUL byte, the length of the normalised content as ASCII
+       decimal digits, a NUL byte, then the normalised content.
+
+    So the digest changes when a file's content changes (other than CRLF/CR
+    versus LF), when a file is added, removed or renamed, and never with
+    modification times or git state. A change with none of the files hashes
+    the empty input (``e3b0c442...``). Raises OSError when a listed file
+    cannot be read.
+    """
+    change_dir = Path(change_dir)
+    digest = hashlib.sha256()
+    for path in spec_files(change_dir):
+        content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        rel = path.relative_to(change_dir).as_posix().encode("utf-8")
+        digest.update(rel + b"\0" + str(len(content)).encode("ascii") + b"\0" + content)
+    return digest.hexdigest()
+
+
+def is_ready(change_dir: Path) -> tuple[bool, str]:
+    """``(True, "")`` when the change's specs are marked ready and unchanged
+    since; otherwise ``(False, reason)``, *reason* being one line for a person.
+
+    Ready means ``.change.yaml`` has ``spec_status: ready`` and a
+    ``spec_revision`` equal to ``spec_revision(change_dir)`` now. A missing or
+    damaged ``.change.yaml``, a record written before these keys existed, a
+    ``draft`` status and an edit after marking all give False. An open
+    ``spec_issues`` does not: callers that must stop on it read it themselves.
+    """
+    change_dir = Path(change_dir)
+    if not (change_dir / CHANGE_META_FILE).is_file():
+        return False, f"no {CHANGE_META_FILE} in {change_dir}"
+    try:
+        meta = read_change_meta(change_dir)
+    except (OSError, UnicodeError, ValueError) as exc:
+        return False, f"{CHANGE_META_FILE} cannot be read: {exc}".replace("\n", " ")
+    status = meta.get("spec_status")
+    if status is None:
+        return False, "spec_status is not set: the specs were never marked ready"
+    if status != SPEC_STATUS_READY:
+        return False, f"spec_status is {status!r}, not {SPEC_STATUS_READY!r}"
+    saved = meta.get("spec_revision")
+    if not saved:
+        return False, "spec_status is ready but spec_revision is missing"
+    try:
+        current = spec_revision(change_dir)
+    except OSError as exc:
+        return False, f"the spec files cannot be read: {exc}".replace("\n", " ")
+    if saved != current:
+        return False, (f"the specs changed after they were marked ready "
+                       f"(spec_revision {str(saved)[:12]}, files now {current[:12]})")
+    return True, ""
+
+
+def mark_ready(change_dir: Path, now: datetime | None = None) -> str:
+    """Record the change's specs as ready, as they are on disk now, and return
+    the revision recorded.
+
+    Sets ``spec_status: ready``, ``spec_revision: spec_revision(change_dir)``
+    and ``spec_checked_at`` (*now*, default the current time, as ISO 8601 in
+    UTC to the second; a naive *now* is taken as UTC). ``spec_issues`` and
+    every other key are left as they are. This records the result of a check;
+    it does not check anything.
+    """
+    revision = spec_revision(change_dir)
+    when = now or datetime.now(timezone.utc)
+    when = when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when.astimezone(timezone.utc)
+    write_change_meta(change_dir, {
+        "spec_status": SPEC_STATUS_READY,
+        "spec_revision": revision,
+        "spec_checked_at": when.isoformat(timespec="seconds"),
+    })
+    return revision
+
+
+def mark_draft(change_dir: Path) -> None:
+    """Set ``spec_status: draft``. The saved revision and check time stay, as
+    the record of the last check; ``is_ready`` is False until ``mark_ready``."""
+    write_change_meta(change_dir, {"spec_status": SPEC_STATUS_DRAFT})
+
+
+def set_spec_issues(change_dir: Path, path: Path | str | None) -> None:
+    """Set ``spec_issues`` to the open ``spec-issues.md`` at *path*, or to null
+    when *path* is None.
+
+    A path inside *change_dir* is saved relative to it (``spec-issues.md``),
+    so the record still holds after the change dir moves into the archive;
+    any other path is saved as given.
+    """
+    change_dir = Path(change_dir)
+    value: str | None = None
+    if path is not None:
+        p = Path(path)
+        try:
+            value = (change_dir / p if not p.is_absolute() else p).resolve().relative_to(
+                change_dir.resolve()).as_posix()
+        except ValueError:
+            value = str(path)
+    write_change_meta(change_dir, {"spec_issues": value})
+
+
+def clear_spec_issues(change_dir: Path) -> None:
+    """Set ``spec_issues`` to null: no requirements issue is open."""
+    set_spec_issues(change_dir, None)
