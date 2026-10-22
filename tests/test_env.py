@@ -1,6 +1,5 @@
 """Tests for multiplai_core.env."""
 
-import os
 
 import pytest
 

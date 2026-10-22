@@ -13,7 +13,7 @@ adds its own ``started`` in a subclass and writes it with :meth:`line`.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -22,7 +22,7 @@ class ProgressWriter:
         self.path = Path(path)
 
     def _now(self) -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def line(self, text: str) -> None:
         """Append ``[<UTC time>Z] <text>``, creating the directory when missing."""

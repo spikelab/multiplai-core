@@ -8,7 +8,6 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from _fakes import (
     _FakeAssistantMessage,
     _FakeResultMessage,
@@ -16,7 +15,7 @@ from _fakes import (
     _FakeToolUseBlock,
     _make_mock_sdk,
 )
-from multiplai_core.env import CURRENT_MODEL
+
 from multiplai_core.agent_runner import (
     MAX_PROMPT_BYTES,
     TOOL_UNIVERSE,
@@ -31,6 +30,7 @@ from multiplai_core.agent_runner import (
     path_allowed,
     run_agent,
 )
+from multiplai_core.env import CURRENT_MODEL
 
 
 def _run(coro):
@@ -923,7 +923,9 @@ class TestHeartbeat:
         unlike model_client's _SDK_CALL_TIMEOUT_S, which is read once when that
         module is first imported."""
         from multiplai_core.agent_runner import (
-            _HEARTBEAT_DEFAULT_S, _HEARTBEAT_ENV, _env_float,
+            _HEARTBEAT_DEFAULT_S,
+            _HEARTBEAT_ENV,
+            _env_float,
         )
 
         monkeypatch.delenv(_HEARTBEAT_ENV, raising=False)
@@ -989,7 +991,7 @@ class TestCostLedgerTap:
         assert list(iter_ledger()) == []
 
     def test_ledger_failure_never_breaks_the_run(self, monkeypatch):
-        import multiplai_core.costing as costing
+        from multiplai_core import costing
 
         def _boom(records):
             raise OSError("disk full")
@@ -1206,7 +1208,6 @@ class TestDebugLog:
         """The case that motivated the file: a hook killed at its ceiling."""
         import signal
         import subprocess
-        import time as _time
 
         tests_dir = os.path.dirname(os.path.abspath(__file__))
         script = tmp_path / "child.py"
@@ -1487,6 +1488,7 @@ class TestReadRoots:
 
     def test_pi_backend_accepts_read_roots(self):
         import inspect
+
         from multiplai_core.pi.backend import run_pi_agent
         param = inspect.signature(run_pi_agent).parameters["read_roots"]
         assert param.kind is inspect.Parameter.KEYWORD_ONLY

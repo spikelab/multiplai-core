@@ -38,7 +38,7 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -106,9 +106,9 @@ def expected_capabilities(proposal: str) -> list[str]:
     every dependency name in backticks under ``## Impact``. A proposal with no
     ``## Capabilities`` heading is read whole, minus ``## Impact``.
     """
-    section = re.search(r"^##\s+Capabilities\s*$(.*?)(?=^##\s|\Z)", proposal, re.M | re.S)
-    scope = section.group(1) if section else re.sub(r"^##\s+Impact\s*$.*?(?=^##\s|\Z)", "", proposal, flags=re.M | re.S)
-    return list(dict.fromkeys(re.findall(r"^-\s+`([a-z0-9]+(?:-[a-z0-9]+)*)`", scope, re.M)))
+    section = re.search(r"^##\s+Capabilities\s*$(.*?)(?=^##\s|\Z)", proposal, re.MULTILINE | re.DOTALL)
+    scope = section.group(1) if section else re.sub(r"^##\s+Impact\s*$.*?(?=^##\s|\Z)", "", proposal, flags=re.MULTILINE | re.DOTALL)
+    return list(dict.fromkeys(re.findall(r"^-\s+`([a-z0-9]+(?:-[a-z0-9]+)*)`", scope, re.MULTILINE)))
 
 
 @dataclass(frozen=True)
@@ -145,15 +145,15 @@ def parse_requirements(text: str) -> list[RequirementBlock]:
     placeholder comments never count as a name or a scenario. This is the
     parse ``valid_requirement_text`` checks.
     """
-    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
     blocks = []
     for requirement in re.finditer(r"^### Requirement:([^\n]*)(.*?)(?=^### Requirement:|^## |\Z)",
-                                   text, re.M | re.S):
-        sections = re.findall(r"^## (\w+) Requirements", text[:requirement.start()], re.M)
+                                   text, re.MULTILINE | re.DOTALL):
+        sections = re.findall(r"^## (\w+) Requirements", text[:requirement.start()], re.MULTILINE)
         scenarios = tuple(
             ScenarioBlock(name=s.group(1).strip(), body=s.group(2))
             for s in re.finditer(r"^#### Scenario:([^\n]*)(.*?)(?=^#### Scenario:|\Z)",
-                                 requirement.group(2), re.M | re.S)
+                                 requirement.group(2), re.MULTILINE | re.DOTALL)
         )
         blocks.append(RequirementBlock(
             name=requirement.group(1).strip(),
@@ -467,8 +467,8 @@ def mark_ready(change_dir: Path, now: datetime | None = None) -> str:
     it does not check anything.
     """
     revision = spec_revision(change_dir)
-    when = now or datetime.now(timezone.utc)
-    when = when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when.astimezone(timezone.utc)
+    when = now or datetime.now(UTC)
+    when = when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
     write_change_meta(change_dir, {
         "spec_status": SPEC_STATUS_READY,
         "spec_revision": revision,

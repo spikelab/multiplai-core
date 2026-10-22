@@ -7,7 +7,7 @@ with `ChangeManager` replaced by the module-level functions and
 `cm.create_change` by a plain directory.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -484,7 +484,7 @@ class TestSpecRevision:
 
 class TestIsReady:
     def test_ready(self, change):
-        revision = mark_ready(change, now=datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc))
+        revision = mark_ready(change, now=datetime(2026, 10, 21, 9, 30, tzinfo=UTC))
         assert is_ready(change) == (True, "")
         meta = read_change_meta(change)
         assert meta["spec_status"] == "ready"
@@ -547,10 +547,10 @@ class TestMarkReady:
         assert read_change_meta(change)["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
 
     def test_default_now_is_the_current_utc_time(self, change):
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(UTC).replace(microsecond=0)
         mark_ready(change)
         checked = datetime.fromisoformat(read_change_meta(change)["spec_checked_at"])
-        assert before <= checked <= datetime.now(timezone.utc)
+        assert before <= checked <= datetime.now(UTC)
 
     def test_leaves_spec_issues_alone(self, change):
         set_spec_issues(change, "spec-issues.md")

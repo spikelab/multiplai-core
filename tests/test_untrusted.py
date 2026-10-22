@@ -15,13 +15,12 @@ from multiplai_core.untrusted import (
     markdown_notice,
 )
 
-
 # --- stripping (always on) -------------------------------------------------
 
 def test_strips_ansi_control_and_bidi():
     # Full ANSI sequence, RTL override, zero-width space, BOM — all invisible
     # ways to make a payload render as something it is not.
-    assert defang("a\x1b[2Kb‮c​d﻿") == "abcd"
+    assert defang("a\x1b[2Kb‮c\u200bd﻿") == "abcd"
 
 
 def test_keeps_tab_and_newline():
@@ -183,7 +182,7 @@ def test_fence_empty_input_yields_no_lines():
 
 def test_fence_body_reduced_to_empty_yields_no_lines():
     # Body made entirely of stripped characters defangs to "".
-    assert fence("\x1b[2K​", "src") == []
+    assert fence("\x1b[2K\u200b", "src") == []
 
 
 def test_fence_body_cannot_break_the_inner_code_fence():

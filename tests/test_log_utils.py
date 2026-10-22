@@ -11,11 +11,11 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-import multiplai_core.log_utils as log_utils
+from multiplai_core import log_utils
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def _unique(name: str) -> str:
 
 def _today(logs_dir, name: str, ext: str = "log"):
     """The file a component writes today: ``<name>-YYYY-MM-DD.<ext>``."""
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
     return logs_dir / f"{name}-{day}.{ext}"
 
 
@@ -328,7 +328,7 @@ def test_log_event_prunes_old_activity_only_when_retention_is_set(logs_dir, monk
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "activity-2000-01-01.log"
     old.write_text("ancient\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(old, (ancient, ancient))
 
     log_utils._swept = False
@@ -344,9 +344,9 @@ def test_default_sweep_keeps_a_year_of_logs(logs_dir):
     recent = logs_dir / "build-pipeline-2026-01-01.log"
     for p in (old, recent):
         p.write_text("x\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(old, (ancient, ancient))
-    months = (datetime.now(timezone.utc) - timedelta(days=300)).timestamp()
+    months = (datetime.now(UTC) - timedelta(days=300)).timestamp()
     os.utime(recent, (months, months))
 
     log_utils._swept = False
@@ -512,7 +512,7 @@ def test_retention_zero_keeps_dated_files_forever(logs_dir, monkeypatch):
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "activity-2000-01-01.log"
     old.write_text("ancient\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(old, (ancient, ancient))
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "0")
 
@@ -529,7 +529,7 @@ def test_sweep_prunes_only_dated_files_beyond_cutoff(logs_dir):
     drop_old = logs_dir / "context_manager-2000-01-01.log"
     for p in (keep_current, keep_recent, drop_old):
         p.write_text("x\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(drop_old, (ancient, ancient))
 
     log_utils._sweep_logs(logs_dir, 7)
@@ -568,7 +568,7 @@ def test_hook_errors_log_moves_to_its_dated_name_on_a_new_day(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
     err_log = logs_dir / "hook-errors.log"
     err_log.write_text("yesterday's error\n")
-    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=timezone.utc))
+    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=UTC))
 
     logger = log_utils.setup_logging(_unique("rot"))
     logger.error("today's error")
@@ -599,7 +599,7 @@ def test_hook_errors_rotation_never_overwrites_a_dated_file(logs_dir):
     dated.write_text("first rotation\n")
     err_log = logs_dir / "hook-errors.log"
     err_log.write_text("second\n")
-    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=timezone.utc))
+    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=UTC))
 
     log_utils._rotate_shared_error_log(logs_dir)
 
@@ -611,7 +611,7 @@ def test_rotated_hook_errors_follow_retention(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "hook-errors-2000-01-01.log"
     old.write_text("x\n")
-    _stamp(old, datetime(2000, 1, 1, tzinfo=timezone.utc))
+    _stamp(old, datetime(2000, 1, 1, tzinfo=UTC))
 
     log_utils._sweep_logs(logs_dir, 365)
 
@@ -707,10 +707,9 @@ def test_hook_run_marks_errors_and_reraises(logs_dir):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(ValueError):
-        with log_utils.hook_run(name, logger) as run:
-            with run.stage("router"):
-                raise ValueError("boom")
+    with pytest.raises(ValueError), log_utils.hook_run(name, logger) as run:
+        with run.stage("router"):
+            raise ValueError("boom")
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line
@@ -727,9 +726,8 @@ def test_hook_run_treats_clean_sys_exit_as_ok(logs_dir, code):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(SystemExit):
-        with log_utils.hook_run(name, logger):
-            raise SystemExit(code)
+    with pytest.raises(SystemExit), log_utils.hook_run(name, logger):
+        raise SystemExit(code)
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=ok" in exit_line
@@ -739,9 +737,8 @@ def test_hook_run_treats_nonzero_sys_exit_as_error(logs_dir):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(SystemExit):
-        with log_utils.hook_run(name, logger):
-            raise SystemExit(2)
+    with pytest.raises(SystemExit), log_utils.hook_run(name, logger):
+        raise SystemExit(2)
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line
@@ -806,9 +803,8 @@ def test_hook_run_error_names_the_exception_and_reaches_the_error_sink(logs_dir)
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(ValueError):
-        with log_utils.hook_run(name, logger):
-            raise ValueError("boom")
+    with pytest.raises(ValueError), log_utils.hook_run(name, logger):
+        raise ValueError("boom")
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line
@@ -841,9 +837,8 @@ def test_hook_run_treats_falsy_nonzero_sys_exit_as_error(logs_dir, code):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(SystemExit):
-        with log_utils.hook_run(name, logger):
-            raise SystemExit(code)
+    with pytest.raises(SystemExit), log_utils.hook_run(name, logger):
+        raise SystemExit(code)
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line

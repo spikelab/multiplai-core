@@ -63,11 +63,12 @@ import logging
 import os
 import shutil
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
-from ..aio import hard_timeout
 from ..agent_runner import (
     AgentRunError,
     AgentRunResult,
@@ -77,6 +78,7 @@ from ..agent_runner import (
     _hook_session_dir,
     register_agent_backend,
 )
+from ..aio import hard_timeout
 from .events import Event, Kind
 from .rpc import PiRpc, SubprocessTransport
 
@@ -209,7 +211,7 @@ async def _send_abort(rpc: Any, out: PiRunOutcome) -> None:
     """
     try:
         await hard_timeout(rpc.abort(), ABORT_WRITE_TIMEOUT_S)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("pi backend: abort write did not finish in %.0fs; closing pi",
                        ABORT_WRITE_TIMEOUT_S)
     except OSError as e:
@@ -248,7 +250,7 @@ async def _drive(rpc: Any, prompt: str, out: PiRunOutcome, max_turns: int) -> No
                 if remaining <= 0:
                     return
                 event = await asyncio.wait_for(anext(stream), timeout=remaining)
-        except (StopAsyncIteration, asyncio.TimeoutError):
+        except (TimeoutError, StopAsyncIteration):
             return
         out.events.append(event)
         if event.kind is Kind.TURN_END:
@@ -285,7 +287,7 @@ async def supervise(rpc: Any, prompt: str, *, max_turns: int, timeout_s: float) 
     out = PiRunOutcome()
     try:
         await hard_timeout(_drive(rpc, prompt, out, max_turns), timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         out.aborted_reason = "timeout"
         await _send_abort(rpc, out)
     return out
@@ -481,12 +483,12 @@ def _record_cost(component: str, label: str, spec: str,
         return
     try:
         import uuid
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from ..costing import TokenCounts, append_records, build_record
 
         record = build_record(
-            ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ts=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             source="pi",
             session=f"pi-{label}",
             model=spec,
@@ -502,7 +504,7 @@ def _record_cost(component: str, label: str, spec: str,
         if not cost_reported:
             record["cost_unreported"] = True
         append_records([record])
-    except Exception:  # noqa: BLE001 — the ledger is never worth failing a run
+    except Exception:  # the ledger is never worth failing a run
         logger.warning("pi run [%s]: cost ledger write failed (ignored)", label, exc_info=True)
 
 
@@ -515,7 +517,7 @@ async def _attempt(argv: list[str], prompt: str, *, workdir: str, env: dict[str,
     finally:
         try:
             await transport.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("pi run [%s]: closing pi failed (ignored)", label, exc_info=True)
     tail_fn = getattr(transport, "stderr_tail", None)
     tail = tail_fn() if callable(tail_fn) else ""

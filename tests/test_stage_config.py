@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from multiplai_core import check_effort, coerce_int, conf_value, load_multiplai_conf, read_yaml_mapping
+from multiplai_core import (
+    check_effort,
+    coerce_int,
+    conf_value,
+    load_multiplai_conf,
+    read_yaml_mapping,
+)
 
 
 # A pipeline's load_config, built only from the helpers, the way review's and

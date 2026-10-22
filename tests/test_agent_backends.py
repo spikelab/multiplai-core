@@ -7,8 +7,8 @@ import sys
 from unittest.mock import patch
 
 import pytest
-
 from _fakes import _make_mock_sdk
+
 from multiplai_core import agent_runner
 from multiplai_core.agent_runner import (
     AgentRunError,

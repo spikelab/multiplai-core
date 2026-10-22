@@ -15,12 +15,10 @@ Covers:
 
 import asyncio
 import dataclasses
-import os
 import threading
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Plugin Environment Variable Resolution
@@ -531,7 +529,7 @@ class TestCachingAndImmutability:
     ):
         """Scenario: Cached resolution survives env var mutation."""
         monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/first")
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         _reset_cache()
         first = get_paths().memory_dir()
@@ -545,7 +543,7 @@ class TestCachingAndImmutability:
         self, clean_env, reset_paths_cache
     ):
         """Scenario: Concurrent access returns consistent values."""
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         _reset_cache()
 
@@ -562,7 +560,7 @@ class TestCachingAndImmutability:
         self, clean_env, reset_paths_cache
     ):
         """Multiple threads calling get_paths() get the same Paths object."""
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         _reset_cache()
         results = []
@@ -664,7 +662,7 @@ class TestModuleSingleton:
 
     def test_module_level_paths_is_paths_instance(self, reset_paths_cache):
         """The module-level `paths` must be a Paths instance."""
-        from multiplai_core.paths import paths, Paths
+        from multiplai_core.paths import Paths, paths
 
         assert isinstance(paths, Paths), (
             f"Module-level paths is {type(paths).__name__}, expected Paths"
@@ -732,7 +730,7 @@ class TestEdgeCases:
 
     def test_reset_cache_allows_re_resolution(self, monkeypatch, reset_paths_cache):
         """After _reset_cache(), next get_paths() resolves fresh from env."""
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/first")
         _reset_cache()

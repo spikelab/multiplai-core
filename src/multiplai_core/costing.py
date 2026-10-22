@@ -37,11 +37,12 @@ import logging
 import os
 import re
 import urllib.request
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from importlib import resources
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from .paths import get_paths
 

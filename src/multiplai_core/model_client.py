@@ -9,8 +9,9 @@ The create_client() factory tries Agent SDK first, falls back to API key.
 
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from .agent_runner import (
     AgentRunError,

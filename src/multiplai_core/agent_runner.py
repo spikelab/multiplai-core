@@ -71,9 +71,11 @@ import re
 import time
 import warnings
 from collections import deque
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
-from typing import IO, Any, Awaitable, Callable, Sequence
+from typing import IO, Any
 
 from .aio import hard_timeout
 from .env import DEFAULT_PROVIDER, parse_model_spec
@@ -412,7 +414,7 @@ class UsageLimitError(AgentRunError):
         self.resets = resets
 
 
-def _usage_limit_match(text: str) -> "re.Match[str] | None":
+def _usage_limit_match(text: str) -> re.Match[str] | None:
     return _USAGE_LIMIT_RE.search(text) if text else None
 
 
@@ -579,7 +581,7 @@ class _DebugLog:
         self._label = label
 
     @classmethod
-    def open(cls, label: str, component: str, attempt: int) -> "_DebugLog | None":
+    def open(cls, label: str, component: str, attempt: int) -> _DebugLog | None:
         if os.environ.get(_DEBUG_LOG_ENV, "").strip().lower() == "off":
             return None
         try:
@@ -600,7 +602,7 @@ class _DebugLog:
             # still collides fails the open (caught below) rather than two
             # calls sharing one file.
             fh = open(path, "x", encoding="utf-8", buffering=1)
-        except Exception:  # noqa: BLE001 — diagnostics must not break a run
+        except Exception:  # diagnostics must not break a run
             logger.warning(
                 "run_agent [%s]: could not open CLI debug log (ignored)",
                 label, exc_info=True,
@@ -655,7 +657,7 @@ async def _safe_query(sdk, *, prompt, options):
             yield message
         except StopAsyncIteration:
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             if "Unknown message type" in str(e):
                 logger.debug("Skipping unknown SDK message type: %s", e)
                 continue
@@ -679,12 +681,12 @@ def _record_cost(
         return
     try:
         import uuid
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from .costing import TokenCounts, append_records, build_record
 
         append_records([build_record(
-            ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ts=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             source="sdk",
             session=session_id or f"sdk-{label}",
             model=model or "sdk-default",
@@ -698,7 +700,7 @@ def _record_cost(
             component=component,
             cost_usd=usage.cost_usd if usage.cost_usd > 0 else None,
         )])
-    except Exception:  # noqa: BLE001 — ledger is never worth failing a run
+    except Exception:  # ledger is never worth failing a run
         logger.warning("run_agent [%s]: cost ledger write failed (ignored)",
                        label, exc_info=True)
 
@@ -1099,7 +1101,7 @@ async def run_agent(
                 tool_calls=tuple(tool_calls),
                 stderr_tail="",
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_exc = e
             timed_out = isinstance(e, asyncio.TimeoutError)
             # TimeoutError stringifies to "" — describe it explicitly.

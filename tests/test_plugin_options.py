@@ -183,11 +183,11 @@ class TestNoLowercaseReadsSurvive:
 
 # --- Fallback to the plugin's saved options in the user settings file -------
 
-import json  # noqa: E402
-import sys  # noqa: E402
-import types  # noqa: E402
+import json
+import sys
+import types
 
-from multiplai_core import plugin_options  # noqa: E402
+from multiplai_core import plugin_options
 
 PLUGIN_ID = "myplug@mkt"
 

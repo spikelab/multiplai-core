@@ -45,8 +45,9 @@ from __future__ import annotations
 import dataclasses
 import logging
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +243,7 @@ def split_bank_ref(ref: str) -> tuple[str, str]:
 
 def parse_bank_ref(
     ref: str, banks: Iterable[MemoryBank]
-) -> tuple[Optional[MemoryBank], str]:
+) -> tuple[MemoryBank | None, str]:
     """Resolve *ref* against *banks*: ``(bank, filename)``, bank ``None`` if unknown.
 
     An unknown bank name is not an error to raise — a ref can outlive an
@@ -363,7 +364,7 @@ def _resolve_bank_path(raw: Any, *, name: str, workspace_base: Path) -> Path:
     return _safe_resolve(candidate)
 
 
-def _personal_relocation(entry: dict, *, workspace_base: Path) -> Optional[Path]:
+def _personal_relocation(entry: dict, *, workspace_base: Path) -> Path | None:
     """Where an entry named ``personal`` moves the personal corpus to, or ``None``.
 
     The personal bank is not declared into existence; it exists. An entry for
@@ -422,7 +423,7 @@ def _bank_from_entry(
     )
 
 
-def _read_config(config_path: Optional[Path]) -> list[Any]:
+def _read_config(config_path: Path | None) -> list[Any]:
     """The raw ``memory_banks:`` list, or ``[]`` on any failure at all."""
     if config_path is None:
         return []
@@ -446,7 +447,7 @@ def _read_config(config_path: Optional[Path]) -> list[Any]:
 
 
 def load_banks(
-    *, memory_dir: Path, config_path: Optional[Path] = None
+    *, memory_dir: Path, config_path: Path | None = None
 ) -> tuple[MemoryBank, ...]:
     """The ordered banks for this workspace. ``personal`` is always first.
 

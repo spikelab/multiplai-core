@@ -29,7 +29,7 @@ import contextvars
 import enum
 import logging
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any, Self, TypeVar
 
 log = logging.getLogger(__name__)
 
@@ -192,7 +192,7 @@ class SpendLedger:
         self.no_usage_calls = int(data.get("no_usage_calls", 0) or 0)
 
     @classmethod
-    def from_state(cls: type[L], data: dict | None, **kwargs: Any) -> L:
+    def from_state(cls, data: dict | None, **kwargs: Any) -> Self:
         """A new ledger built with *kwargs* (the ceilings), holding the spend in *data*."""
         ledger = cls(**kwargs)
         ledger.load_state(data)

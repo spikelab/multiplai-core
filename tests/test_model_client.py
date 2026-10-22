@@ -10,17 +10,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Mock harnesses — shared with test_agent_runner via _fakes; this module's
 # convenience shape is "one AssistantMessage carrying one TextBlock per text".
 # ---------------------------------------------------------------------------
-
 from _fakes import (
     _FakeAssistantMessage,
     _FakeTextBlock,
-    _make_mock_sdk as _make_full_mock_sdk,
     _mock_anthropic,
+)
+from _fakes import (
+    _make_mock_sdk as _make_full_mock_sdk,
 )
 
 
@@ -140,7 +140,7 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["ok"])
 
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            from multiplai_core.model_client import AgentSDKClient, _NO_TOOLS_SUFFIX
+            from multiplai_core.model_client import _NO_TOOLS_SUFFIX, AgentSDKClient
             client = AgentSDKClient()
 
             messages = [{"role": "user", "content": "test"}]
@@ -475,7 +475,7 @@ class TestAnthropicAPIClient:
         assert client._api_key == "sk-test-key"
 
     def test_default_model(self):
-        from multiplai_core.model_client import AnthropicAPIClient, DEFAULT_MODEL
+        from multiplai_core.model_client import DEFAULT_MODEL, AnthropicAPIClient
         client = AnthropicAPIClient("sk-test-key")
         sig = inspect.signature(client.query)
         assert sig.parameters["model"].default == DEFAULT_MODEL
@@ -555,7 +555,7 @@ class TestAnthropicAPIClient:
         ``env.CURRENT_MODEL`` already says — and a stale duplicate is how the
         default drifted a generation behind that table in the first place.
         """
-        from multiplai_core.model_client import AnthropicAPIClient, DEFAULT_MODEL
+        from multiplai_core.model_client import DEFAULT_MODEL, AnthropicAPIClient
 
         mock_anthropic, mock_async_client = _mock_anthropic("response")
 
@@ -655,7 +655,7 @@ class TestCreateClientFactory:
     def test_returns_agent_sdk_when_available(self):
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            from multiplai_core.model_client import create_client, AgentSDKClient
+            from multiplai_core.model_client import AgentSDKClient, create_client
 
             async def _test():
                 client = await create_client()
@@ -665,7 +665,7 @@ class TestCreateClientFactory:
 
     def test_falls_back_to_api_client_with_key(self):
         with patch.dict(sys.modules, {"claude_agent_sdk": None}):
-            from multiplai_core.model_client import create_client, AnthropicAPIClient
+            from multiplai_core.model_client import AnthropicAPIClient, create_client
 
             async def _test():
                 client = await create_client(api_key="sk-test")
@@ -676,7 +676,7 @@ class TestCreateClientFactory:
     def test_reads_api_key_from_env(self, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY", "sk-env-key")
         with patch.dict(sys.modules, {"claude_agent_sdk": None}):
-            from multiplai_core.model_client import create_client, AnthropicAPIClient
+            from multiplai_core.model_client import AnthropicAPIClient, create_client
 
             async def _test():
                 client = await create_client()
@@ -740,7 +740,11 @@ class TestResponseNormalization:
 
     def test_both_clients_return_model_response(self):
         """Both implementations return ModelResponse for interface consistency."""
-        from multiplai_core.model_client import AgentSDKClient, AnthropicAPIClient, ModelResponse
+        from multiplai_core.model_client import (
+            AgentSDKClient,
+            AnthropicAPIClient,
+            ModelResponse,
+        )
 
         mock_sdk = _make_mock_sdk(["sdk text"])
 
@@ -920,7 +924,8 @@ class TestLoggingOnFallback:
         """Verify Agent SDK selection is logged at INFO level."""
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            from multiplai_core.model_client import create_client, logger as mc_logger
+            from multiplai_core.model_client import create_client
+            from multiplai_core.model_client import logger as mc_logger
             records = []
 
             class Capture(logging.Handler):
@@ -1101,7 +1106,9 @@ class TestProviderSeam:
 
     def test_registered_sync_factory_is_used(self):
         from multiplai_core.model_client import (
-            ModelResponse, create_client_for, register_provider,
+            ModelResponse,
+            create_client_for,
+            register_provider,
         )
 
         class _Stub:
@@ -1151,8 +1158,11 @@ class TestProviderSeam:
 
     def test_unregister_removes_the_provider(self):
         from multiplai_core.model_client import (
-            UnknownProviderError, create_client_for, register_provider,
-            registered_providers, unregister_provider,
+            UnknownProviderError,
+            create_client_for,
+            register_provider,
+            registered_providers,
+            unregister_provider,
         )
         register_provider("acme", lambda spec, **kw: MagicMock())
         assert "acme" in registered_providers()
@@ -1247,7 +1257,9 @@ class TestPerCallTimeout:
         """Additive keyword-only argument — no positional slot was taken, so
         every existing call site is unaffected."""
         from multiplai_core.model_client import (
-            AgentSDKClient, AnthropicAPIClient, ModelClient,
+            AgentSDKClient,
+            AnthropicAPIClient,
+            ModelClient,
         )
         for meth in (
             ModelClient.query, AgentSDKClient.query, AnthropicAPIClient.query,
@@ -1292,7 +1304,8 @@ class TestPromptCaching:
 
     def test_long_system_prompt_gets_a_cache_breakpoint(self):
         from multiplai_core.model_client import (
-            MIN_CACHEABLE_SYSTEM_BYTES, cacheable_system,
+            MIN_CACHEABLE_SYSTEM_BYTES,
+            cacheable_system,
         )
         big = "x" * (MIN_CACHEABLE_SYSTEM_BYTES + 1)
         out = cacheable_system(big)
@@ -1304,7 +1317,8 @@ class TestPromptCaching:
         count alone — the API minimum is about tokens, and a conservative
         bytes floor only ever skips prompts that could not be cached."""
         from multiplai_core.model_client import (
-            MIN_CACHEABLE_SYSTEM_BYTES, cacheable_system,
+            MIN_CACHEABLE_SYSTEM_BYTES,
+            cacheable_system,
         )
         # Under the byte floor despite a large character count would be wrong;
         # 'é' is 2 bytes, so this crosses the floor with half the characters.
@@ -1313,7 +1327,8 @@ class TestPromptCaching:
 
     def test_query_sends_the_breakpoint_to_the_api(self):
         from multiplai_core.model_client import (
-            MIN_CACHEABLE_SYSTEM_BYTES, AnthropicAPIClient,
+            MIN_CACHEABLE_SYSTEM_BYTES,
+            AnthropicAPIClient,
         )
         mock_anthropic, mock_async_client = _mock_anthropic("ok")
 

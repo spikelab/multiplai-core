@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 
 
-def swallow_task_result(task: "asyncio.Task") -> None:
+def swallow_task_result(task: asyncio.Task) -> None:
     """Consume a cancelled/failed background task's result so asyncio does not
     log 'Task exception was never retrieved'."""
     try:
@@ -38,5 +38,5 @@ async def hard_timeout(coro, timeout_s: float):
     if task not in done:
         task.cancel()  # best-effort; do NOT await — cancellation may block
         task.add_done_callback(swallow_task_result)
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
     return task.result()

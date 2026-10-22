@@ -51,7 +51,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Fallback reference for "how long has this process been alive", bound at import
@@ -127,7 +127,7 @@ def _pytest_guard(logs_dir: Path) -> Path:
 
 
 def _utc_today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 def retention_days() -> int:
@@ -196,7 +196,7 @@ def _rotate_shared_error_log(logs_dir: Path) -> None:
     current = logs_dir / "hook-errors.log"
     try:
         mtime = current.stat().st_mtime
-        day = datetime.fromtimestamp(mtime, timezone.utc).strftime("%Y-%m-%d")
+        day = datetime.fromtimestamp(mtime, UTC).strftime("%Y-%m-%d")
         if day >= _utc_today():
             return
         os.link(current, logs_dir / f"hook-errors-{day}.log")
@@ -229,7 +229,7 @@ def _sweep_logs(logs_dir: Path, days: int) -> None:
 
         if days <= 0:
             return
-        cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+        cutoff = datetime.now(UTC).timestamp() - days * 86400
         for f in list(logs_dir.glob("*.log")) + list(logs_dir.glob("*.jsonl")):
             if not _DATED_RE.search(f.name):
                 continue
@@ -271,7 +271,7 @@ class _StandardFormatter(logging.Formatter):
         self._sid = _short_session(session_id)
 
     def format(self, record: logging.LogRecord) -> str:
-        ts = datetime.fromtimestamp(record.created, timezone.utc).strftime(
+        ts = datetime.fromtimestamp(record.created, UTC).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
         line = (
@@ -524,7 +524,7 @@ def log_event(
         log_path = logs_dir / f"activity-{today}.log"
         jsonl_path = logs_dir / f"activity-{today}.jsonl"
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sid = _short_session(session_id)
 
         # The human line is the message, verbatim — a clean sentence the

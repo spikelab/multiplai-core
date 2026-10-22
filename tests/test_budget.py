@@ -8,8 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from multiplai_core import BudgetExceededError, SpendLedger
-from multiplai_core import budget
+from multiplai_core import BudgetExceededError, SpendLedger, budget
 
 
 @pytest.fixture(autouse=True)

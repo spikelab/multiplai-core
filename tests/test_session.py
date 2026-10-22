@@ -8,13 +8,13 @@ import sys
 
 import pytest
 
-import multiplai_core.session as session
+from multiplai_core import session
 from multiplai_core.env import CURRENT_MODEL
 from multiplai_core.session import (
     default_effort,
+    default_effort_source,
     default_model,
     default_model_source,
-    default_effort_source,
     pin_session_settings,
     session_effort,
     session_model,

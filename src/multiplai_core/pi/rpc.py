@@ -39,7 +39,8 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from typing import Any, AsyncIterator, Protocol
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
 
 from .events import Event, parse_line
 
@@ -148,7 +149,7 @@ class SubprocessTransport:
     @classmethod
     async def spawn(
         cls, argv: list[str], *, cwd: str | None = None, env: dict[str, str] | None = None
-    ) -> "SubprocessTransport":
+    ) -> SubprocessTransport:
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE,
@@ -182,13 +183,13 @@ class SubprocessTransport:
                 pass
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=10)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.proc.kill()
                 await self.proc.wait()
         if self._stderr_task is not None:
             try:
                 await asyncio.wait_for(self._stderr_task, timeout=2)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 self._stderr_task.cancel()
 
 
