@@ -7,7 +7,7 @@ with `ChangeManager` replaced by the module-level functions and
 `cm.create_change` by a plain directory.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -35,7 +35,9 @@ from multiplai_core.specs import (
     write_change_meta,
 )
 
-SPEC_EXTRACT_SAMPLE = Path(__file__).parent / "fixtures" / "spec_extract_registry_sample.md"
+SPEC_EXTRACT_SAMPLE = (
+    Path(__file__).parent / "fixtures" / "spec_extract_registry_sample.md"
+)
 
 
 @pytest.fixture
@@ -138,7 +140,9 @@ class TestArchiveChange:
         (change / "requirements" / "cap.md").write_text("## ADDED Requirements\n")
         dest = archive_change(change, specs_dir)
         assert dest.parent == specs_dir / "archive"
-        assert (specs_dir / "registry" / "cap.md").read_text() == "## ADDED Requirements\n"
+        assert (
+            specs_dir / "registry" / "cap.md"
+        ).read_text() == "## ADDED Requirements\n"
 
 
 class TestDeltaRequirementMerging:
@@ -197,7 +201,8 @@ def test_merges_delta_into_spec_extract_registry_file(specs_dir):
         "## MODIFIED Requirements\n\n"
         "### Requirement: Adds two numbers\nadd SHALL return the sum as an int.\n\n"
         "#### Scenario: adding ints\n- **WHEN** add(1, 2) is called\n- **THEN** it returns the int 3\n\n"
-        "## REMOVED Requirements\n\n### Requirement: Subtracts two numbers\n")
+        "## REMOVED Requirements\n\n### Requirement: Subtracts two numbers\n"
+    )
     archive_change(change, specs_dir)
     merged = (specs_dir / "registry" / "sample.md").read_text()
     assert merged.startswith("<!-- spec-extract widgets/tree@")
@@ -208,12 +213,20 @@ def test_merges_delta_into_spec_extract_registry_file(specs_dir):
 
 
 def test_requirements_validate_every_requirement_and_allow_removal_deltas():
-    valid = "### Requirement: Works\n#### Scenario: Normal\nWHEN called\nTHEN succeeds\n"
+    valid = (
+        "### Requirement: Works\n#### Scenario: Normal\nWHEN called\nTHEN succeeds\n"
+    )
     assert valid_requirement_text(valid)
     assert not valid_requirement_text(valid + "### Requirement: Missing scenarios\n")
-    assert not valid_requirement_text(valid + "#### Scenario: Incomplete\nWHEN called\n")
-    assert valid_requirement_text("## REMOVED Requirements\n### Requirement: Old behavior\n")
-    assert not valid_requirement_text("## ADDED Requirements\n### Requirement: <!-- name -->\n")
+    assert not valid_requirement_text(
+        valid + "#### Scenario: Incomplete\nWHEN called\n"
+    )
+    assert valid_requirement_text(
+        "## REMOVED Requirements\n### Requirement: Old behavior\n"
+    )
+    assert not valid_requirement_text(
+        "## ADDED Requirements\n### Requirement: <!-- name -->\n"
+    )
 
 
 # --- apply_delta: behaviour the merge tests above do not reach ---
@@ -221,8 +234,10 @@ def test_requirements_validate_every_requirement_and_allow_removal_deltas():
 
 class TestApplyDelta:
     def test_modified_replaces_only_the_named_block(self):
-        main = ("### Requirement: A\nold a\n\n#### Scenario: s\n- **WHEN** x\n- **THEN** y\n\n"
-                "### Requirement: B\nold b\n")
+        main = (
+            "### Requirement: A\nold a\n\n#### Scenario: s\n- **WHEN** x\n- **THEN** y\n\n"
+            "### Requirement: B\nold b\n"
+        )
         delta = "## MODIFIED Requirements\n\n### Requirement: A\nnew a\n"
         out = apply_delta(main, delta)
         assert out == "### Requirement: A\nnew a\n\n### Requirement: B\nold b\n"
@@ -230,16 +245,23 @@ class TestApplyDelta:
     def test_backslashes_in_a_modified_block_are_inserted_literally(self):
         main = "### Requirement: Parse\nold\n"
         delta = "## MODIFIED Requirements\n\n### Requirement: Parse\nmatches `\\d+` and `\\1`\n"
-        assert apply_delta(main, delta) == "### Requirement: Parse\nmatches `\\d+` and `\\1`\n"
+        assert (
+            apply_delta(main, delta)
+            == "### Requirement: Parse\nmatches `\\d+` and `\\1`\n"
+        )
 
     def test_added_section_stops_at_the_next_operation_heading(self):
         main = "### Requirement: Old\nold\n"
-        delta = ("## ADDED Requirements\n\n### Requirement: New\nnew\n\n"
-                 "## REMOVED Requirements\n\n### Requirement: Old\n")
+        delta = (
+            "## ADDED Requirements\n\n### Requirement: New\nnew\n\n"
+            "## REMOVED Requirements\n\n### Requirement: Old\n"
+        )
         assert apply_delta(main, delta) == "### Requirement: New\nnew\n"
 
     def test_result_ends_with_one_newline(self):
-        assert apply_delta("### Requirement: A\na\n\n\n", "") == "### Requirement: A\na\n"
+        assert (
+            apply_delta("### Requirement: A\na\n\n\n", "") == "### Requirement: A\na\n"
+        )
 
 
 # --- Ported from test_spec_generator.py::TestExtractCapabilities ---
@@ -308,7 +330,10 @@ class TestExtractCapabilities:
         assert expected_capabilities(text) == ["password-reset"]
 
     def test_duplicates_are_listed_once(self):
-        assert expected_capabilities("## Capabilities\n- `a`\n- `b`\n- `a`\n") == ["a", "b"]
+        assert expected_capabilities("## Capabilities\n- `a`\n- `b`\n- `a`\n") == [
+            "a",
+            "b",
+        ]
 
 
 # --- requirement-block parsing ---
@@ -316,30 +341,43 @@ class TestExtractCapabilities:
 
 class TestParseRequirements:
     def test_names_sections_and_scenarios(self):
-        text = ("## ADDED Requirements\n\n"
-                "### Requirement: Login\nThe system SHALL log in.\n\n"
-                "#### Scenario: ok\n- **WHEN** valid\n- **THEN** in\n\n"
-                "#### Scenario: bad\n- **WHEN** invalid\n- **THEN** refused\n\n"
-                "## REMOVED Requirements\n\n"
-                "### Requirement: Legacy login\n**Reason**: gone\n")
+        text = (
+            "## ADDED Requirements\n\n"
+            "### Requirement: Login\nThe system SHALL log in.\n\n"
+            "#### Scenario: ok\n- **WHEN** valid\n- **THEN** in\n\n"
+            "#### Scenario: bad\n- **WHEN** invalid\n- **THEN** refused\n\n"
+            "## REMOVED Requirements\n\n"
+            "### Requirement: Legacy login\n**Reason**: gone\n"
+        )
         reqs = parse_requirements(text)
-        assert [(r.name, r.section) for r in reqs] == [("Login", "ADDED"), ("Legacy login", "REMOVED")]
+        assert [(r.name, r.section) for r in reqs] == [
+            ("Login", "ADDED"),
+            ("Legacy login", "REMOVED"),
+        ]
         assert [s.name for s in reqs[0].scenarios] == ["ok", "bad"]
         assert "- **WHEN** invalid" in reqs[0].scenarios[1].body
         assert reqs[1].scenarios == ()
-        assert isinstance(reqs[0], RequirementBlock) and isinstance(reqs[0].scenarios[0], ScenarioBlock)
+        assert isinstance(reqs[0], RequirementBlock) and isinstance(
+            reqs[0].scenarios[0], ScenarioBlock
+        )
 
     def test_registry_file_has_no_section(self):
-        reqs = parse_requirements(SPEC_EXTRACT_SAMPLE.read_text().replace("## ADDED Requirements\n", ""))
+        reqs = parse_requirements(
+            SPEC_EXTRACT_SAMPLE.read_text().replace("## ADDED Requirements\n", "")
+        )
         assert [(r.name, r.section) for r in reqs] == [
-            ("Adds two numbers", None), ("Subtracts two numbers", None)]
+            ("Adds two numbers", None),
+            ("Subtracts two numbers", None),
+        ]
 
     def test_a_requirement_ends_at_the_next_h2(self):
         reqs = parse_requirements("### Requirement: A\nbody\n## Notes\ntrailing\n")
         assert reqs[0].body == "\nbody\n"
 
     def test_comments_are_removed_first(self):
-        reqs = parse_requirements("### Requirement: <!-- name -->\n<!-- ### Requirement: hidden -->\n")
+        reqs = parse_requirements(
+            "### Requirement: <!-- name -->\n<!-- ### Requirement: hidden -->\n"
+        )
         assert [r.name for r in reqs] == [""]
 
 
@@ -351,14 +389,18 @@ class TestValidRequirement:
 
     def test_valid_file(self, tmp_path):
         p = tmp_path / "ok.md"
-        p.write_text("### Requirement: Works\n#### Scenario: Normal\n- **WHEN** called\n- **THEN** succeeds\n")
+        p.write_text(
+            "### Requirement: Works\n#### Scenario: Normal\n- **WHEN** called\n- **THEN** succeeds\n"
+        )
         assert valid_requirement(p)
 
     def test_text_with_no_requirement_is_invalid(self):
         assert not valid_requirement_text("## ADDED Requirements\n\nnothing here\n")
 
     def test_when_and_then_need_text_after_them(self):
-        assert not valid_requirement_text("### Requirement: R\n#### Scenario: S\n- **WHEN**\n- **THEN** x\n")
+        assert not valid_requirement_text(
+            "### Requirement: R\n#### Scenario: S\n- **WHEN**\n- **THEN** x\n"
+        )
 
     def test_spec_extract_registry_file_is_valid(self):
         assert valid_requirement_text(SPEC_EXTRACT_SAMPLE.read_text())
@@ -369,12 +411,17 @@ class TestValidRequirement:
 
 def _what_docs(change: Path) -> Path:
     change.mkdir(parents=True, exist_ok=True)
-    (change / "proposal.md").write_text("## Why\nBecause.\n\n## Capabilities\n- `auth`\n")
-    (change / "use-cases.md").write_text("## Use cases\n- Ana wants to log in so that she sees her page\n")
+    (change / "proposal.md").write_text(
+        "## Why\nBecause.\n\n## Capabilities\n- `auth`\n"
+    )
+    (change / "use-cases.md").write_text(
+        "## Use cases\n- Ana wants to log in so that she sees her page\n"
+    )
     (change / "requirements").mkdir(exist_ok=True)
     (change / "requirements" / "auth.md").write_text(
         "## ADDED Requirements\n\n### Requirement: Login\nLogs in.\n\n"
-        "#### Scenario: ok\n- **WHEN** valid\n- **THEN** in\n")
+        "#### Scenario: ok\n- **WHEN** valid\n- **THEN** in\n"
+    )
     return change
 
 
@@ -401,18 +448,33 @@ class TestChangeMeta:
 
     def test_write_keeps_unknown_keys_in_order(self, change):
         (change / ".change.yaml").write_text(
-            "schema: spec-driven\ncreated: '2026-10-21'\nplane_refs:\n- SPK-12\nspec_status: draft\n")
-        written = write_change_meta(change, {"spec_status": "ready", "spec_issues": None})
-        assert list(written) == ["schema", "created", "plane_refs", "spec_status", "spec_issues"]
+            "schema: spec-driven\ncreated: '2026-10-21'\nplane_refs:\n- SPK-12\nspec_status: draft\n"
+        )
+        written = write_change_meta(
+            change, {"spec_status": "ready", "spec_issues": None}
+        )
+        assert list(written) == [
+            "schema",
+            "created",
+            "plane_refs",
+            "spec_status",
+            "spec_issues",
+        ]
         assert read_change_meta(change) == {
-            "schema": "spec-driven", "created": "2026-10-21", "plane_refs": ["SPK-12"],
-            "spec_status": "ready", "spec_issues": None}
+            "schema": "spec-driven",
+            "created": "2026-10-21",
+            "plane_refs": ["SPK-12"],
+            "spec_status": "ready",
+            "spec_issues": None,
+        }
         assert "spec_issues: null" in (change / ".change.yaml").read_text()
 
     def test_write_creates_the_file(self, tmp_path):
         write_change_meta(tmp_path, {"spec_status": "draft"})
         assert read_change_meta(tmp_path) == {"spec_status": "draft"}
-        assert [p.name for p in tmp_path.iterdir()] == [".change.yaml"], "no temporary file left"
+        assert [p.name for p in tmp_path.iterdir()] == [".change.yaml"], (
+            "no temporary file left"
+        )
 
     def test_write_refuses_to_overwrite_a_damaged_file(self, tmp_path):
         (tmp_path / ".change.yaml").write_text("a: [unclosed\n")
@@ -424,13 +486,17 @@ class TestChangeMeta:
 class TestSpecRevision:
     def test_is_the_documented_algorithm(self, change):
         import hashlib
+
         h = hashlib.sha256()
         for rel in ("proposal.md", "requirements/auth.md", "use-cases.md"):
             data = (change / rel).read_bytes()
             h.update(rel.encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
         assert spec_revision(change) == h.hexdigest()
         assert [p.relative_to(change).as_posix() for p in spec_files(change)] == [
-            "proposal.md", "requirements/auth.md", "use-cases.md"]
+            "proposal.md",
+            "requirements/auth.md",
+            "use-cases.md",
+        ]
 
     def test_only_the_what_documents_count(self, change):
         before = spec_revision(change)
@@ -438,7 +504,9 @@ class TestSpecRevision:
         (change / "interview.md").write_text("Q&A\n")
         (change / "requirements" / "notes.txt").write_text("not markdown\n")
         (change / "requirements" / "nested").mkdir()
-        (change / "requirements" / "nested" / "deep.md").write_text("### Requirement: X\n")
+        (change / "requirements" / "nested" / "deep.md").write_text(
+            "### Requirement: X\n"
+        )
         write_change_meta(change, {"spec_status": "ready"})
         assert spec_revision(change) == before
 
@@ -456,9 +524,12 @@ class TestSpecRevision:
     def test_content_add_remove_and_rename_change_it(self, change):
         seen = {spec_revision(change)}
         (change / "requirements" / "auth.md").write_text(
-            (change / "requirements" / "auth.md").read_text() + "\n")
+            (change / "requirements" / "auth.md").read_text() + "\n"
+        )
         seen.add(spec_revision(change))
-        (change / "requirements" / "auth.md").rename(change / "requirements" / "login.md")
+        (change / "requirements" / "auth.md").rename(
+            change / "requirements" / "login.md"
+        )
         seen.add(spec_revision(change))
         (change / "requirements" / "extra.md").write_text("")
         seen.add(spec_revision(change))
@@ -479,12 +550,13 @@ class TestSpecRevision:
 
     def test_empty_change_hashes_the_empty_input(self, tmp_path):
         assert spec_revision(tmp_path) == (
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
 
 
 class TestIsReady:
     def test_ready(self, change):
-        revision = mark_ready(change, now=datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc))
+        revision = mark_ready(change, now=datetime(2026, 10, 21, 9, 30, tzinfo=UTC))
         assert is_ready(change) == (True, "")
         meta = read_change_meta(change)
         assert meta["spec_status"] == "ready"
@@ -497,12 +569,17 @@ class TestIsReady:
         mark_draft(change)
         ok, reason = is_ready(change)
         assert not ok and reason == "spec_status is 'draft', not 'ready'"
-        assert read_change_meta(change)["spec_revision"] == spec_revision(change), "last check kept"
+        assert read_change_meta(change)["spec_revision"] == spec_revision(change), (
+            "last check kept"
+        )
 
     def test_edited_file_after_ready(self, change):
         mark_ready(change)
         (change / "requirements" / "auth.md").write_text(
-            (change / "requirements" / "auth.md").read_text().replace("Logs in.", "Logs in fast."))
+            (change / "requirements" / "auth.md")
+            .read_text()
+            .replace("Logs in.", "Logs in fast.")
+        )
         ok, reason = is_ready(change)
         assert not ok
         assert reason.startswith("the specs changed after they were marked ready")
@@ -518,11 +595,17 @@ class TestIsReady:
     def test_old_change_yaml_without_the_keys(self, change):
         """A `.change.yaml` buildme wrote before the ready record existed."""
         ok, reason = is_ready(change)
-        assert not ok and reason == "spec_status is not set: the specs were never marked ready"
+        assert (
+            not ok
+            and reason == "spec_status is not set: the specs were never marked ready"
+        )
 
     def test_ready_without_a_revision(self, change):
         write_change_meta(change, {"spec_status": "ready"})
-        assert is_ready(change) == (False, "spec_status is ready but spec_revision is missing")
+        assert is_ready(change) == (
+            False,
+            "spec_status is ready but spec_revision is missing",
+        )
 
     def test_no_change_yaml(self, tmp_path):
         ok, reason = is_ready(tmp_path)
@@ -531,7 +614,11 @@ class TestIsReady:
     def test_damaged_change_yaml_is_one_line(self, change):
         (change / ".change.yaml").write_text("a: [unclosed\n")
         ok, reason = is_ready(change)
-        assert not ok and reason.startswith(".change.yaml cannot be read:") and "\n" not in reason
+        assert (
+            not ok
+            and reason.startswith(".change.yaml cannot be read:")
+            and "\n" not in reason
+        )
 
     def test_open_spec_issues_do_not_change_readiness(self, change):
         mark_ready(change)
@@ -542,15 +629,22 @@ class TestIsReady:
 class TestMarkReady:
     def test_naive_now_is_utc_and_aware_now_is_converted(self, change):
         mark_ready(change, now=datetime(2026, 10, 21, 9, 30))
-        assert read_change_meta(change)["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
-        mark_ready(change, now=datetime(2026, 10, 21, 11, 30, tzinfo=timezone(timedelta(hours=2))))
-        assert read_change_meta(change)["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
+        assert (
+            read_change_meta(change)["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
+        )
+        mark_ready(
+            change,
+            now=datetime(2026, 10, 21, 11, 30, tzinfo=timezone(timedelta(hours=2))),
+        )
+        assert (
+            read_change_meta(change)["spec_checked_at"] == "2026-10-21T09:30:00+00:00"
+        )
 
     def test_default_now_is_the_current_utc_time(self, change):
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(UTC).replace(microsecond=0)
         mark_ready(change)
         checked = datetime.fromisoformat(read_change_meta(change)["spec_checked_at"])
-        assert before <= checked <= datetime.now(timezone.utc)
+        assert before <= checked <= datetime.now(UTC)
 
     def test_leaves_spec_issues_alone(self, change):
         set_spec_issues(change, "spec-issues.md")

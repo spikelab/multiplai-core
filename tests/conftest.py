@@ -62,7 +62,9 @@ def _isolate_env(monkeypatch, tmp_path_factory):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path_factory.mktemp("no-conf")))
     # The saved-options parse is cached per process; don't carry it across tests.
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("no-claude-config")))
+    monkeypatch.setenv(
+        "CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("no-claude-config"))
+    )
     from multiplai_core.plugin_options import _reset_cache as _reset_options
 
     _reset_options()

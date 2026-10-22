@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from multiplai_core import check_effort, coerce_int, conf_value, load_multiplai_conf, read_yaml_mapping
+from multiplai_core import (
+    check_effort,
+    coerce_int,
+    conf_value,
+    load_multiplai_conf,
+    read_yaml_mapping,
+)
 
 
 # A pipeline's load_config, built only from the helpers, the way review's and
@@ -58,7 +64,12 @@ def run_dir(tmp_path):
 
 def test_defaults_without_conf_or_yaml(home, run_dir):
     cfg = load_config(run_dir)
-    assert (cfg.concurrency, cfg.explore_model, cfg.effort, cfg.max_turns) == (4, None, None, 60)
+    assert (cfg.concurrency, cfg.explore_model, cfg.effort, cfg.max_turns) == (
+        4,
+        None,
+        None,
+        60,
+    )
 
 
 def test_load_config_applies_defaults_then_conf_then_yaml(home, run_dir):
@@ -66,19 +77,33 @@ def test_load_config_applies_defaults_then_conf_then_yaml(home, run_dir):
         "walkthrough_explore_model = sonnet\nwalkthrough_write_model = opus\nwalkthrough_effort = medium\n"
     )
     cfg = load_config(run_dir)
-    assert (cfg.explore_model, cfg.write_model, cfg.effort, cfg.concurrency) == ("sonnet", "opus", "medium", 4)
-    (run_dir / "walkthrough.yaml").write_text("explore_model: haiku\neffort: high\nconcurrency: 2\n")
+    assert (cfg.explore_model, cfg.write_model, cfg.effort, cfg.concurrency) == (
+        "sonnet",
+        "opus",
+        "medium",
+        4,
+    )
+    (run_dir / "walkthrough.yaml").write_text(
+        "explore_model: haiku\neffort: high\nconcurrency: 2\n"
+    )
     cfg = load_config(run_dir)
     # yaml beats conf where it sets a key; conf still beats the default where yaml is silent.
-    assert (cfg.explore_model, cfg.write_model, cfg.effort, cfg.concurrency) == ("haiku", "opus", "high", 2)
+    assert (cfg.explore_model, cfg.write_model, cfg.effort, cfg.concurrency) == (
+        "haiku",
+        "opus",
+        "high",
+        2,
+    )
 
 
 def test_bad_integers_and_an_unknown_effort_are_dropped(home, run_dir):
-    (run_dir / "walkthrough.yaml").write_text("concurrency: 0\nmax_turns: lots\neffort: turbo\n")
+    (run_dir / "walkthrough.yaml").write_text(
+        "concurrency: 0\nmax_turns: lots\neffort: turbo\n"
+    )
     cfg = load_config(run_dir)
-    assert cfg.concurrency == 1          # clamped
-    assert cfg.max_turns == 60           # not an integer: ignored
-    assert cfg.effort is None            # unknown effort: dropped
+    assert cfg.concurrency == 1  # clamped
+    assert cfg.max_turns == 60  # not an integer: ignored
+    assert cfg.effort is None  # unknown effort: dropped
 
 
 def test_an_unknown_effort_in_conf_is_dropped_too(home, run_dir):
@@ -110,7 +135,9 @@ def test_read_yaml_mapping_missing_or_none_is_empty_and_silent(tmp_path, caplog)
     assert not caplog.records
 
 
-@pytest.mark.parametrize("text", ["a: [unclosed\n", "- just\n- a list\n", "plain string\n"])
+@pytest.mark.parametrize(
+    "text", ["a: [unclosed\n", "- just\n- a list\n", "plain string\n"]
+)
 def test_read_yaml_mapping_bad_content_is_empty_with_a_warning(tmp_path, caplog, text):
     path = tmp_path / "review.yaml"
     path.write_text(text)
@@ -135,8 +162,13 @@ def test_read_yaml_mapping_empty_file_is_empty(tmp_path):
 
 def test_coerce_int_non_integer_concurrency_is_none_with_a_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="multiplai_core.stage_config"):
-        assert coerce_int({"concurrency": "four"}, "concurrency", "run/review.yaml") is None
-        assert coerce_int({"concurrency": [4]}, "concurrency", "run/review.yaml") is None
+        assert (
+            coerce_int({"concurrency": "four"}, "concurrency", "run/review.yaml")
+            is None
+        )
+        assert (
+            coerce_int({"concurrency": [4]}, "concurrency", "run/review.yaml") is None
+        )
     assert "concurrency='four' in run/review.yaml" in caplog.text
 
 

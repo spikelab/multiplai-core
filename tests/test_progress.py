@@ -19,8 +19,15 @@ def test_each_event_is_one_utc_timestamped_line(tmp_path):
     p.stage("verify")
     p.line("NOTE free text")
     p.done("3 findings")
-    bodies = [LINE.match(line).group(1) for line in _lines(tmp_path / "run" / "progress.log")]
-    assert bodies == ["STAGE find: 5 finders", "STAGE verify", "NOTE free text", "DONE 3 findings"]
+    bodies = [
+        LINE.match(line).group(1) for line in _lines(tmp_path / "run" / "progress.log")
+    ]
+    assert bodies == [
+        "STAGE find: 5 finders",
+        "STAGE verify",
+        "NOTE free text",
+        "DONE 3 findings",
+    ]
 
 
 def test_done_and_failed_match_the_skill_wait_loop_and_stage_does_not(tmp_path):
@@ -48,7 +55,10 @@ def test_a_pipeline_adds_its_own_started_line(tmp_path):
 
     path = tmp_path / "progress.log"
     ReviewProgress(path).started("pr-1", "a" * 40, "b" * 40, 3)
-    assert LINE.match(_lines(path)[0]).group(1) == f"STARTED pr-1 {'a' * 12}..{'b' * 12} (3 files)"
+    assert (
+        LINE.match(_lines(path)[0]).group(1)
+        == f"STARTED pr-1 {'a' * 12}..{'b' * 12} (3 files)"
+    )
 
 
 def test_a_str_path_is_accepted(tmp_path):

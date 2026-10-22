@@ -29,9 +29,10 @@ Two invariants hold regardless of schema drift:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 
 class Kind(str, Enum):

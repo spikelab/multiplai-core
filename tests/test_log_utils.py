@@ -11,11 +11,11 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-import multiplai_core.log_utils as log_utils
+from multiplai_core import log_utils
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def _unique(name: str) -> str:
 
 def _today(logs_dir, name: str, ext: str = "log"):
     """The file a component writes today: ``<name>-YYYY-MM-DD.<ext>``."""
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
     return logs_dir / f"{name}-{day}.{ext}"
 
 
@@ -46,8 +46,10 @@ _PKG_LOGGERS = ("multiplai_core", __name__.split(".")[0], "fakepkg")
 
 @pytest.fixture(autouse=True)
 def _restore_package_loggers():
-    saved = {n: (list(logging.getLogger(n).handlers), logging.getLogger(n).level)
-             for n in _PKG_LOGGERS}
+    saved = {
+        n: (list(logging.getLogger(n).handlers), logging.getLogger(n).level)
+        for n in _PKG_LOGGERS
+    }
     yield
     for n, (handlers, level) in saved.items():
         lg = logging.getLogger(n)
@@ -60,6 +62,7 @@ def _restore_package_loggers():
 # --------------------------------------------------------------------------
 # resolve_level
 # --------------------------------------------------------------------------
+
 
 def test_resolve_level_defaults_to_info(monkeypatch):
     monkeypatch.delenv("MULTIPLAI_DEBUG", raising=False)
@@ -94,12 +97,17 @@ def test_resolve_level_invalid_falls_back_to_info(monkeypatch):
 # setup_logging
 # --------------------------------------------------------------------------
 
+
 def test_setup_logging_level_from_env(monkeypatch, logs_dir):
     monkeypatch.setenv("MULTIPLAI_DEBUG", "1")
     logger = log_utils.setup_logging(_unique("lvl"))
     assert logger.level == logging.DEBUG
-    assert all(h.level == logging.DEBUG for h in logger.handlers
-               if not isinstance(h, logging.FileHandler) or "hook-errors" not in str(getattr(h, "baseFilename", "")))
+    assert all(
+        h.level == logging.DEBUG
+        for h in logger.handlers
+        if not isinstance(h, logging.FileHandler)
+        or "hook-errors" not in str(getattr(h, "baseFilename", ""))
+    )
 
 
 def test_setup_logging_writes_standard_format(logs_dir):
@@ -189,13 +197,11 @@ def _fake_package(tmp_path, monkeypatch):
         "def start(name):\n"
         "    return setup_logging(name)\n"
     )
-    (pkg / "mod.py").write_text(
-        "import logging\n"
-        "log = logging.getLogger(__name__)\n"
-    )
+    (pkg / "mod.py").write_text("import logging\nlog = logging.getLogger(__name__)\n")
     monkeypatch.syspath_prepend(str(pkg.parent))
     import importlib
     import sys
+
     for mod in ("fakepkg", "fakepkg.mod"):
         sys.modules.pop(mod, None)
     return importlib.import_module("fakepkg"), importlib.import_module("fakepkg.mod")
@@ -216,7 +222,9 @@ def test_module_logger_in_the_callers_package_reaches_the_file(
     assert "INFO: module line" in text
 
 
-def test_package_warning_reaches_stderr_formatted(logs_dir, tmp_path, monkeypatch, capsys):
+def test_package_warning_reaches_stderr_formatted(
+    logs_dir, tmp_path, monkeypatch, capsys
+):
     fakepkg, mod = _fake_package(tmp_path, monkeypatch)
     fakepkg.start(_unique("warn"))
     capsys.readouterr()
@@ -228,7 +236,8 @@ def test_package_warning_reaches_stderr_formatted(logs_dir, tmp_path, monkeypatc
     assert re.search(
         r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] \[fakepkg\.mod\] "
         r"\[session:[^\]]+\] WARNING: loud$",
-        err, re.MULTILINE,
+        err,
+        re.MULTILINE,
     ), err
 
 
@@ -272,10 +281,15 @@ def test_setup_logging_capture_no_double_write(logs_dir, clean_pkg_logger):
 # log_event
 # --------------------------------------------------------------------------
 
+
 def test_log_event_writes_human_and_jsonl(logs_dir):
     log_utils.log_event(
-        "context", "inject", "injected 2 memory · 0 skills",
-        session_id="sess1234xx", memory=2, files=["a.md", "b.md"],
+        "context",
+        "inject",
+        "injected 2 memory · 0 skills",
+        session_id="sess1234xx",
+        memory=2,
+        files=["a.md", "b.md"],
     )
 
     # Current file is undated — no date in the filename.
@@ -300,8 +314,9 @@ def test_log_event_writes_human_and_jsonl(logs_dir):
 
 def test_log_event_tags_non_info_severity_in_human_line(logs_dir):
     """A WARNING/ERROR event is visible in the human log, not just the JSONL."""
-    log_utils.log_event("dream", "apply", "memory write failed",
-                         session_id="sess1234xx", level="ERROR")
+    log_utils.log_event(
+        "dream", "apply", "memory write failed", session_id="sess1234xx", level="ERROR"
+    )
     human = _today(logs_dir, "activity").read_text().strip()
     assert "[ERROR]" in human
     assert "[dream] [ERROR] memory write failed" in human
@@ -323,12 +338,14 @@ def test_log_event_never_raises(monkeypatch):
     log_utils.log_event("x", "y", "z")
 
 
-def test_log_event_prunes_old_activity_only_when_retention_is_set(logs_dir, monkeypatch):
+def test_log_event_prunes_old_activity_only_when_retention_is_set(
+    logs_dir, monkeypatch
+):
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "7")
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "activity-2000-01-01.log"
     old.write_text("ancient\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(old, (ancient, ancient))
 
     log_utils._swept = False
@@ -344,9 +361,9 @@ def test_default_sweep_keeps_a_year_of_logs(logs_dir):
     recent = logs_dir / "build-pipeline-2026-01-01.log"
     for p in (old, recent):
         p.write_text("x\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(old, (ancient, ancient))
-    months = (datetime.now(timezone.utc) - timedelta(days=300)).timestamp()
+    months = (datetime.now(UTC) - timedelta(days=300)).timestamp()
     os.utime(recent, (months, months))
 
     log_utils._swept = False
@@ -369,6 +386,7 @@ def test_log_event_appends_multiple_records(logs_dir):
 # date-rotation + naming convention
 # --------------------------------------------------------------------------
 
+
 def test_log_event_writes_each_day_to_its_own_file(logs_dir, monkeypatch):
     """Each UTC day's events go to activity-<day>.{log,jsonl}; a legacy
     undated activity.log is left exactly as it was."""
@@ -384,7 +402,10 @@ def test_log_event_writes_each_day_to_its_own_file(logs_dir, monkeypatch):
     assert "day one" in (logs_dir / "activity-2031-01-01.log").read_text()
     assert "day two" in (logs_dir / "activity-2031-01-02.log").read_text()
     assert "day two" not in (logs_dir / "activity-2031-01-01.log").read_text()
-    assert json.loads((logs_dir / "activity-2031-01-02.jsonl").read_text())["msg"] == "day two"
+    assert (
+        json.loads((logs_dir / "activity-2031-01-02.jsonl").read_text())["msg"]
+        == "day two"
+    )
     assert legacy.read_text() == "12:00:00 [old] legacy line\n"
     assert not (logs_dir / "activity.jsonl").exists()
 
@@ -448,8 +469,11 @@ def test_two_processes_across_midnight_lose_no_line(logs_dir, tmp_path):
     env = {**os.environ}
     total = 1500
     procs = [
-        subprocess.Popen([sys.executable, str(script), name, tag, str(total), str(switch)],
-                         env=env, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            [sys.executable, str(script), name, tag, str(total), str(switch)],
+            env=env,
+            stderr=subprocess.DEVNULL,
+        )
         for tag, switch in (("A", 500), ("B", 1000))
     ]
     for p in procs:
@@ -459,8 +483,11 @@ def test_two_processes_across_midnight_lose_no_line(logs_dir, tmp_path):
     for day in ("2031-05-01", "2031-05-02"):
         lines += (logs_dir / f"{name}-{day}.log").read_text().splitlines()
     for tag in ("A", "B"):
-        got = {int(m.group(1)) for line in lines
-               if (m := re.search(rf"INFO: {tag} line (\d+)$", line))}
+        got = {
+            int(m.group(1))
+            for line in lines
+            if (m := re.search(rf"INFO: {tag} line (\d+)$", line))
+        }
         assert got == set(range(total)), f"{tag} lost {total - len(got)} lines"
     assert len(lines) == 2 * total
     assert not (logs_dir / f"{name}.log").exists()
@@ -482,6 +509,7 @@ def test_sweep_migrates_rejected_stdlib_form(logs_dir):
 # --------------------------------------------------------------------------
 # retention
 # --------------------------------------------------------------------------
+
 
 def test_retention_days_default_and_parsing(monkeypatch):
     # Unset, unparseable or negative all mean the default, 365 days.
@@ -512,7 +540,7 @@ def test_retention_zero_keeps_dated_files_forever(logs_dir, monkeypatch):
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "activity-2000-01-01.log"
     old.write_text("ancient\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(old, (ancient, ancient))
     monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "0")
 
@@ -524,12 +552,12 @@ def test_retention_zero_keeps_dated_files_forever(logs_dir, monkeypatch):
 
 def test_sweep_prunes_only_dated_files_beyond_cutoff(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
-    keep_current = logs_dir / "context_manager.log"      # undated → never pruned
+    keep_current = logs_dir / "context_manager.log"  # undated → never pruned
     keep_recent = logs_dir / "context_manager-2030-01-01.log"
     drop_old = logs_dir / "context_manager-2000-01-01.log"
     for p in (keep_current, keep_recent, drop_old):
         p.write_text("x\n")
-    ancient = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+    ancient = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
     os.utime(drop_old, (ancient, ancient))
 
     log_utils._sweep_logs(logs_dir, 7)
@@ -542,6 +570,7 @@ def test_sweep_prunes_only_dated_files_beyond_cutoff(logs_dir):
 # --------------------------------------------------------------------------
 # the shared error log is append-only
 # --------------------------------------------------------------------------
+
 
 def test_hook_errors_log_is_never_shortened(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -556,7 +585,7 @@ def test_hook_errors_log_is_never_shortened(logs_dir):
 
     text = err_log.read_text()
     assert text.startswith(big)
-    assert "ERROR: appended" in text[len(big):]
+    assert "ERROR: appended" in text[len(big) :]
 
 
 def _stamp(path, when: datetime) -> None:
@@ -568,14 +597,16 @@ def test_hook_errors_log_moves_to_its_dated_name_on_a_new_day(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
     err_log = logs_dir / "hook-errors.log"
     err_log.write_text("yesterday's error\n")
-    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=timezone.utc))
+    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=UTC))
 
     logger = log_utils.setup_logging(_unique("rot"))
     logger.error("today's error")
     for h in logger.handlers:
         h.flush()
 
-    assert (logs_dir / "hook-errors-2026-03-04.log").read_text() == "yesterday's error\n"
+    assert (
+        logs_dir / "hook-errors-2026-03-04.log"
+    ).read_text() == "yesterday's error\n"
     assert "today's error" in err_log.read_text()
     assert "yesterday" not in err_log.read_text()
 
@@ -599,7 +630,7 @@ def test_hook_errors_rotation_never_overwrites_a_dated_file(logs_dir):
     dated.write_text("first rotation\n")
     err_log = logs_dir / "hook-errors.log"
     err_log.write_text("second\n")
-    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=timezone.utc))
+    _stamp(err_log, datetime(2026, 3, 4, 12, tzinfo=UTC))
 
     log_utils._rotate_shared_error_log(logs_dir)
 
@@ -611,7 +642,7 @@ def test_rotated_hook_errors_follow_retention(logs_dir):
     logs_dir.mkdir(parents=True, exist_ok=True)
     old = logs_dir / "hook-errors-2000-01-01.log"
     old.write_text("x\n")
-    _stamp(old, datetime(2000, 1, 1, tzinfo=timezone.utc))
+    _stamp(old, datetime(2000, 1, 1, tzinfo=UTC))
 
     log_utils._sweep_logs(logs_dir, 365)
 
@@ -707,10 +738,9 @@ def test_hook_run_marks_errors_and_reraises(logs_dir):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(ValueError):
-        with log_utils.hook_run(name, logger) as run:
-            with run.stage("router"):
-                raise ValueError("boom")
+    with pytest.raises(ValueError), log_utils.hook_run(name, logger) as run:
+        with run.stage("router"):
+            raise ValueError("boom")
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line
@@ -727,9 +757,8 @@ def test_hook_run_treats_clean_sys_exit_as_ok(logs_dir, code):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(SystemExit):
-        with log_utils.hook_run(name, logger):
-            raise SystemExit(code)
+    with pytest.raises(SystemExit), log_utils.hook_run(name, logger):
+        raise SystemExit(code)
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=ok" in exit_line
@@ -739,9 +768,8 @@ def test_hook_run_treats_nonzero_sys_exit_as_error(logs_dir):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(SystemExit):
-        with log_utils.hook_run(name, logger):
-            raise SystemExit(2)
+    with pytest.raises(SystemExit), log_utils.hook_run(name, logger):
+        raise SystemExit(2)
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line
@@ -806,9 +834,8 @@ def test_hook_run_error_names_the_exception_and_reaches_the_error_sink(logs_dir)
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(ValueError):
-        with log_utils.hook_run(name, logger):
-            raise ValueError("boom")
+    with pytest.raises(ValueError), log_utils.hook_run(name, logger):
+        raise ValueError("boom")
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line
@@ -841,9 +868,8 @@ def test_hook_run_treats_falsy_nonzero_sys_exit_as_error(logs_dir, code):
     name = _unique("hookrun")
     logger = log_utils.setup_logging(name)
 
-    with pytest.raises(SystemExit):
-        with log_utils.hook_run(name, logger):
-            raise SystemExit(code)
+    with pytest.raises(SystemExit), log_utils.hook_run(name, logger):
+        raise SystemExit(code)
 
     exit_line = [ln for ln in _lines(logs_dir, name) if "HOOK_EXIT" in ln][0]
     assert "status=error" in exit_line
@@ -941,7 +967,9 @@ def test_watchdog_names_the_running_stage_before_the_body_ends(logs_dir):
     name = _unique("watchdog")
     logger = log_utils.setup_logging(name)
 
-    with log_utils.hook_run(name, logger, session_id="abcdef123456", watchdog_s=0.05) as run:
+    with log_utils.hook_run(
+        name, logger, session_id="abcdef123456", watchdog_s=0.05
+    ) as run:
         with run.stage("transcript"):
             pass
         with run.stage("router"):

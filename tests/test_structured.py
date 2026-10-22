@@ -25,10 +25,15 @@ def test_a_json_answer_parses_even_inside_prose_and_a_fence():
 
 
 def test_a_prose_answer_is_reported_as_having_no_json():
-    prose = "## Tests review\n\n| tier | covered |\n`{tier: 1, name: x}` then [\"merge\"]"
-    with pytest.raises(StructuredAnswerError, match="contains no JSON object with the field.s. value; it starts: '## Tests"):
+    prose = '## Tests review\n\n| tier | covered |\n`{tier: 1, name: x}` then ["merge"]'
+    with pytest.raises(
+        StructuredAnswerError,
+        match="contains no JSON object with the field.s. value; it starts: '## Tests",
+    ):
         parse_answer(prose, Answer)
-    with pytest.raises(ValueError) as caught:  # JSON with the field keeps the parser's own error
+    with pytest.raises(
+        ValueError
+    ) as caught:  # JSON with the field keeps the parser's own error
         parse_answer('{"value": "x"}', Answer)
     assert "no JSON object" not in str(caught.value)
     assert not isinstance(caught.value, StructuredAnswerError)

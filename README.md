@@ -126,12 +126,12 @@ not on offer, because the pre-1.0 minor is the breaking axis (above).
 ```python
 from multiplai_core import create_client, extract_json
 
-client = await create_client()            # Agent SDK if present, else API key
+client = await create_client()  # Agent SDK if present, else API key
 resp = await client.query(
     system="You output only JSON.",
-    messages=[{"role": "user", "content": "Give me {\"ok\": true}"}],
+    messages=[{"role": "user", "content": 'Give me {"ok": true}'}],
 )
-data = extract_json(resp.content)         # -> {"ok": True}
+data = extract_json(resp.content)  # -> {"ok": True}
 ```
 
 ## Model and effort are two axes
@@ -189,14 +189,17 @@ Claude family only, so cross-vendor support cannot be another branch inside
 
 ```python
 from multiplai_core import (
-    ModelSpec, parse_model_spec, create_client_for, register_provider,
+    ModelSpec,
+    parse_model_spec,
+    create_client_for,
+    register_provider,
 )
 
-spec = parse_model_spec("openai:gpt-5")   # -> ModelSpec("openai", "gpt-5")
-parse_model_spec("claude-opus-5")          # -> ModelSpec("anthropic", "claude-opus-5")
+spec = parse_model_spec("openai:gpt-5")  # -> ModelSpec("openai", "gpt-5")
+parse_model_spec("claude-opus-5")  # -> ModelSpec("anthropic", "claude-opus-5")
 
-register_provider("openai", my_factory)    # async (spec, *, api_key=…) -> ModelClient
-client = await create_client_for(spec)     # UnknownProviderError if unregistered
+register_provider("openai", my_factory)  # async (spec, *, api_key=…) -> ModelClient
+client = await create_client_for(spec)  # UnknownProviderError if unregistered
 ```
 
 - A **bare** model ID stays Anthropic (`DEFAULT_PROVIDER`), so every existing
@@ -236,9 +239,12 @@ registered for it:
 ```python
 from multiplai_core import register_agent_backend, registered_agent_backends
 
-async def my_runner(prompt, **kwargs) -> AgentRunResult: ...   # run_agent's keywords
+
+async def my_runner(prompt, **kwargs) -> AgentRunResult: ...  # run_agent's keywords
+
+
 register_agent_backend("mine", my_runner)
-await run_agent("…", model="mine:some-model")    # UnknownAgentBackendError if unregistered
+await run_agent("…", model="mine:some-model")  # UnknownAgentBackendError if unregistered  # fmt: skip
 ```
 
 One backend ships: `pi`, for `pi:<model-id>@<provider>` (for example

@@ -29,27 +29,55 @@ def _run(coro):
 
 
 def _usage(i=0, o=0, cr=0, cw=0, cost=0.0):
-    return {"input": i, "output": o, "cacheRead": cr, "cacheWrite": cw,
-            "totalTokens": i + o + cr + cw,
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
-                     "total": cost}}
+    return {
+        "input": i,
+        "output": o,
+        "cacheRead": cr,
+        "cacheWrite": cw,
+        "totalTokens": i + o + cr + cw,
+        "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": cost,
+        },
+    }
 
 
 def _assistant_end(text="", *, usage=None, stop="stop", error=None, tool_calls=()):
     content = [{"type": "text", "text": text}] if text else []
-    content += [{"type": "toolCall", "id": f"t{n}", "name": name, "arguments": args}
-                for n, (name, args) in enumerate(tool_calls)]
-    msg = {"role": "assistant", "content": content, "usage": usage or _usage(),
-           "stopReason": stop}
+    content += [
+        {"type": "toolCall", "id": f"t{n}", "name": name, "arguments": args}
+        for n, (name, args) in enumerate(tool_calls)
+    ]
+    msg = {
+        "role": "assistant",
+        "content": content,
+        "usage": usage or _usage(),
+        "stopReason": stop,
+    }
     if error:
         msg["errorMessage"] = error
     return {"type": "message_end", "message": msg}
 
 
 def _tool(name, args):
-    return [{"type": "tool_execution_start", "toolCallId": "c", "toolName": name, "args": args},
-            {"type": "tool_execution_end", "toolCallId": "c", "toolName": name,
-             "result": {"content": []}, "isError": False}]
+    return [
+        {
+            "type": "tool_execution_start",
+            "toolCallId": "c",
+            "toolName": name,
+            "args": args,
+        },
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "c",
+            "toolName": name,
+            "result": {"content": []},
+            "isError": False,
+        },
+    ]
 
 
 TURN_END = {"type": "turn_end"}
@@ -86,7 +114,7 @@ class StubTransport:
         blob = b"".join(json.dumps(e).encode() + b"\n" for e in self.script)
         # Odd-sized chunks: a frame split across reads must still parse.
         for i in range(0, len(blob), self.chunk):
-            yield blob[i:i + self.chunk]
+            yield blob[i : i + self.chunk]
         if self.hang:
             await asyncio.Event().wait()
 
@@ -108,8 +136,12 @@ def stub(monkeypatch, tmp_path):
     async def fake_open(argv, *, cwd, env):
         seen["argv"], seen["cwd"], seen["env"] = argv, cwd, env
         seen["opens"] += 1
-        t = StubTransport(seen["script"], hang=seen["hang"], fail_on=seen["fail_on"],
-                          wedge_on=seen["wedge_on"])
+        t = StubTransport(
+            seen["script"],
+            hang=seen["hang"],
+            fail_on=seen["fail_on"],
+            wedge_on=seen["wedge_on"],
+        )
         seen["transport"] = t
         return t
 
@@ -127,23 +159,34 @@ def stub(monkeypatch, tmp_path):
 class TestParsePiSpec:
     def test_valid(self):
         assert pb.parse_pi_spec("pi:deepseek/deepseek-v4-flash-0731@fireworks") == (
-            "deepseek/deepseek-v4-flash-0731", "fireworks")
+            "deepseek/deepseek-v4-flash-0731",
+            "fireworks",
+        )
 
     def test_last_at_splits(self):
         assert pb.parse_pi_spec("pi:org/m@v2@prov") == ("org/m@v2", "prov")
 
-    @pytest.mark.parametrize("bad", [
-        "claude", "pi:model-no-provider", "pi:@fireworks", "pi:model@",
-    ])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "claude",
+            "pi:model-no-provider",
+            "pi:@fireworks",
+            "pi:model@",
+        ],
+    )
     def test_malformed(self, bad):
         with pytest.raises(pb.PiSpecError):
             pb.parse_pi_spec(bad)
 
-    @pytest.mark.parametrize("spelling", [
-        "PI:deepseek/deepseek-v4-flash@fireworks",
-        "  pi:deepseek/deepseek-v4-flash@fireworks ",
-        "Pi: deepseek/deepseek-v4-flash@fireworks",
-    ])
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "PI:deepseek/deepseek-v4-flash@fireworks",
+            "  pi:deepseek/deepseek-v4-flash@fireworks ",
+            "Pi: deepseek/deepseek-v4-flash@fireworks",
+        ],
+    )
     def test_run_agent_accepts_any_spelling_it_routes_to_pi(self, stub, spelling):
         # run_agent routes on a lower-cased, stripped provider; the backend
         # must accept the same spellings rather than reject them as not pi.
@@ -161,7 +204,11 @@ class TestParsePiSpec:
 class TestToolMap:
     def test_translates_dedupes_and_drops_unknown(self):
         assert pb.pi_tools(["Read", "Grep", "Glob", "Bash", "Read", "WebFetch"]) == [
-            "read", "grep", "find", "bash"]
+            "read",
+            "grep",
+            "find",
+            "bash",
+        ]
 
     def test_disallowed_removes_from_allow_list(self):
         assert pb.pi_tools(["Read", "Bash"], ["Bash"]) == ["read"]
@@ -172,7 +219,9 @@ class TestToolMap:
 
 class TestArgv:
     def test_tools_effort_and_model(self):
-        argv = pb.build_argv("pi", "m/x", "prov", tools=["read", "write"], effort="high")
+        argv = pb.build_argv(
+            "pi", "m/x", "prov", tools=["read", "write"], effort="high"
+        )
         assert argv[:4] == ["pi", "--mode", "rpc", "--no-session"]
         assert argv[argv.index("--provider") + 1] == "prov"
         assert argv[argv.index("--model") + 1] == "m/x"
@@ -188,12 +237,15 @@ class TestArgv:
         assert "--thinking" not in pb.build_argv("pi", "m", "p", tools=[], effort=None)
 
     def test_disabled_thinking_without_effort_is_off(self):
-        argv = pb.build_argv("pi", "m", "p", tools=[], effort=None,
-                             thinking={"type": "disabled"})
+        argv = pb.build_argv(
+            "pi", "m", "p", tools=[], effort=None, thinking={"type": "disabled"}
+        )
         assert argv[argv.index("--thinking") + 1] == "off"
 
     def test_gate_extension(self):
-        argv = pb.build_argv("pi", "m", "p", tools=["bash"], effort=None, gate_ext="/g.ts")
+        argv = pb.build_argv(
+            "pi", "m", "p", tools=["bash"], effort=None, gate_ext="/g.ts"
+        )
         assert argv[-3:] == ["--no-extensions", "--extension", "/g.ts"]
 
 
@@ -219,33 +271,81 @@ def _ev(seq, payload):
 class TestAssistantText:
     def test_last_rendition_per_id_wins_in_first_seen_order(self):
         def m(seq, mid, text):
-            return _ev(seq, {"type": "message_update", "id": mid, "message": {
-                "role": "assistant", "content": [{"type": "text", "text": text}]}})
-        events = [m(0, "m1", "part"), m(1, "m1", "partial answer"),
-                  m(2, "m2", "second message"), m(3, "m1", "final answer")]
+            return _ev(
+                seq,
+                {
+                    "type": "message_update",
+                    "id": mid,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": text}],
+                    },
+                },
+            )
+
+        events = [
+            m(0, "m1", "part"),
+            m(1, "m1", "partial answer"),
+            m(2, "m2", "second message"),
+            m(3, "m1", "final answer"),
+        ]
         assert pb.assistant_text(events) == "final answer\nsecond message"
 
     def test_ignores_user_and_textless_messages(self):
         events = [
-            _ev(0, {"type": "message_end", "id": "u", "message": {
-                "role": "user", "content": [{"type": "text", "text": "user text"}]}}),
+            _ev(
+                0,
+                {
+                    "type": "message_end",
+                    "id": "u",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "user text"}],
+                    },
+                },
+            ),
             _ev(1, {"type": "tool_execution_start"}),
-            _ev(2, {"type": "message_end", "id": "a", "message": {
-                "role": "assistant", "content": [{"type": "text", "text": "answer"}]}}),
+            _ev(
+                2,
+                {
+                    "type": "message_end",
+                    "id": "a",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "answer"}],
+                    },
+                },
+            ),
         ]
         assert pb.assistant_text(events) == "answer"
 
 
 class TestUsage:
     def test_sums_assistant_message_end_only(self):
-        events = [_ev(i, e) for i, e in enumerate([
-            {"type": "message_start", "message": {"role": "assistant", "usage": _usage(9, 9)}},
-            _assistant_end("a", usage=_usage(100, 10, cr=50, cw=5, cost=0.01)),
-            {"type": "turn_end", "message": {"role": "assistant",
-                                             "usage": _usage(100, 10, cost=0.01)}},
-            _assistant_end("b", usage=_usage(20, 2, cost=0.002)),
-            {"type": "message_end", "message": {"role": "toolResult", "usage": _usage(7, 7)}},
-        ])]
+        events = [
+            _ev(i, e)
+            for i, e in enumerate(
+                [
+                    {
+                        "type": "message_start",
+                        "message": {"role": "assistant", "usage": _usage(9, 9)},
+                    },
+                    _assistant_end("a", usage=_usage(100, 10, cr=50, cw=5, cost=0.01)),
+                    {
+                        "type": "turn_end",
+                        "message": {
+                            "role": "assistant",
+                            "usage": _usage(100, 10, cost=0.01),
+                        },
+                    },
+                    _assistant_end("b", usage=_usage(20, 2, cost=0.002)),
+                    {
+                        "type": "message_end",
+                        "message": {"role": "toolResult", "usage": _usage(7, 7)},
+                    },
+                ]
+            )
+        ]
         usage, reported = pb.usage_from_events(events)
         assert (usage.input_tokens, usage.output_tokens) == (120, 12)
         assert (usage.cache_read_tokens, usage.cache_creation_tokens) == (50, 5)
@@ -253,7 +353,9 @@ class TestUsage:
         assert reported
 
     def test_no_cost_is_zero_and_unreported(self):
-        usage, reported = pb.usage_from_events([_ev(0, _assistant_end("a", usage=_usage(5, 1)))])
+        usage, reported = pb.usage_from_events(
+            [_ev(0, _assistant_end("a", usage=_usage(5, 1)))]
+        )
         assert usage.cost_usd == 0 and not reported
 
 
@@ -268,26 +370,50 @@ class TestToolCalls:
         return pb.tool_calls_from_events(events)
 
     def test_read_write_use_file_path(self):
-        assert self._calls(("read", {"path": "a.py", "offset": 3, "limit": 10}),
-                           ("write", {"path": "b.py", "content": "x"})) == (
-            agent_runner.ToolCall("Read", {"file_path": "a.py", "offset": 3, "limit": 10}),
+        assert self._calls(
+            ("read", {"path": "a.py", "offset": 3, "limit": 10}),
+            ("write", {"path": "b.py", "content": "x"}),
+        ) == (
+            agent_runner.ToolCall(
+                "Read", {"file_path": "a.py", "offset": 3, "limit": 10}
+            ),
             agent_runner.ToolCall("Write", {"file_path": "b.py", "content": "x"}),
         )
 
     def test_single_edit_flattens_to_old_and_new_string(self):
-        (call,) = self._calls(("edit", {"path": "a.py", "edits": [{"oldText": "a", "newText": "b"}]}))
+        (call,) = self._calls(
+            ("edit", {"path": "a.py", "edits": [{"oldText": "a", "newText": "b"}]})
+        )
         assert call == agent_runner.ToolCall(
-            "Edit", {"file_path": "a.py", "old_string": "a", "new_string": "b"})
+            "Edit", {"file_path": "a.py", "old_string": "a", "new_string": "b"}
+        )
 
     def test_legacy_top_level_edit_keys(self):
-        (call,) = self._calls(("edit", {"path": "a.py", "oldText": "a", "newText": "b"}))
+        (call,) = self._calls(
+            ("edit", {"path": "a.py", "oldText": "a", "newText": "b"})
+        )
         assert call.input == {"file_path": "a.py", "old_string": "a", "new_string": "b"}
 
     def test_several_edits_keep_a_list_with_claude_keys(self):
-        (call,) = self._calls(("edit", {"path": "a.py", "edits": [
-            {"oldText": "a", "newText": "b"}, {"oldText": "c", "newText": "d"}]}))
-        assert call.input == {"file_path": "a.py", "edits": [
-            {"old_string": "a", "new_string": "b"}, {"old_string": "c", "new_string": "d"}]}
+        (call,) = self._calls(
+            (
+                "edit",
+                {
+                    "path": "a.py",
+                    "edits": [
+                        {"oldText": "a", "newText": "b"},
+                        {"oldText": "c", "newText": "d"},
+                    ],
+                },
+            )
+        )
+        assert call.input == {
+            "file_path": "a.py",
+            "edits": [
+                {"old_string": "a", "new_string": "b"},
+                {"old_string": "c", "new_string": "d"},
+            ],
+        }
 
     def test_bash_timeout_seconds_become_milliseconds(self):
         (call,) = self._calls(("bash", {"command": "ls", "timeout": 5}))
@@ -295,13 +421,35 @@ class TestToolCalls:
 
     def test_grep_and_find_options(self):
         assert self._calls(
-            ("grep", {"pattern": "x", "path": "src", "glob": "*.py", "ignoreCase": True,
-                      "context": 2, "limit": 5, "literal": True}),
+            (
+                "grep",
+                {
+                    "pattern": "x",
+                    "path": "src",
+                    "glob": "*.py",
+                    "ignoreCase": True,
+                    "context": 2,
+                    "limit": 5,
+                    "literal": True,
+                },
+            ),
             ("find", {"pattern": "*.py", "path": "src", "limit": 9}),
         ) == (
-            agent_runner.ToolCall("Grep", {"pattern": "x", "path": "src", "glob": "*.py", "-i": True,
-                                           "-C": 2, "head_limit": 5, "literal": True}),
-            agent_runner.ToolCall("Glob", {"pattern": "*.py", "path": "src", "limit": 9}),
+            agent_runner.ToolCall(
+                "Grep",
+                {
+                    "pattern": "x",
+                    "path": "src",
+                    "glob": "*.py",
+                    "-i": True,
+                    "-C": 2,
+                    "head_limit": 5,
+                    "literal": True,
+                },
+            ),
+            agent_runner.ToolCall(
+                "Glob", {"pattern": "*.py", "path": "src", "limit": 9}
+            ),
         )
 
     def test_unmapped_tool_keeps_its_name_and_args(self):
@@ -312,11 +460,15 @@ class TestToolCalls:
 class TestFilesChanged:
     def _events(self):
         return [_ev(0, e) for e in _tool("write", {"path": "src/made_by_event.py"})] + [
-            _ev(2, e) for e in _tool("read", {"path": "ignored.py"})]
+            _ev(2, e) for e in _tool("read", {"path": "ignored.py"})
+        ]
 
     def test_write_and_edit_targets_in_order_without_duplicates(self):
-        events = self._events() + [_ev(4, e) for e in _tool("edit", {"path": "b.py"})] + [
-            _ev(6, e) for e in _tool("write", {"path": "src/made_by_event.py"})]
+        events = (
+            self._events()
+            + [_ev(4, e) for e in _tool("edit", {"path": "b.py"})]
+            + [_ev(6, e) for e in _tool("write", {"path": "src/made_by_event.py"})]
+        )
         assert pb.files_changed(events) == ["src/made_by_event.py", "b.py"]
 
     def test_bash_writes_are_not_reported(self):
@@ -331,19 +483,32 @@ class TestFilesChanged:
 class TestRun:
     def test_result_shape_matches_the_sdk_path(self, stub):
         stub["script"] += [
-            _assistant_end(usage=_usage(10, 2, cost=0.001),
-                           tool_calls=[("write", {"path": "a.py"})], stop="toolUse"),
+            _assistant_end(
+                usage=_usage(10, 2, cost=0.001),
+                tool_calls=[("write", {"path": "a.py"})],
+                stop="toolUse",
+            ),
             *_tool("write", {"path": "a.py", "content": "x"}),
             TURN_END,
             _assistant_end("done", usage=_usage(5, 1, cost=0.0005)),
-            TURN_END, SETTLED,
+            TURN_END,
+            SETTLED,
         ]
-        r = _run(run_agent("go", model=SPEC, allowed_tools=["Write", "Read"], max_turns=5,
-                           effort="medium"))
+        r = _run(
+            run_agent(
+                "go",
+                model=SPEC,
+                allowed_tools=["Write", "Read"],
+                max_turns=5,
+                effort="medium",
+            )
+        )
         assert isinstance(r, agent_runner.AgentRunResult)
         assert r.text == "done" and r.turns == 2
         assert r.files_changed == ["a.py"]
-        assert r.tool_calls == (agent_runner.ToolCall("Write", {"file_path": "a.py", "content": "x"}),)
+        assert r.tool_calls == (
+            agent_runner.ToolCall("Write", {"file_path": "a.py", "content": "x"}),
+        )
         assert (r.usage.input_tokens, r.usage.output_tokens) == (15, 3)
         assert r.usage.cost_usd == pytest.approx(0.0015)
         assert r.stderr_tail == ""
@@ -355,7 +520,8 @@ class TestRun:
         assert stub["env"]["_HOOK_CHILD_SESSION"] == "1"
 
     def test_files_changed_reports_only_the_agents_write_and_edit_targets(
-            self, stub, monkeypatch, tmp_path):
+        self, stub, monkeypatch, tmp_path
+    ):
         # The run's cwd is a subdirectory of a repo that other processes are
         # also changing: one creates a file elsewhere in the repo while the run
         # is going, and one re-edits a file that was already dirty. Neither is
@@ -377,9 +543,14 @@ class TestRun:
         stub["script"] += [
             _assistant_end(tool_calls=[("edit", {"path": "a.py"})], stop="toolUse"),
             *_tool("edit", {"path": "a.py", "oldText": "a", "newText": "b"}),
-            TURN_END, _assistant_end("done"), TURN_END, SETTLED,
+            TURN_END,
+            _assistant_end("done"),
+            TURN_END,
+            SETTLED,
         ]
-        r = _run(run_agent("go", model=SPEC, allowed_tools=["Edit"], max_turns=5, cwd=work))
+        r = _run(
+            run_agent("go", model=SPEC, allowed_tools=["Edit"], max_turns=5, cwd=work)
+        )
         assert r.files_changed == ["a.py"]
 
     def test_default_cwd_is_the_hook_session_dir(self, stub, monkeypatch, tmp_path):
@@ -405,8 +576,14 @@ class TestRun:
         assert msg.startswith("be terse") and msg.endswith("task")
 
     def test_max_turns_aborts_and_returns(self, stub):
-        stub["script"] += [_assistant_end("one"), TURN_END, _assistant_end("two"), TURN_END,
-                           _assistant_end("late"), SETTLED]
+        stub["script"] += [
+            _assistant_end("one"),
+            TURN_END,
+            _assistant_end("two"),
+            TURN_END,
+            _assistant_end("late"),
+            SETTLED,
+        ]
         r = _run(run_agent("p", model=SPEC, max_turns=1))
         # abort goes out once, at the first turn_end; the turns Pi finishes
         # while the abort is in flight still count.
@@ -433,15 +610,18 @@ class TestRun:
 
         async def bounded():
             return await asyncio.wait_for(
-                run_agent("p", model=SPEC, timeout_s=0.3, max_turns=10), timeout=5)
+                run_agent("p", model=SPEC, timeout_s=0.3, max_turns=10), timeout=5
+            )
 
         with pytest.raises(AgentRunTimeout) as exc:
             _run(bounded())
         assert exc.value.partial.text == "so far"
         assert stub["transport"].closed
 
-    @pytest.mark.parametrize("err", [BrokenPipeError(32, "Broken pipe"),
-                                     ConnectionResetError("Connection lost")])
+    @pytest.mark.parametrize(
+        "err",
+        [BrokenPipeError(32, "Broken pipe"), ConnectionResetError("Connection lost")],
+    )
     def test_pipe_error_on_prompt_raises_agent_run_error(self, stub, err):
         # e.g. a model missing from models.json: Pi exits before reading the prompt.
         stub["fail_on"] = {"prompt": err}
@@ -465,14 +645,23 @@ class TestRun:
         # Pi answers a rejected prompt with a failed `response` and starts no
         # run, so no agent_settled ever follows. The run must end on the
         # response with Pi's error text, not wait out timeout_s.
-        stub["script"] += [{"type": "response", "command": "prompt", "success": False,
-                            "error": "No API key found for provider fireworks"}]
+        stub["script"] += [
+            {
+                "type": "response",
+                "command": "prompt",
+                "success": False,
+                "error": "No API key found for provider fireworks",
+            }
+        ]
         stub["hang"] = True
 
         async def bounded():
             return await asyncio.wait_for(
-                run_agent("p", model=SPEC, timeout_s=30, max_attempts=2,
-                          retry_backoff_s=0), timeout=5)
+                run_agent(
+                    "p", model=SPEC, timeout_s=30, max_attempts=2, retry_backoff_s=0
+                ),
+                timeout=5,
+            )
 
         with pytest.raises(AgentRunError) as exc:
             _run(bounded())
@@ -483,8 +672,11 @@ class TestRun:
         assert stub["transport"].closed
 
     def test_accepted_prompt_response_is_not_an_error(self, stub):
-        stub["script"] += [{"type": "response", "command": "prompt", "success": True},
-                           _assistant_end("ok"), SETTLED]
+        stub["script"] += [
+            {"type": "response", "command": "prompt", "success": True},
+            _assistant_end("ok"),
+            SETTLED,
+        ]
         assert _run(run_agent("p", model=SPEC)).text == "ok"
 
     def test_handled_prompt_ends_the_run_without_waiting(self, stub):
@@ -492,13 +684,20 @@ class TestRun:
         # input handler consumed is answered with disposition "handled", no run
         # starts, and no agent_settled follows. The run must end on that
         # response with no turns, not wait out timeout_s.
-        stub["script"] += [{"type": "response", "command": "prompt", "success": True,
-                            "data": {"disposition": "handled"}}]
+        stub["script"] += [
+            {
+                "type": "response",
+                "command": "prompt",
+                "success": True,
+                "data": {"disposition": "handled"},
+            }
+        ]
         stub["hang"] = True
 
         async def bounded():
             return await asyncio.wait_for(
-                run_agent("p", model=SPEC, timeout_s=30), timeout=5)
+                run_agent("p", model=SPEC, timeout_s=30), timeout=5
+            )
 
         started = time.monotonic()
         r = _run(bounded())
@@ -508,24 +707,46 @@ class TestRun:
         assert stub["transport"].closed
 
     def test_handled_prompt_outcome_is_settled_with_no_turns(self):
-        t = StubTransport([{"type": "response", "command": "prompt", "success": True,
-                            "data": {"disposition": "handled"}}], hang=True)
+        t = StubTransport(
+            [
+                {
+                    "type": "response",
+                    "command": "prompt",
+                    "success": True,
+                    "data": {"disposition": "handled"},
+                }
+            ],
+            hang=True,
+        )
         out = _run(pb.supervise(PiRpc(t), "p", max_turns=5, timeout_s=30))
         assert out.settled is True and out.turns == 0
         assert out.aborted_reason == ""
 
     def test_started_prompt_still_waits_for_settled(self):
-        t = StubTransport([{"type": "response", "command": "prompt", "success": True,
-                            "data": {"disposition": "started"}},
-                           _assistant_end("ok"), TURN_END, SETTLED])
+        t = StubTransport(
+            [
+                {
+                    "type": "response",
+                    "command": "prompt",
+                    "success": True,
+                    "data": {"disposition": "started"},
+                },
+                _assistant_end("ok"),
+                TURN_END,
+                SETTLED,
+            ]
+        )
         out = _run(pb.supervise(PiRpc(t), "p", max_turns=5, timeout_s=30))
         assert out.settled is True and out.turns == 1
 
-    @pytest.mark.parametrize("settled, expected", [
-        ({"type": "agent_settled", "aborted": True}, True),
-        ({"type": "agent_settled", "aborted": False}, False),
-        ({"type": "agent_settled"}, None),  # pi before 1.1.0 sends no flag
-    ])
+    @pytest.mark.parametrize(
+        "settled, expected",
+        [
+            ({"type": "agent_settled", "aborted": True}, True),
+            ({"type": "agent_settled", "aborted": False}, False),
+            ({"type": "agent_settled"}, None),  # pi before 1.1.0 sends no flag
+        ],
+    )
     def test_agent_settled_aborted_flag_is_recorded(self, settled, expected):
         t = StubTransport([_assistant_end("ok"), TURN_END, settled])
         out = _run(pb.supervise(PiRpc(t), "p", max_turns=5, timeout_s=30))
@@ -533,14 +754,24 @@ class TestRun:
         assert out.settled_aborted is expected
 
     def test_failed_response_to_another_command_does_not_end_the_run(self, stub):
-        stub["script"] += [{"type": "response", "command": "abort", "success": False,
-                            "error": "nothing to abort"},
-                           _assistant_end("ok"), SETTLED]
+        stub["script"] += [
+            {
+                "type": "response",
+                "command": "abort",
+                "success": False,
+                "error": "nothing to abort",
+            },
+            _assistant_end("ok"),
+            SETTLED,
+        ]
         assert _run(run_agent("p", model=SPEC)).text == "ok"
 
     def test_final_model_error_raises(self, stub):
-        stub["script"] += [_assistant_end(stop="error", error="429: rate limited"),
-                           {"type": "auto_retry_end", "success": False}, SETTLED]
+        stub["script"] += [
+            _assistant_end(stop="error", error="429: rate limited"),
+            {"type": "auto_retry_end", "success": False},
+            SETTLED,
+        ]
         with pytest.raises(AgentRunError) as exc:
             _run(run_agent("p", model=SPEC))
         assert "429" in str(exc.value)
@@ -589,7 +820,9 @@ class TestBinary:
             _run(run_agent("p", model=SPEC, cwd=tmp_path))
         assert "not found" in str(exc.value) and pb.PI_BIN_ENV in str(exc.value)
 
-    def test_spawn_failure_for_missing_cwd_is_an_agent_run_error(self, monkeypatch, tmp_path):
+    def test_spawn_failure_for_missing_cwd_is_an_agent_run_error(
+        self, monkeypatch, tmp_path
+    ):
         pi = tmp_path / "pi"
         pi.write_text("#!/bin/sh\nexit 0\n")
         pi.chmod(0o755)
@@ -600,7 +833,8 @@ class TestBinary:
         assert "FileNotFoundError" in str(exc.value)
 
     def test_spawn_failure_for_unexecutable_binary_is_an_agent_run_error(
-            self, monkeypatch, tmp_path):
+        self, monkeypatch, tmp_path
+    ):
         # shutil.which accepts any file with the execute bit; exec still
         # rejects one that is not a program (ENOEXEC).
         pi = tmp_path / "pi"
@@ -627,8 +861,9 @@ class TestBinary:
             return StubTransport([_assistant_end("ok"), SETTLED])
 
         monkeypatch.setattr(pb.SubprocessTransport, "spawn", flaky_spawn)
-        r = _run(run_agent("p", model=SPEC, cwd=tmp_path, max_attempts=2,
-                           retry_backoff_s=0))
+        r = _run(
+            run_agent("p", model=SPEC, cwd=tmp_path, max_attempts=2, retry_backoff_s=0)
+        )
         assert r.text == "ok" and len(calls) == 2
 
     def test_gate_extension_must_exist(self, stub, monkeypatch, tmp_path):

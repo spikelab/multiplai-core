@@ -127,7 +127,7 @@ git rev-parse -q --verify "refs/tags/$PREV_TAG" >/dev/null || say "note: no tag 
 # read-only, so it runs in a dry run as well — that is the point of a dry run.
 step "Test gate"
 say "uv run --extra dev pytest — a tag is only cut if this passes"
-uv run --extra dev pytest -q || die "tests failed — refusing to tag a broken release"
+uv run --extra dev pytest -q -n auto || die "tests failed — refusing to tag a broken release"
 say "tests passed"
 
 # ---- changelog gate --------------------------------------------------------

@@ -15,12 +15,10 @@ Covers:
 
 import asyncio
 import dataclasses
-import os
 import threading
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Plugin Environment Variable Resolution
@@ -56,7 +54,9 @@ class TestPluginEnvResolution:
     def test_resolve_memory_dir_from_env(self, monkeypatch, reset_paths_cache):
         """Scenario: Resolve user-configured memory directory."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/home/user/custom-memory")
+        monkeypatch.setenv(
+            "CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/home/user/custom-memory"
+        )
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
@@ -99,7 +99,10 @@ class TestStandaloneFallback:
         assert p.diary_dir() == Path.home() / ".multiplai" / "diary"
 
     def test_workspace_dir_env_anchors_workspace_paths(
-        self, clean_env, monkeypatch, reset_paths_cache,
+        self,
+        clean_env,
+        monkeypatch,
+        reset_paths_cache,
     ):
         """CLAUDE_PLUGIN_OPTION_WORKSPACE_DIR anchors diary/now/learnings."""
         monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_WORKSPACE_DIR", "/ws/proj")
@@ -212,7 +215,10 @@ class TestDerivedPaths:
         assert str(p.data_dir / "skills" / "gmail") == "/data/skills/gmail"
 
     def test_skill_state_dir_creates_dir_and_gitignores_bucket(
-        self, monkeypatch, reset_paths_cache, tmp_path,
+        self,
+        monkeypatch,
+        reset_paths_cache,
+        tmp_path,
     ):
         """Scenario: first access creates the dir and a `*` .gitignore at data_dir."""
         data = tmp_path / "data"
@@ -228,7 +234,10 @@ class TestDerivedPaths:
         assert gi.read_text(encoding="utf-8") == "*\n"
 
     def test_skill_state_dir_preserves_existing_gitignore(
-        self, monkeypatch, reset_paths_cache, tmp_path,
+        self,
+        monkeypatch,
+        reset_paths_cache,
+        tmp_path,
     ):
         """Scenario: an existing data_dir/.gitignore is not overwritten."""
         data = tmp_path / "data"
@@ -252,19 +261,22 @@ class TestDerivedPaths:
         assert p.dream_state_file() == Path("/data/dream_state.yaml")
 
     def test_learnings_path_per_day_under_learnings_dir(
-        self, monkeypatch, reset_paths_cache,
+        self,
+        monkeypatch,
+        reset_paths_cache,
     ):
         """Scenario: per-day learnings file lives under learnings_dir."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
-        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_DIARY_DIR", "/ws/.multiplai/captainslog")
+        monkeypatch.setenv(
+            "CLAUDE_PLUGIN_OPTION_DIARY_DIR", "/ws/.multiplai/captainslog"
+        )
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
         # Default learnings_dir is sibling of diary_dir
         assert p.learnings_dir() == Path("/ws/.multiplai/learnings")
-        assert (
-            p.learnings_file("2026-01-01")
-            == Path("/ws/.multiplai/learnings/2026-01-01.md")
+        assert p.learnings_file("2026-01-01") == Path(
+            "/ws/.multiplai/learnings/2026-01-01.md"
         )
 
     def test_learnings_dir_env_override(self, monkeypatch, reset_paths_cache):
@@ -341,9 +353,7 @@ class TestOverridePrecedence:
     the environment variable MUST win.
     """
 
-    def test_option_overrides_default_memory_path(
-        self, monkeypatch, reset_paths_cache
-    ):
+    def test_option_overrides_default_memory_path(self, monkeypatch, reset_paths_cache):
         """Scenario: CLAUDE_PLUGIN_OPTION overrides default memory path."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
         monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/custom/mem")
@@ -355,9 +365,7 @@ class TestOverridePrecedence:
         assert p.memory_dir() != Path("/plugin") / "memory"
         assert p.memory_dir() != Path.home() / ".multiplai" / "memory"
 
-    def test_data_env_overrides_default_data_path(
-        self, monkeypatch, reset_paths_cache
-    ):
+    def test_data_env_overrides_default_data_path(self, monkeypatch, reset_paths_cache):
         """Scenario: Plugin data env var overrides default data path."""
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugin")
         monkeypatch.setenv("CLAUDE_PLUGIN_DATA", "/custom/data")
@@ -531,7 +539,7 @@ class TestCachingAndImmutability:
     ):
         """Scenario: Cached resolution survives env var mutation."""
         monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/first")
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         _reset_cache()
         first = get_paths().memory_dir()
@@ -545,7 +553,7 @@ class TestCachingAndImmutability:
         self, clean_env, reset_paths_cache
     ):
         """Scenario: Concurrent access returns consistent values."""
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         _reset_cache()
 
@@ -558,11 +566,9 @@ class TestCachingAndImmutability:
 
         asyncio.run(_check())
 
-    def test_concurrent_threads_get_same_instance(
-        self, clean_env, reset_paths_cache
-    ):
+    def test_concurrent_threads_get_same_instance(self, clean_env, reset_paths_cache):
         """Multiple threads calling get_paths() get the same Paths object."""
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         _reset_cache()
         results = []
@@ -658,13 +664,11 @@ class TestModuleSingleton:
         """Module must export a `paths` object at module level."""
         from multiplai_core import paths as paths_mod
 
-        assert hasattr(paths_mod, "paths"), (
-            "Module must export 'paths' at module level"
-        )
+        assert hasattr(paths_mod, "paths"), "Module must export 'paths' at module level"
 
     def test_module_level_paths_is_paths_instance(self, reset_paths_cache):
         """The module-level `paths` must be a Paths instance."""
-        from multiplai_core.paths import paths, Paths
+        from multiplai_core.paths import Paths, paths
 
         assert isinstance(paths, Paths), (
             f"Module-level paths is {type(paths).__name__}, expected Paths"
@@ -732,7 +736,7 @@ class TestEdgeCases:
 
     def test_reset_cache_allows_re_resolution(self, monkeypatch, reset_paths_cache):
         """After _reset_cache(), next get_paths() resolves fresh from env."""
-        from multiplai_core.paths import get_paths, _reset_cache
+        from multiplai_core.paths import _reset_cache, get_paths
 
         monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MEMORY_DIR", "/first")
         _reset_cache()
@@ -776,7 +780,9 @@ class TestEdgeCases:
         assert p.diary_dir() == home_base / "diary"
         assert p.now_dir() == home_base / "now"
         assert p.learnings_dir() == home_base / "learnings"
-        assert p.learnings_file("2026-01-01") == home_base / "learnings" / "2026-01-01.md"
+        assert (
+            p.learnings_file("2026-01-01") == home_base / "learnings" / "2026-01-01.md"
+        )
 
     def test_empty_diary_env_var_uses_default(self, monkeypatch, reset_paths_cache):
         """Empty CLAUDE_PLUGIN_OPTION_DIARY_DIR falls back to ~/.multiplai/diary (no workspace)."""
@@ -957,7 +963,10 @@ class TestWorkspaceDiscovery:
         deep.mkdir(parents=True)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(deep))
 
-        assert paths_mod.Paths.resolve().memory_dir() == Path.home() / ".multiplai" / "memory"
+        assert (
+            paths_mod.Paths.resolve().memory_dir()
+            == Path.home() / ".multiplai" / "memory"
+        )
 
         # ... and one level inside the bound still finds it.
         paths_mod._reset_cache()
@@ -966,7 +975,9 @@ class TestWorkspaceDiscovery:
             near = near / f"n{i}"
         near.mkdir(parents=True)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(near))
-        assert paths_mod.Paths.resolve().memory_dir() == tmp_path / ".multiplai" / "memory"
+        assert (
+            paths_mod.Paths.resolve().memory_dir() == tmp_path / ".multiplai" / "memory"
+        )
 
     @pytest.mark.parametrize("value", ["/", "/nonexistent-path-xyz"])
     def test_odd_absolute_project_dirs_do_not_raise(

@@ -52,16 +52,18 @@ def _log_once(what: str, value: str | None, source: str) -> None:
     if key in _logged:
         return
     _logged.add(key)
-    log.info("Default %s for steps with none configured: %s (from %s)",
-             what, value, source)
+    log.info(
+        "Default %s for steps with none configured: %s (from %s)", what, value, source
+    )
 
 
 def _transcript_paths(session_id: str) -> list[Path]:
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")
     # Glob over the project directory: Claude Code encodes the cwd into that
     # directory name, and matching by session id avoids re-deriving it.
-    pattern = os.path.join(glob.escape(config_dir), "projects", "*",
-                           f"{glob.escape(session_id)}.jsonl")
+    pattern = os.path.join(
+        glob.escape(config_dir), "projects", "*", f"{glob.escape(session_id)}.jsonl"
+    )
     return [Path(p) for p in glob.glob(pattern)]
 
 
@@ -199,8 +201,12 @@ def default_effort_source() -> tuple[str | None, str]:
     if value and value.lower() in KNOWN_EFFORTS:
         return value.lower(), source
     if value:
-        log.warning("Ignoring %s=%r: not one of %s", source, value,
-                    ", ".join(sorted(KNOWN_EFFORTS)))
+        log.warning(
+            "Ignoring %s=%r: not one of %s",
+            source,
+            value,
+            ", ".join(sorted(KNOWN_EFFORTS)),
+        )
     pinned = (os.environ.get(SESSION_EFFORT_ENV) or "").strip().lower()
     if pinned in KNOWN_EFFORTS:
         return pinned, SESSION_EFFORT_ENV

@@ -1,7 +1,5 @@
 """Tests for multiplai_core.env."""
 
-import os
-
 import pytest
 
 from multiplai_core import env as env_mod
@@ -25,8 +23,13 @@ from multiplai_core.env import (
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    for k in ("MULTIPLAI_ENV_FILE", "CLAUDE_MULTIPLAI_HOME", "CLAUDE_CONFIG_DIR",
-              "MULTIPLAI_MODEL", "MULTIPLAI_EFFORT"):
+    for k in (
+        "MULTIPLAI_ENV_FILE",
+        "CLAUDE_MULTIPLAI_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "MULTIPLAI_MODEL",
+        "MULTIPLAI_EFFORT",
+    ):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -36,7 +39,9 @@ class TestDeprecatedResolvers:
     def test_resolve_model_returns_the_request_unchanged(self, monkeypatch):
         monkeypatch.setenv("MULTIPLAI_MODEL", "claude-haiku-4-5")
         with pytest.warns(DeprecationWarning):
-            assert resolve_model("claude-opus-4", "claude-sonnet-4-6") == "claude-opus-4"
+            assert (
+                resolve_model("claude-opus-4", "claude-sonnet-4-6") == "claude-opus-4"
+            )
         with pytest.warns(DeprecationWarning):
             assert resolve_model("claude-fable-5-1") == "claude-fable-5-1"
 
@@ -84,9 +89,7 @@ class TestLoadMultiplaiConf:
     def test_sections_and_globals(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         (tmp_path / "multiplai.conf").write_text(
-            'MULTIPLAI_MODEL="claude-opus-4-6"\n'
-            "[deep-research]\n"
-            "MODEL=sonnet\n"
+            'MULTIPLAI_MODEL="claude-opus-4-6"\n[deep-research]\nMODEL=sonnet\n'
         )
         conf = load_multiplai_conf()
         assert conf["MULTIPLAI_MODEL"] == "claude-opus-4-6"
@@ -132,7 +135,9 @@ class TestPickModel:
         _write_conf(tmp_path, "")
         assert pick_model("opus", task="unconfigured.task") == CURRENT_MODEL["opus"]
 
-    def test_multiplai_model_does_not_change_an_explicit_choice(self, monkeypatch, tmp_path):
+    def test_multiplai_model_does_not_change_an_explicit_choice(
+        self, monkeypatch, tmp_path
+    ):
         # MULTIPLAI_MODEL is a default for unconfigured steps, never a cap.
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, 'MULTIPLAI_MODEL="haiku"\nMULTIPLAI_EFFORT="low"\n')
@@ -156,14 +161,18 @@ class TestPickModel:
 
 class TestParseModelSpec:
     def test_bare_id_defaults_to_anthropic(self):
-        assert parse_model_spec("claude-opus-4-8") == ModelSpec("anthropic", "claude-opus-4-8")
+        assert parse_model_spec("claude-opus-4-8") == ModelSpec(
+            "anthropic", "claude-opus-4-8"
+        )
 
     def test_provider_prefix(self):
         assert parse_model_spec("openai:gpt-5") == ModelSpec("openai", "gpt-5")
 
     def test_splits_on_first_colon_only(self):
         # Some vendors put colons inside the model name (ollama tags).
-        assert parse_model_spec("ollama:llama3:70b") == ModelSpec("ollama", "llama3:70b")
+        assert parse_model_spec("ollama:llama3:70b") == ModelSpec(
+            "ollama", "llama3:70b"
+        )
 
     def test_provider_case_normalized(self):
         assert parse_model_spec("OpenAI:gpt-5").provider == "openai"
@@ -196,7 +205,9 @@ class TestPickModelSpec:
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, "[t]\nMODEL=anthropic:claude-opus-4-8\n")
         monkeypatch.setenv("MULTIPLAI_MODEL", "claude-sonnet-4-6")
-        assert pick_model_spec("haiku", task="t") == ModelSpec("anthropic", "claude-opus-4-8")
+        assert pick_model_spec("haiku", task="t") == ModelSpec(
+            "anthropic", "claude-opus-4-8"
+        )
 
     def test_anthropic_qualified_family_name_normalizes(self, monkeypatch, tmp_path):
         # `anthropic:opus` must take the same path as a bare `opus`: the
@@ -204,7 +215,8 @@ class TestPickModelSpec:
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, "[t]\nMODEL=anthropic:opus\n")
         assert pick_model_spec("haiku", task="t") == ModelSpec(
-            "anthropic", CURRENT_MODEL["opus"])
+            "anthropic", CURRENT_MODEL["opus"]
+        )
 
     def test_anthropic_qualified_dated_id_passes_through(self, monkeypatch, tmp_path):
         """A dated ID is used exactly as written, qualified or not."""
@@ -222,7 +234,9 @@ class TestPickModelSpec:
         assert "pick_model_spec" in str(exc.value)
         assert "openai:gpt-5" in str(exc.value)
 
-    def test_pick_model_unaffected_without_a_provider_prefix(self, monkeypatch, tmp_path):
+    def test_pick_model_unaffected_without_a_provider_prefix(
+        self, monkeypatch, tmp_path
+    ):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, "[t]\nMODEL=haiku\n")
         assert pick_model("opus", task="t") == CURRENT_MODEL["haiku"]
@@ -272,7 +286,9 @@ class TestEffortTiers:
         assert EFFORT_TIERS["high"] < EFFORT_TIERS["xhigh"] < EFFORT_TIERS["max"]
 
     def test_ordering_is_strictly_ascending_low_to_max(self):
-        ranks = [EFFORT_TIERS[name] for name in ("low", "medium", "high", "xhigh", "max")]
+        ranks = [
+            EFFORT_TIERS[name] for name in ("low", "medium", "high", "xhigh", "max")
+        ]
         assert ranks == sorted(ranks)
         assert len(set(ranks)) == len(ranks)
 
@@ -303,7 +319,8 @@ class TestClaudeAlias:
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, f"[t]\nMODEL={raw}\n")
         assert pick_model_spec("haiku", task="t") == ModelSpec(
-            "anthropic", CURRENT_MODEL["opus"])
+            "anthropic", CURRENT_MODEL["opus"]
+        )
 
 
 class TestFable:
@@ -345,7 +362,9 @@ class TestResolveModelSpec:
 
     def test_pi_spec_passes_through(self, monkeypatch):
         monkeypatch.setenv("MULTIPLAI_MODEL", CURRENT_MODEL["haiku"])
-        spec = resolve_model_spec([None, "pi:deepseek/deepseek-v4-flash@fireworks", "opus"])
+        spec = resolve_model_spec(
+            [None, "pi:deepseek/deepseek-v4-flash@fireworks", "opus"]
+        )
         assert spec == ModelSpec("pi", "deepseek/deepseek-v4-flash@fireworks")
 
     def test_malformed_first_entry_raises(self):

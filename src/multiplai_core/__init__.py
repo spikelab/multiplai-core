@@ -14,8 +14,8 @@ before — the import just happens on first use.
 from typing import TYPE_CHECKING
 
 from .banks import (
-    BANKS_FILENAME,
     BANK_MODES,
+    BANKS_FILENAME,
     DEFAULT_SHARED_MODE,
     PERSONAL_BANK,
     PERSONAL_MODE,
@@ -53,16 +53,6 @@ from .env import (
     resolve_model,
     resolve_model_spec,
 )
-from .session import (
-    default_effort,
-    default_effort_source,
-    default_model,
-    default_model_source,
-    pin_session_settings,
-    session_effort,
-    session_model,
-)
-from .text import extract_json
 from .log_utils import (
     HookRun,
     hook_run,
@@ -71,6 +61,7 @@ from .log_utils import (
     retention_days,
     setup_logging,
 )
+
 # NB: do not re-export the `paths` singleton here — binding the name `paths`
 # in the package namespace would shadow the `multiplai_core.paths` submodule.
 # Import the singleton explicitly via `from multiplai_core.paths import paths`.
@@ -84,6 +75,16 @@ from .plugin_options import (
     option_present,
     option_var,
 )
+from .session import (
+    default_effort,
+    default_effort_source,
+    default_model,
+    default_model_source,
+    pin_session_settings,
+    session_effort,
+    session_model,
+)
+from .text import extract_json
 from .untrusted import (
     bracket_notice,
     contains_injection,
@@ -95,10 +96,10 @@ from .untrusted import (
 if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is lazy
     from .agent_runner import (
         MAX_PROMPT_BYTES,
+        TOOL_UNIVERSE,
         AgentRunError,
         AgentRunResult,
         AgentRunTimeout,
-        TOOL_UNIVERSE,
         AgentUsage,
         ToolCall,
         UnknownAgentBackendError,
@@ -137,8 +138,6 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
         unregister_provider,
     )
     from .progress import ProgressWriter
-    from .stage_config import check_effort, coerce_int, conf_value, read_yaml_mapping
-    from .structured import StructuredAnswerError, parse_answer, reformat_prompt
     from .specs import (
         CHANGE_META_FILE,
         SPEC_STATUS_DRAFT,
@@ -164,6 +163,8 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
         valid_requirement_text,
         write_change_meta,
     )
+    from .stage_config import check_effort, coerce_int, conf_value, read_yaml_mapping
+    from .structured import StructuredAnswerError, parse_answer, reformat_prompt
 
 # Which lazily-imported submodule serves each deferred public name. The three
 # module names themselves are included so `multiplai_core.agent_runner` (and
@@ -186,10 +187,20 @@ if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is laz
 _LAZY_ATTRS: dict[str, str] = {
     **dict.fromkeys(
         (
-            "run_agent", "AgentRunResult", "AgentRunError", "AgentRunTimeout",
-            "AgentUsage", "MAX_PROMPT_BYTES", "TOOL_UNIVERSE", "deny_list",
-            "ToolCall", "UnknownAgentBackendError", "register_agent_backend",
-            "registered_agent_backends", "UsageLimitError", "is_usage_limit",
+            "run_agent",
+            "AgentRunResult",
+            "AgentRunError",
+            "AgentRunTimeout",
+            "AgentUsage",
+            "MAX_PROMPT_BYTES",
+            "TOOL_UNIVERSE",
+            "deny_list",
+            "ToolCall",
+            "UnknownAgentBackendError",
+            "register_agent_backend",
+            "registered_agent_backends",
+            "UsageLimitError",
+            "is_usage_limit",
             "agent_runner",
         ),
         "agent_runner",
@@ -197,11 +208,20 @@ _LAZY_ATTRS: dict[str, str] = {
     **dict.fromkeys(("hard_timeout", "swallow_task_result", "aio"), "aio"),
     **dict.fromkeys(
         (
-            "create_client", "detect_client_type", "ModelClient",
-            "ModelResponse", "AgentSDKClient", "AnthropicAPIClient",
-            "SDKQueryError", "DEFAULT_MODEL", "DEFAULT_MAX_TOKENS",
-            "create_client_for", "register_provider", "unregister_provider",
-            "registered_providers", "UnknownProviderError",
+            "create_client",
+            "detect_client_type",
+            "ModelClient",
+            "ModelResponse",
+            "AgentSDKClient",
+            "AnthropicAPIClient",
+            "SDKQueryError",
+            "DEFAULT_MODEL",
+            "DEFAULT_MAX_TOKENS",
+            "create_client_for",
+            "register_provider",
+            "unregister_provider",
+            "registered_providers",
+            "UnknownProviderError",
             "model_client",
         ),
         "model_client",
@@ -210,14 +230,25 @@ _LAZY_ATTRS: dict[str, str] = {
     **dict.fromkeys(("save_model", "load_model", "checkpoint"), "checkpoint"),
     **dict.fromkeys(
         (
-            "check_quote", "file_at", "lines_at", "normalise_ws", "GIT_ARGV",
-            "git_env", "citations",
+            "check_quote",
+            "file_at",
+            "lines_at",
+            "normalise_ws",
+            "GIT_ARGV",
+            "git_env",
+            "citations",
         ),
         "citations",
     ),
     **dict.fromkeys(("ProgressWriter", "progress"), "progress"),
     **dict.fromkeys(
-        ("conf_value", "read_yaml_mapping", "coerce_int", "check_effort", "stage_config"),
+        (
+            "conf_value",
+            "read_yaml_mapping",
+            "coerce_int",
+            "check_effort",
+            "stage_config",
+        ),
         "stage_config",
     ),
     **dict.fromkeys(
@@ -226,13 +257,30 @@ _LAZY_ATTRS: dict[str, str] = {
     ),
     **dict.fromkeys(
         (
-            "CHANGE_META_FILE", "SPEC_STATUS_DRAFT", "SPEC_STATUS_READY",
-            "RequirementBlock", "ScenarioBlock", "apply_delta", "archive_change",
-            "archived_change_dirs", "clear_spec_issues", "expected_capabilities",
-            "is_ready", "mark_draft", "mark_ready", "merge_delta_requirements",
-            "normalize_change_name", "parse_requirements", "read_change_meta",
-            "set_spec_issues", "spec_files", "spec_revision", "valid_requirement",
-            "valid_requirement_text", "write_change_meta", "specs",
+            "CHANGE_META_FILE",
+            "SPEC_STATUS_DRAFT",
+            "SPEC_STATUS_READY",
+            "RequirementBlock",
+            "ScenarioBlock",
+            "apply_delta",
+            "archive_change",
+            "archived_change_dirs",
+            "clear_spec_issues",
+            "expected_capabilities",
+            "is_ready",
+            "mark_draft",
+            "mark_ready",
+            "merge_delta_requirements",
+            "normalize_change_name",
+            "parse_requirements",
+            "read_change_meta",
+            "set_spec_issues",
+            "spec_files",
+            "spec_revision",
+            "valid_requirement",
+            "valid_requirement_text",
+            "write_change_meta",
+            "specs",
         ),
         "specs",
     ),

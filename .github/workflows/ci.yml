@@ -16,6 +16,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: ruff (check + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: ruff check
+        run: uvx ruff@0.17.1 check --output-format=github .
+      - name: ruff format
+        run: uvx ruff@0.17.1 format --check .
+
   test:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -34,4 +45,4 @@ jobs:
       # `uv run` resolves the declared deps itself; --python pins the
       # interpreter so the matrix leg tests what it says it tests.
       - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} --extra dev pytest -q
+        run: uv run --python ${{ matrix.python-version }} --extra dev pytest -q -n auto

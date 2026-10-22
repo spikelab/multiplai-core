@@ -8,8 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from multiplai_core import BudgetExceededError, SpendLedger
-from multiplai_core import budget
+from multiplai_core import BudgetExceededError, SpendLedger, budget
 
 
 @pytest.fixture(autouse=True)
@@ -42,12 +41,27 @@ def test_from_state_takes_the_ceilings_from_its_arguments_not_the_state():
 
 def test_by_stage_holds_calls_tokens_and_cost_per_label_and_sums_to_the_totals():
     a = SpendLedger(max_usd=10)
-    a.record(_usage(input_tokens=10, output_tokens=2, cache_read_tokens=100,
-                    cache_creation_tokens=5, cost_usd=0.5), label="find:tests")
+    a.record(
+        _usage(
+            input_tokens=10,
+            output_tokens=2,
+            cache_read_tokens=100,
+            cache_creation_tokens=5,
+            cost_usd=0.5,
+        ),
+        label="find:tests",
+    )
     a.record(_usage(input_tokens=1, output_tokens=1, cost_usd=0.25), label="verify")
     a.record(_usage(input_tokens=3, output_tokens=4, cost_usd=0.25), label="verify")
-    assert a.by_stage["verify"] == {"calls": 2, "input_tokens": 4, "output_tokens": 5, "cache_read_tokens": 0,
-                                    "cache_creation_tokens": 0, "cost_usd": 0.5, "no_usage_calls": 0}
+    assert a.by_stage["verify"] == {
+        "calls": 2,
+        "input_tokens": 4,
+        "output_tokens": 5,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cost_usd": 0.5,
+        "no_usage_calls": 0,
+    }
     stages = a.by_stage.values()
     assert sum(s["calls"] for s in stages) == a.calls == 3
     assert sum(s["cost_usd"] for s in stages) == pytest.approx(a.cost_usd)
@@ -73,8 +87,16 @@ def test_a_call_whose_usage_is_none_is_counted_as_a_no_usage_call():
 
 
 def test_an_old_ledger_without_by_stage_loads_and_keeps_counting():
-    old = {"calls": 9, "input_tokens": 100, "output_tokens": 20, "cache_read_tokens": 0,
-           "cache_creation_tokens": 0, "cost_usd": 1.25, "by_label": {"verify": 1.25}, "max_usd": 50.0}
+    old = {
+        "calls": 9,
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cost_usd": 1.25,
+        "by_label": {"verify": 1.25},
+        "max_usd": 50.0,
+    }
     a = SpendLedger(max_usd=50)
     a.load_state(old)
     assert (a.calls, a.cost_usd, a.by_stage, a.no_usage_calls) == (9, 1.25, {}, 0)
@@ -85,7 +107,9 @@ def test_an_old_ledger_without_by_stage_loads_and_keeps_counting():
 
 def test_record_never_raises_on_garbage_usage():
     a = SpendLedger(max_usd=10)
-    a.record(_usage(input_tokens="lots", cost_usd=object()), label="x")  # must not raise
+    a.record(
+        _usage(input_tokens="lots", cost_usd=object()), label="x"
+    )  # must not raise
     a.record(_usage(cost_usd=0.1))
     assert a.cost_usd == pytest.approx(0.1)
 
@@ -102,7 +126,10 @@ def test_the_usd_breaker_carries_cost_tokens_and_the_diagnosis():
     with pytest.raises(BudgetExceededError) as caught:
         a.check("verify")
     e = caught.value
-    assert str(e) == "circuit breaker stopped the run at $1.20 during verify (ceiling $1.00)"
+    assert (
+        str(e)
+        == "circuit breaker stopped the run at $1.20 during verify (ceiling $1.00)"
+    )
     assert e.cost_usd == pytest.approx(1.2) and e.tokens == 7
     assert "find:tests=$1.20" in e.diagnosis and "ceiling: $1.00" in e.diagnosis
 
@@ -110,7 +137,9 @@ def test_the_usd_breaker_carries_cost_tokens_and_the_diagnosis():
 def test_the_token_breaker_trips_on_tokens_alone():
     a = SpendLedger(max_tokens=100)
     a.record(_usage(input_tokens=60, output_tokens=40))
-    with pytest.raises(BudgetExceededError, match=r"at 100 tokens \(ceiling 100 tokens\)") as caught:
+    with pytest.raises(
+        BudgetExceededError, match=r"at 100 tokens \(ceiling 100 tokens\)"
+    ) as caught:
         a.check()
     assert caught.value.tokens == 100 and "token ceiling: 100" in caught.value.diagnosis
 
@@ -136,7 +165,9 @@ def test_it_warns_once_at_the_warn_fraction(caplog):
         a.check()
         a.check()
     warnings = [r for r in caplog.records if "of its budget" in r.getMessage()]
-    assert len(warnings) == 1 and warnings[0].getMessage().startswith("Run has used 50% of its budget")
+    assert len(warnings) == 1 and warnings[0].getMessage().startswith(
+        "Run has used 50% of its budget"
+    )
 
 
 def test_a_subclass_names_the_run_and_sets_its_own_default_ceiling(caplog):
@@ -184,7 +215,11 @@ def test_start_restores_state_and_record_and_check_go_to_the_current_ledger():
 
 def test_get_creates_a_ledger_on_first_use():
     first = budget.get()
-    assert isinstance(first, SpendLedger) and first.max_usd is None and budget.get() is first
+    assert (
+        isinstance(first, SpendLedger)
+        and first.max_usd is None
+        and budget.get() is first
+    )
 
 
 def test_each_task_records_against_its_own_ledger():

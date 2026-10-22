@@ -29,11 +29,11 @@ consumer of ``memory_dir`` is unaffected.
 import dataclasses
 import os
 import threading
+from datetime import UTC
 from pathlib import Path
 
 from .banks import BANKS_FILENAME, MemoryBank, load_banks
 from .plugin_options import option
-
 
 _lock = threading.Lock()
 _cached_paths: "Paths | None" = None
@@ -394,9 +394,10 @@ class Paths:
         naming lets downstream tooling (``/multiplai-context:dream-remember``)
         read the full learnings backlog without changes.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         if date_str is None:
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            date_str = datetime.now(UTC).strftime("%Y-%m-%d")
         return self.learnings_dir / f"{date_str}.md"
 
     def dreams_dir(self) -> Path:

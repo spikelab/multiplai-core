@@ -31,7 +31,9 @@ def save_model(model: Any, dir: str | os.PathLike[str], filename: str) -> Path:
     target_dir = Path(dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / filename
-    fd, tmp = tempfile.mkstemp(dir=target_dir, prefix=f".{Path(filename).stem}-", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(
+        dir=target_dir, prefix=f".{Path(filename).stem}-", suffix=".tmp"
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(model.model_dump_json(indent=2))

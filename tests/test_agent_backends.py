@@ -7,8 +7,8 @@ import sys
 from unittest.mock import patch
 
 import pytest
-
 from _fakes import _make_mock_sdk
+
 from multiplai_core import agent_runner
 from multiplai_core.agent_runner import (
     AgentRunError,
@@ -31,22 +31,30 @@ def _isolated_registry(monkeypatch):
 
 
 def _result(text="fake"):
-    return AgentRunResult(text=text, turns=1, usage=AgentUsage(),
-                          files_changed=[], stderr_tail="")
+    return AgentRunResult(
+        text=text, turns=1, usage=AgentUsage(), files_changed=[], stderr_tail=""
+    )
 
 
 class TestAnthropicPath:
-    @pytest.mark.parametrize("spec, expected", [
-        ("anthropic:claude-opus-4-8", "claude-opus-4-8"),
-        ("claude:claude-fable-5-1", "claude-fable-5-1"),
-        ("claude-opus-4-8", "claude-opus-4-8"),
-        ("opus", "opus"),
-        # Bedrock IDs and ARNs carry colons but are model IDs, not specs.
-        ("anthropic.claude-3-5-sonnet-20240620-v1:0",
-         "anthropic.claude-3-5-sonnet-20240620-v1:0"),
-        ("arn:aws:bedrock:us-east-1:123:inference-profile/x",
-         "arn:aws:bedrock:us-east-1:123:inference-profile/x"),
-    ])
+    @pytest.mark.parametrize(
+        "spec, expected",
+        [
+            ("anthropic:claude-opus-4-8", "claude-opus-4-8"),
+            ("claude:claude-fable-5-1", "claude-fable-5-1"),
+            ("claude-opus-4-8", "claude-opus-4-8"),
+            ("opus", "opus"),
+            # Bedrock IDs and ARNs carry colons but are model IDs, not specs.
+            (
+                "anthropic.claude-3-5-sonnet-20240620-v1:0",
+                "anthropic.claude-3-5-sonnet-20240620-v1:0",
+            ),
+            (
+                "arn:aws:bedrock:us-east-1:123:inference-profile/x",
+                "arn:aws:bedrock:us-east-1:123:inference-profile/x",
+            ),
+        ],
+    )
     def test_anthropic_spec_takes_the_sdk_path(self, spec, expected):
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
@@ -78,11 +86,19 @@ class TestRegisteredBackend:
         register_agent_backend("fake", fake)
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            result = _run(run_agent(
-                "p", system_prompt="s", allowed_tools=["Read"], max_turns=3,
-                model="fake:m@x", effort="low", cwd="/tmp", label="L",
-                component="c",
-            ))
+            result = _run(
+                run_agent(
+                    "p",
+                    system_prompt="s",
+                    allowed_tools=["Read"],
+                    max_turns=3,
+                    model="fake:m@x",
+                    effort="low",
+                    cwd="/tmp",
+                    label="L",
+                    component="c",
+                )
+            )
         assert result.text == "from fake"
         assert not mock_sdk.query.called
         expected = set(inspect.signature(run_agent).parameters) - {"prompt"}
@@ -122,9 +138,11 @@ class TestUnknownBackend:
 
 class TestLazyPi:
     def test_importing_agent_runner_does_not_import_pi(self):
-        code = ("import multiplai_core.agent_runner, sys; "
-                "assert 'multiplai_core.pi' not in sys.modules, "
-                "[m for m in sys.modules if m.startswith('multiplai_core.pi')]")
+        code = (
+            "import multiplai_core.agent_runner, sys; "
+            "assert 'multiplai_core.pi' not in sys.modules, "
+            "[m for m in sys.modules if m.startswith('multiplai_core.pi')]"
+        )
         subprocess.run([sys.executable, "-c", code], check=True)
 
     def test_pi_spec_loads_and_registers_the_pi_backend(self, monkeypatch, tmp_path):
@@ -137,8 +155,13 @@ class TestLazyPi:
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             with pytest.raises(AgentRunError) as exc:
-                _run(run_agent("p", model="pi:deepseek/deepseek-v4-flash@fireworks",
-                               cwd=tmp_path))
+                _run(
+                    run_agent(
+                        "p",
+                        model="pi:deepseek/deepseek-v4-flash@fireworks",
+                        cwd=tmp_path,
+                    )
+                )
         assert "pi" in agent_runner._AGENT_BACKENDS
         assert "MULTIPLAI_PI_BIN" in str(exc.value)
         assert not mock_sdk.query.called

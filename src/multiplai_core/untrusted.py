@@ -22,12 +22,12 @@ import re
 # overrides can rewrite how a terminal or reviewer renders the line, hiding
 # the payload.
 _CONTROL_RE = re.compile(
-    "[\x00-\x08\x0b-\x1f\x7f-\x9f"      # C0/C1 controls (tab and newline kept)
-    "\u200b-\u200f"                      # zero-width chars + LTR/RTL marks
-    "\u202a-\u202e"                      # bidi embedding / override
-    "\u2066-\u2069"                      # bidi isolates
-    "\u2028\u2029"                       # line / paragraph separators
-    "\ufeff]"                            # BOM / zero-width no-break space
+    "[\x00-\x08\x0b-\x1f\x7f-\x9f"  # C0/C1 controls (tab and newline kept)
+    "\u200b-\u200f"  # zero-width chars + LTR/RTL marks
+    "\u202a-\u202e"  # bidi embedding / override
+    "\u2066-\u2069"  # bidi isolates
+    "\u2028\u2029"  # line / paragraph separators
+    "\ufeff]"  # BOM / zero-width no-break space
 )
 
 # Full ANSI escape sequences — stripping the lone ESC leaves "[2K" as junk.
@@ -49,13 +49,10 @@ _MARKDOWN_FENCE_BREAKERS = (
 # full copy per needle. Alternation order preserves tuple order, so the closing
 # tag still matches before the opening-tag prefix inside it.
 _BREAKER_REPLACEMENTS = dict(_MARKDOWN_FENCE_BREAKERS + _TAG_BREAKERS)
-_TAG_BREAKER_RE = re.compile(
-    "|".join(re.escape(needle) for needle, _ in _TAG_BREAKERS)
-)
+_TAG_BREAKER_RE = re.compile("|".join(re.escape(needle) for needle, _ in _TAG_BREAKERS))
 _ALL_BREAKER_RE = re.compile(
     "|".join(
-        re.escape(needle)
-        for needle, _ in _MARKDOWN_FENCE_BREAKERS + _TAG_BREAKERS
+        re.escape(needle) for needle, _ in _MARKDOWN_FENCE_BREAKERS + _TAG_BREAKERS
     )
 )
 
@@ -184,8 +181,7 @@ def markdown_notice(what: str, channel: str, *, injection_marker: bool = False) 
     )
     if injection_marker:
         notice += (
-            " Text marked `⟪INJECTION?⟫` matched a known "
-            "instruction-injection pattern."
+            " Text marked `⟪INJECTION?⟫` matched a known instruction-injection pattern."
         )
     return notice
 

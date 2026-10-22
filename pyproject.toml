@@ -66,7 +66,7 @@ dotenv = ["python-dotenv>=1.0"]
 # packaging is a direct test dependency (tests/test_pyproject_sdk_floor.py
 # parses Requirement specs) — declared explicitly, not leaned on as a
 # transitive dep of pytest.
-dev = ["pytest>=8.0", "packaging>=24"]
+dev = ["pytest>=8.0", "packaging>=24", "pytest-xdist>=3.8"]
 
 [project.urls]
 Homepage = "https://github.com/spikelab/multiplai-core"
@@ -81,3 +81,27 @@ packages = ["src/multiplai_core"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+required-version = "==0.17.1"
+extend-exclude = []
+# no line-length (88 default), no select/extend-select
+
+[tool.ruff.lint.per-file-ignores]
+# Violations present when ruff was adopted (2026-10). Remove an entry by fixing it; never add one for new code.
+"src/multiplai_core/__init__.py" = ["RUF022"]
+"src/multiplai_core/agent_runner.py" = ["B023", "C408", "SIM115"]
+"src/multiplai_core/aio.py" = ["BLE001", "S110"]
+"src/multiplai_core/banks.py" = ["BLE001"]
+"src/multiplai_core/budget.py" = ["BLE001"]
+"src/multiplai_core/config.py" = ["BLE001", "TRY004"]
+"src/multiplai_core/log_utils.py" = ["BLE001", "S110", "S112"]
+"src/multiplai_core/model_client.py" = ["C408"]
+"src/multiplai_core/specs.py" = ["B023", "TRY004"]
+"tests/test_agent_backends.py" = ["SIM117"]
+"tests/test_agent_runner.py" = ["ISC004", "SIM115", "SIM117"]
+"tests/test_log_utils.py" = ["RUF015", "SIM117"]
+"tests/test_model_client.py" = ["RUF059", "SIM117"]
+"tests/test_package_api.py" = ["B018", "PLW1510"]
+"tests/test_paths.py" = ["BLE001"]
+"tests/test_untrusted.py" = ["PLE2502"]

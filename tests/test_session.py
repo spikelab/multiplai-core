@@ -8,13 +8,13 @@ import sys
 
 import pytest
 
-import multiplai_core.session as session
+from multiplai_core import session
 from multiplai_core.env import CURRENT_MODEL
 from multiplai_core.session import (
     default_effort,
+    default_effort_source,
     default_model,
     default_model_source,
-    default_effort_source,
     pin_session_settings,
     session_effort,
     session_model,
@@ -32,8 +32,11 @@ def config_dir(tmp_path, monkeypatch):
 
 
 def _assistant(model, *, sidechain=False):
-    return {"type": "assistant", "isSidechain": sidechain,
-            "message": {"model": model, "role": "assistant", "content": []}}
+    return {
+        "type": "assistant",
+        "isSidechain": sidechain,
+        "message": {"model": model, "role": "assistant", "content": []},
+    }
 
 
 def _write_transcript(config_dir, entries, project="-Users-x-some-dir"):
@@ -56,21 +59,27 @@ class TestSessionModel:
         assert session_model() == "claude-pinned"
 
     def test_reads_the_last_assistant_model(self, config_dir):
-        _write_transcript(config_dir, [
-            {"type": "user", "message": {"content": "hi"}},
-            _assistant("claude-first"),
-            {"type": "user", "message": {"content": "again"}},
-            _assistant("claude-last"),
-            {"type": "user", "message": {"content": "tool result"}},
-        ])
+        _write_transcript(
+            config_dir,
+            [
+                {"type": "user", "message": {"content": "hi"}},
+                _assistant("claude-first"),
+                {"type": "user", "message": {"content": "again"}},
+                _assistant("claude-last"),
+                {"type": "user", "message": {"content": "tool result"}},
+            ],
+        )
         assert session_model() == "claude-last"
 
     def test_skips_synthetic_and_sidechain_turns(self, config_dir):
-        _write_transcript(config_dir, [
-            _assistant("claude-real"),
-            _assistant("claude-subagent", sidechain=True),
-            _assistant("<synthetic>"),
-        ])
+        _write_transcript(
+            config_dir,
+            [
+                _assistant("claude-real"),
+                _assistant("claude-subagent", sidechain=True),
+                _assistant("<synthetic>"),
+            ],
+        )
         assert session_model() == "claude-real"
 
     def test_finds_a_model_far_back_in_a_large_file(self, config_dir):
@@ -144,13 +153,24 @@ class TestPin:
         pin_session_settings()
         with path.open("a") as fh:
             fh.write(json.dumps(_assistant("claude-switched")) + "\n")
-        code = "from multiplai_core.session import default_model; print(default_model())"
-        out = subprocess.run([sys.executable, "-c", code], capture_output=True,
-                             text=True, env={**os.environ}, check=True)
+        code = (
+            "from multiplai_core.session import default_model; print(default_model())"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env={**os.environ},
+            check=True,
+        )
         assert out.stdout.strip() == "claude-at-start"
-        out = subprocess.run([sys.executable, "-c", code], capture_output=True,
-                             text=True, check=True,
-                             env={**os.environ, "MULTIPLAI_MODEL": "claude-test-default"})
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "MULTIPLAI_MODEL": "claude-test-default"},
+        )
         assert out.stdout.strip() == "claude-test-default"
 
 
@@ -174,13 +194,21 @@ class TestDefaults:
         assert default_effort_source() == ("high", "MULTIPLAI_EFFORT")
 
     def test_env_wins_over_conf(self, tmp_path, monkeypatch):
-        _conf(tmp_path, monkeypatch, 'MULTIPLAI_MODEL="claude-conf"\nMULTIPLAI_EFFORT="max"\n')
+        _conf(
+            tmp_path,
+            monkeypatch,
+            'MULTIPLAI_MODEL="claude-conf"\nMULTIPLAI_EFFORT="max"\n',
+        )
         monkeypatch.setenv("MULTIPLAI_MODEL", "claude-env")
         assert default_model() == "claude-env"
         assert default_effort() == "max"
 
     def test_conf_only(self, tmp_path, monkeypatch):
-        _conf(tmp_path, monkeypatch, 'MULTIPLAI_MODEL="claude-opus-4-6"\nMULTIPLAI_EFFORT="medium"\n')
+        _conf(
+            tmp_path,
+            monkeypatch,
+            'MULTIPLAI_MODEL="claude-opus-4-6"\nMULTIPLAI_EFFORT="medium"\n',
+        )
         # A dated ID passes through exactly as written.
         assert default_model_source() == ("claude-opus-4-6", "multiplai.conf")
         assert default_effort_source() == ("medium", "multiplai.conf")
@@ -193,7 +221,10 @@ class TestDefaults:
         _conf(tmp_path, monkeypatch, 'MULTIPLAI_MODEL=""\nMULTIPLAI_EFFORT=""\n')
         monkeypatch.setenv("MULTIPLAI_MODEL", "")
         monkeypatch.setenv("MULTIPLAI_EFFORT", "  ")
-        assert default_model_source() == ("claude-test-session", "MULTIPLAI_SESSION_MODEL")
+        assert default_model_source() == (
+            "claude-test-session",
+            "MULTIPLAI_SESSION_MODEL",
+        )
         assert default_effort_source() == ("low", "MULTIPLAI_SESSION_EFFORT")
 
     def test_unset_falls_to_the_session(self):
