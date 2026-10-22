@@ -70,4 +70,7 @@ def test_an_invalid_file_is_none_and_logged_as_an_error(tmp_path, caplog, conten
         path.write_text(content)
     with caplog.at_level(logging.ERROR, logger="multiplai_core.checkpoint"):
         assert load_model(path, State) is None
-    assert any(r.levelno == logging.ERROR and "state.json" in r.getMessage() for r in caplog.records)
+    assert any(
+        r.levelno == logging.ERROR and "state.json" in r.getMessage()
+        for r in caplog.records
+    )

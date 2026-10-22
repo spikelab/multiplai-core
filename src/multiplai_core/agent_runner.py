@@ -91,8 +91,8 @@ MAX_PROMPT_BYTES = 80_000
 # memory only, never on disk; summarized into a compact tail only on failure:
 # the [ERROR] lines (which carry the real cause — rate limit, auth, crash), or
 # a few trailing raw lines if there were none.
-_STDERR_RING_LINES = 50          # trailing context kept for the fallback tail
-_STDERR_MAX_ERROR_LINES = 15     # [ERROR] lines surfaced in the summary
+_STDERR_RING_LINES = 50  # trailing context kept for the fallback tail
+_STDERR_MAX_ERROR_LINES = 15  # [ERROR] lines surfaced in the summary
 _STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
 
 # Liveness heartbeat. Between START and DONE a run emits nothing, so a
@@ -111,7 +111,7 @@ _HEARTBEAT_DEFAULT_S = 60.0
 # file is written line by line and flushed, so it outlives a SIGKILL of this
 # process, and it holds the CLI's own record of the call: auth check, request
 # dispatch with its x-client-request-id, first stream chunk, retries.
-_DEBUG_LOG_ENV = "MULTIPLAI_SDK_DEBUG_LOG"      # "off" disables the file
+_DEBUG_LOG_ENV = "MULTIPLAI_SDK_DEBUG_LOG"  # "off" disables the file
 _DEBUG_KEEP_ENV = "MULTIPLAI_SDK_DEBUG_KEEP_S"  # >0: delete faster successes
 _DEBUG_KEEP_DEFAULT_S = 0.0  # keep every file
 _DEBUG_LOG_SUBDIR = "sdk"
@@ -154,29 +154,68 @@ _debug_log_seq = itertools.count(1)
 # there as the schemas behind Read/Edit/Write.)
 TOOL_UNIVERSE = (
     # mutation / execution
-    "Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit",
-    "MultiEdit", "REPL", "Task", "Agent", "AskUserQuestion", "SlashCommand",
-    "ExitPlanMode", "EnterPlanMode", "TodoWrite",
+    "Bash",
+    "BashOutput",
+    "KillShell",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "MultiEdit",
+    "REPL",
+    "Task",
+    "Agent",
+    "AskUserQuestion",
+    "SlashCommand",
+    "ExitPlanMode",
+    "EnterPlanMode",
+    "TodoWrite",
     # read / network / meta — closes the prompt-injection exfiltration chain
     # (untrusted input steering an auto-approved Read → WebFetch of a secret)
-    "Read", "NotebookRead", "Grep", "Glob", "LS", "WebFetch", "WebSearch",
-    "ToolSearch", "Skill",
+    "Read",
+    "NotebookRead",
+    "Grep",
+    "Glob",
+    "LS",
+    "WebFetch",
+    "WebSearch",
+    "ToolSearch",
+    "Skill",
     # egress: each of these can carry text off the machine, which makes them
     # exfiltration channels every bit as much as WebFetch
-    "Artifact", "SendMessage", "PushNotification", "RemoteTrigger",
+    "Artifact",
+    "SendMessage",
+    "PushNotification",
+    "RemoteTrigger",
     "SendFeedback",
     # background / scheduled execution — a denied Bash is worth little if the
     # run can queue work that gets one later
-    "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop",
-    "TaskOutput", "Workflow", "ScheduleWakeup", "Monitor",
-    "CronCreate", "CronDelete", "CronList",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskUpdate",
+    "TaskStop",
+    "TaskOutput",
+    "Workflow",
+    "ScheduleWakeup",
+    "Monitor",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
     # MCP: separately contained by strict-mcp-config + setting_sources=[] (see
     # the options below), listed so the deny-list does not depend on that.
-    "Mcp", "ListMcpResources", "ReadMcpResource", "ReadMcpResourceDir",
+    "Mcp",
+    "ListMcpResources",
+    "ReadMcpResource",
+    "ReadMcpResourceDir",
     "RefreshMcpTools",
     # remaining harness surface
-    "EnterWorktree", "ExitWorktree", "ReportFindings", "ProposeSkills",
-    "Projects", "ClaudeDesign", "ShowOnboardingRolePicker",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ReportFindings",
+    "ProposeSkills",
+    "Projects",
+    "ClaudeDesign",
+    "ShowOnboardingRolePicker",
 )
 
 
@@ -247,25 +286,34 @@ def path_allowed(
         if not isinstance(pattern, str):
             return False
         search = tool_input.get("path")
-        search_dir = (os.path.join(base, os.path.expanduser(search))
-                      if isinstance(search, str) else base)
+        search_dir = (
+            os.path.join(base, os.path.expanduser(search))
+            if isinstance(search, str)
+            else base
+        )
         return inside(_glob_base(os.path.expanduser(pattern)), search_dir)
     return True
 
 
 def _deny_outside(
-    roots: Sequence[str | Path], cwd: str | Path, label: str,
+    roots: Sequence[str | Path],
+    cwd: str | Path,
+    label: str,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """A PreToolUse hook that denies a read tool call outside ``roots``."""
 
-    async def _hook(input_data: dict[str, Any], tool_use_id: Any, context: Any) -> dict[str, Any]:
+    async def _hook(
+        input_data: dict[str, Any], tool_use_id: Any, context: Any
+    ) -> dict[str, Any]:
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
         if path_allowed(name, tool_input, roots, cwd):
             return {}
         logger.warning(
             "run_agent [%s]: denied %s outside read_roots: %s",
-            label, name, {k: tool_input.get(k) for k in (*_PATH_KEYS, "pattern") if k in tool_input},
+            label,
+            name,
+            {k: tool_input.get(k) for k in (*_PATH_KEYS, "pattern") if k in tool_input},
         )
         return {
             "hookSpecificOutput": {
@@ -327,11 +375,11 @@ class ToolCall:
 class AgentRunResult:
     """Normalized result of one agent run."""
 
-    text: str                    # concatenated assistant text, stripped
-    turns: int                   # number of AssistantMessages consumed
+    text: str  # concatenated assistant text, stripped
+    turns: int  # number of AssistantMessages consumed
     usage: AgentUsage
-    files_changed: list[str]     # file_path args of Write/Edit ToolUseBlocks
-    stderr_tail: str             # compact failure context ("" on success)
+    files_changed: list[str]  # file_path args of Write/Edit ToolUseBlocks
+    stderr_tail: str  # compact failure context ("" on success)
     # Every ToolUseBlock in the order it arrived, Write/Edit included. Last and
     # defaulted so callers that build an AgentRunResult keep working.
     tool_calls: tuple[ToolCall, ...] = ()
@@ -408,7 +456,9 @@ class UsageLimitError(AgentRunError):
     not say.
     """
 
-    def __init__(self, message: str, *, limit: str = "", resets: str = "", **kwargs: Any) -> None:
+    def __init__(
+        self, message: str, *, limit: str = "", resets: str = "", **kwargs: Any
+    ) -> None:
         super().__init__(message, **kwargs)
         self.limit = limit
         self.resets = resets
@@ -592,7 +642,8 @@ class _DebugLog:
             _sweep_debug_logs(sdk_dir)
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             name = re.sub(
-                r"[^A-Za-z0-9_.-]+", "_",
+                r"[^A-Za-z0-9_.-]+",
+                "_",
                 f"{stamp}-{component or 'agent'}-{label}-p{os.getpid()}"
                 f"-n{next(_debug_log_seq)}-a{attempt + 1}",
             )
@@ -605,7 +656,8 @@ class _DebugLog:
         except Exception:  # diagnostics must not break a run
             logger.warning(
                 "run_agent [%s]: could not open CLI debug log (ignored)",
-                label, exc_info=True,
+                label,
+                exc_info=True,
             )
             return None
         return cls(path, fh, label)
@@ -620,7 +672,8 @@ class _DebugLog:
             self._fh = None
             logger.warning(
                 "run_agent [%s]: CLI debug log write failed; stopped writing %s",
-                self._label, self.path,
+                self._label,
+                self.path,
             )
 
     def close(self, *, keep: bool) -> None:
@@ -665,8 +718,11 @@ async def _safe_query(sdk, *, prompt, options):
 
 
 def _record_cost(
-    component: str, label: str, model: str | None,
-    usage: AgentUsage, session_id: str,
+    component: str,
+    label: str,
+    model: str | None,
+    usage: AgentUsage,
+    session_id: str,
 ) -> None:
     """Append one SDK-run record to the cost ledger; never raise.
 
@@ -675,9 +731,15 @@ def _record_cost(
     """
     if not component:
         return
-    if not any((usage.input_tokens, usage.output_tokens,
-                usage.cache_creation_tokens, usage.cache_read_tokens,
-                usage.cost_usd)):
+    if not any(
+        (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_creation_tokens,
+            usage.cache_read_tokens,
+            usage.cost_usd,
+        )
+    ):
         return
     try:
         import uuid
@@ -685,24 +747,29 @@ def _record_cost(
 
         from .costing import TokenCounts, append_records, build_record
 
-        append_records([build_record(
-            ts=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            source="sdk",
-            session=session_id or f"sdk-{label}",
-            model=model or "sdk-default",
-            msg_id=f"run-{uuid.uuid4().hex[:12]}",
-            tokens=TokenCounts(
-                input=usage.input_tokens,
-                output=usage.output_tokens,
-                cw5m=usage.cache_creation_tokens,
-                cr=usage.cache_read_tokens,
-            ),
-            component=component,
-            cost_usd=usage.cost_usd if usage.cost_usd > 0 else None,
-        )])
+        append_records(
+            [
+                build_record(
+                    ts=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    source="sdk",
+                    session=session_id or f"sdk-{label}",
+                    model=model or "sdk-default",
+                    msg_id=f"run-{uuid.uuid4().hex[:12]}",
+                    tokens=TokenCounts(
+                        input=usage.input_tokens,
+                        output=usage.output_tokens,
+                        cw5m=usage.cache_creation_tokens,
+                        cr=usage.cache_read_tokens,
+                    ),
+                    component=component,
+                    cost_usd=usage.cost_usd if usage.cost_usd > 0 else None,
+                )
+            ]
+        )
     except Exception:  # ledger is never worth failing a run
-        logger.warning("run_agent [%s]: cost ledger write failed (ignored)",
-                       label, exc_info=True)
+        logger.warning(
+            "run_agent [%s]: cost ledger write failed (ignored)", label, exc_info=True
+        )
 
 
 def _sdk_class(sdk, name: str) -> type | None:
@@ -823,13 +890,22 @@ async def run_agent(
         if provider != DEFAULT_PROVIDER:
             runner = _agent_backend(provider)
             kwargs: dict[str, Any] = dict(
-                system_prompt=system_prompt, allowed_tools=allowed_tools,
-                disallowed_tools=disallowed_tools, max_turns=max_turns,
-                model=f"{provider}:{parsed}", effort=effort, thinking=thinking, cwd=cwd,
-                env=env, timeout_s=timeout_s, max_attempts=max_attempts,
+                system_prompt=system_prompt,
+                allowed_tools=allowed_tools,
+                disallowed_tools=disallowed_tools,
+                max_turns=max_turns,
+                model=f"{provider}:{parsed}",
+                effort=effort,
+                thinking=thinking,
+                cwd=cwd,
+                env=env,
+                timeout_s=timeout_s,
+                max_attempts=max_attempts,
                 retry_backoff_s=retry_backoff_s,
-                prompt_file_fallback=prompt_file_fallback, label=label,
-                component=component, read_roots=read_roots,
+                prompt_file_fallback=prompt_file_fallback,
+                label=label,
+                component=component,
+                read_roots=read_roots,
             )
             return await runner(prompt, **kwargs)
         model = parsed
@@ -866,10 +942,14 @@ async def run_agent(
     read_hooks: dict[str, list] | None = None
     if read_roots is not None:
         hook_cwd = str(cwd) if cwd is not None else str(_hook_session_dir())
-        read_hooks = {"PreToolUse": [hook_matcher_cls(
-            matcher=_READ_ROOT_MATCHER,
-            hooks=[_deny_outside(list(read_roots), hook_cwd, label)],
-        )]}
+        read_hooks = {
+            "PreToolUse": [
+                hook_matcher_cls(
+                    matcher=_READ_ROOT_MATCHER,
+                    hooks=[_deny_outside(list(read_roots), hook_cwd, label)],
+                )
+            ]
+        }
 
     # A name outside TOOL_UNIVERSE is either a tool added since the list was
     # last derived, or a typo. Both are worth a line in the log: the typo case
@@ -882,14 +962,20 @@ async def run_agent(
         logger.warning(
             "run_agent [%s]: allowed_tools names not in TOOL_UNIVERSE: %s — "
             "typo, or a tool added since the list was derived",
-            label, ", ".join(sorted(unknown)),
+            label,
+            ", ".join(sorted(unknown)),
         )
 
     logger.info(
         "START run_agent [%s] prompt=%d bytes tools=%s max_turns=%d model=%s "
         "timeout=%.0fs attempts=%d",
-        label, prompt_bytes, effective_tools or "none", max_turns,
-        model or "default", timeout_s, max_attempts,
+        label,
+        prompt_bytes,
+        effective_tools or "none",
+        max_turns,
+        model or "default",
+        timeout_s,
+        max_attempts,
     )
 
     loop = asyncio.get_running_loop()
@@ -913,11 +999,17 @@ async def run_agent(
         if debug_log is not None:
             logger.info(
                 "run_agent [%s] attempt=%d/%d CLI debug log: %s",
-                label, attempt + 1, max_attempts, debug_log.path,
+                label,
+                attempt + 1,
+                max_attempts,
+                debug_log.path,
             )
 
         def _on_stderr(
-            line: str, _r=recent_lines, _e=error_lines, _d=debug_log,
+            line: str,
+            _r=recent_lines,
+            _e=error_lines,
+            _d=debug_log,
         ) -> None:
             if _d is not None:
                 _d.write(line)
@@ -955,7 +1047,8 @@ async def run_agent(
         # []) is forwarded verbatim — a caller can still opt out
         # deliberately.
         opts_kwargs["disallowed_tools"] = (
-            deny_list(effective_tools) if disallowed_tools is None
+            deny_list(effective_tools)
+            if disallowed_tools is None
             else list(disallowed_tools)
         )
         if effort is not None:
@@ -1008,16 +1101,17 @@ async def run_agent(
                             if isinstance(data, dict):
                                 child = data.get("session_id") or ""
                         logger.info(
-                            "run_agent [%s] CLI ready after %.1fs "
-                            "child_session=%s",
-                            label, loop.time() - attempt_start,
+                            "run_agent [%s] CLI ready after %.1fs child_session=%s",
+                            label,
+                            loop.time() - attempt_start,
                             child or "?",
                         )
                     if assistant_cls and isinstance(message, assistant_cls):
                         if turns == 0:
                             logger.info(
                                 "run_agent [%s] first reply after %.1fs",
-                                label, loop.time() - attempt_start,
+                                label,
+                                loop.time() - attempt_start,
                             )
                         turns += 1
                         for block in message.content:
@@ -1026,10 +1120,12 @@ async def run_agent(
                                 text_bytes += len(block.text.encode("utf-8"))
                             elif tool_use_cls and isinstance(block, tool_use_cls):
                                 block_input = getattr(block, "input", None) or {}
-                                tool_calls.append(ToolCall(
-                                    name=block.name,
-                                    input=copy.deepcopy(dict(block_input)),
-                                ))
+                                tool_calls.append(
+                                    ToolCall(
+                                        name=block.name,
+                                        input=copy.deepcopy(dict(block_input)),
+                                    )
+                                )
                                 if block.name in ("Write", "Edit"):
                                     fp = block_input.get("file_path", "")
                                     if fp and fp not in files_changed:
@@ -1042,12 +1138,10 @@ async def run_agent(
                             output_tokens=u.get("output_tokens", 0) or 0,
                             cache_creation_tokens=u.get(
                                 "cache_creation_input_tokens", 0
-                            ) or 0,
-                            cache_read_tokens=u.get(
-                                "cache_read_input_tokens", 0
-                            ) or 0,
-                            cost_usd=getattr(message, "total_cost_usd", 0.0)
-                            or 0.0,
+                            )
+                            or 0,
+                            cache_read_tokens=u.get("cache_read_input_tokens", 0) or 0,
+                            cost_usd=getattr(message, "total_cost_usd", 0.0) or 0.0,
                         )
             finally:
                 await gen.aclose()
@@ -1063,17 +1157,18 @@ async def run_agent(
             while True:
                 await asyncio.sleep(interval)
                 logger.info(
-                    "run_agent [%s] alive %.0fs attempt=%d/%d turns=%d "
-                    "text=%d bytes",
-                    label, loop.time() - hb_start, attempt_no + 1,
-                    max_attempts, turns, text_bytes,
+                    "run_agent [%s] alive %.0fs attempt=%d/%d turns=%d text=%d bytes",
+                    label,
+                    loop.time() - hb_start,
+                    attempt_no + 1,
+                    max_attempts,
+                    turns,
+                    text_bytes,
                 )
 
         heartbeat_s = _env_float(_HEARTBEAT_ENV, _HEARTBEAT_DEFAULT_S)
         heartbeat_task = (
-            asyncio.create_task(_heartbeat(heartbeat_s))
-            if heartbeat_s > 0
-            else None
+            asyncio.create_task(_heartbeat(heartbeat_s)) if heartbeat_s > 0 else None
         )
         backoff_s = 0.0
 
@@ -1085,13 +1180,16 @@ async def run_agent(
             logger.info(
                 "DONE run_agent [%s] attempt=%d/%d turns=%d text=%d bytes "
                 "files_changed=%d elapsed=%.1fs",
-                label, attempt + 1, max_attempts, turns, text_bytes,
-                len(files_changed), elapsed,
+                label,
+                attempt + 1,
+                max_attempts,
+                turns,
+                text_bytes,
+                len(files_changed),
+                elapsed,
             )
             if any_attempt_failed:
-                logger.warning(
-                    "run_agent [%s] recovered after a failed attempt", label
-                )
+                logger.warning("run_agent [%s] recovered after a failed attempt", label)
             _record_cost(component, label, model, usage, session_id)
             return AgentRunResult(
                 text="".join(chunks).strip(),
@@ -1106,9 +1204,7 @@ async def run_agent(
             timed_out = isinstance(e, asyncio.TimeoutError)
             # TimeoutError stringifies to "" — describe it explicitly.
             last_reason = (
-                f"timed out after {timeout_s:.0f}s"
-                if timed_out
-                else f"failed: {e}"
+                f"timed out after {timeout_s:.0f}s" if timed_out else f"failed: {e}"
             )
             last_tail = _summarize_stderr(error_lines, list(recent_lines))
             last_partial = AgentRunResult(
@@ -1130,10 +1226,16 @@ async def run_agent(
                     "FAIL run_agent [%s] usage limit hit, not retried: %s "
                     "after %d attempt(s) elapsed=%.1fs CLI debug log: %s\n"
                     "--- captured CLI stderr (errors) ---\n%s",
-                    label, last_reason, attempt + 1, loop.time() - run_start,
-                    last_debug_path or "(none)", last_tail or "(none)",
+                    label,
+                    last_reason,
+                    attempt + 1,
+                    loop.time() - run_start,
+                    last_debug_path or "(none)",
+                    last_tail or "(none)",
                 )
-                _record_cost(component, label, model, last_partial.usage, last_session_id)
+                _record_cost(
+                    component, label, model, last_partial.usage, last_session_id
+                )
                 raise UsageLimitError(
                     f"run_agent [{label}] {last_reason} after {attempt + 1} attempt(s)",
                     limit=(limit_hit.group("limit") or "").strip().lower(),
@@ -1148,18 +1250,24 @@ async def run_agent(
                 logger.warning(
                     "run_agent [%s] %s (attempt %d/%d), retrying in %.1fs"
                     " — CLI debug log: %s",
-                    label, last_reason, attempt + 1, max_attempts,
-                    retry_backoff_s, last_debug_path or "(none)",
+                    label,
+                    last_reason,
+                    attempt + 1,
+                    max_attempts,
+                    retry_backoff_s,
+                    last_debug_path or "(none)",
                 )
                 backoff_s = retry_backoff_s
         finally:
             if debug_log is not None:
                 keep_s = _env_float(_DEBUG_KEEP_ENV, _DEBUG_KEEP_DEFAULT_S)
-                debug_log.close(keep=(
-                    not attempt_ok
-                    or keep_s <= 0
-                    or loop.time() - attempt_start >= keep_s
-                ))
+                debug_log.close(
+                    keep=(
+                        not attempt_ok
+                        or keep_s <= 0
+                        or loop.time() - attempt_start >= keep_s
+                    )
+                )
             # Cancel AND await, for the same reason _consume() explicitly
             # aclose()s its generator: on timeout the attempt is cancelled
             # fire-and-forget, and a heartbeat left pending would keep
@@ -1181,7 +1289,11 @@ async def run_agent(
         "FAIL run_agent [%s] %s after %d attempt(s) elapsed=%.1fs "
         "CLI debug log: %s\n"
         "--- captured CLI stderr (errors) ---\n%s",
-        label, last_reason, max_attempts, elapsed, last_debug_path or "(none)",
+        label,
+        last_reason,
+        max_attempts,
+        elapsed,
+        last_debug_path or "(none)",
         last_tail or "(none)",
     )
     if last_partial is not None:

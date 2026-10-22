@@ -89,10 +89,15 @@ def test_dir_lists_the_public_names():
     assert set(_LAZY_ATTRS) <= listed
 
 
-@pytest.mark.parametrize("name", [
-    "resolve_model_spec", "register_agent_backend", "registered_agent_backends",
-    "UnknownAgentBackendError",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "resolve_model_spec",
+        "register_agent_backend",
+        "registered_agent_backends",
+        "UnknownAgentBackendError",
+    ],
+)
 def test_model_per_step_names_are_exported(name):
     """The per-step model and agent-backend API (0.18) is public: in `__all__`,
     resolvable lazily, and importable from the package root."""
@@ -119,11 +124,18 @@ def test_importing_agent_runner_leaves_pi_unloaded():
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("name", [
-    "session_model", "session_effort", "pin_session_settings",
-    "default_model", "default_effort", "default_model_source",
-    "default_effort_source",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "session_model",
+        "session_effort",
+        "pin_session_settings",
+        "default_model",
+        "default_effort",
+        "default_model_source",
+        "default_effort_source",
+    ],
+)
 def test_session_default_names_are_exported(name):
     """The model/effort for a step no config names (0.21) is public."""
     assert name in PUBLIC_NAMES
@@ -131,11 +143,20 @@ def test_session_default_names_are_exported(name):
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("name", [
-    "resolve_model", "resolve_effort", "pick_model", "pick_effort",
-    "pick_model_spec", "resolve_model_spec", "EFFORT_TIERS", "KNOWN_EFFORTS",
-    "CURRENT_MODEL",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "resolve_model",
+        "resolve_effort",
+        "pick_model",
+        "pick_effort",
+        "pick_model_spec",
+        "resolve_model_spec",
+        "EFFORT_TIERS",
+        "KNOWN_EFFORTS",
+        "CURRENT_MODEL",
+    ],
+)
 def test_names_that_used_to_cap_stay_importable(name):
     """Installed plugins resolve core `main` with no lockfile pin of their own,
     so a name that stopped capping stays importable until a later release

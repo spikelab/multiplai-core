@@ -35,12 +35,22 @@ log = logging.getLogger(__name__)
 
 WARN_FRACTION = 0.8
 
-TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
 
 
 def empty_stage() -> dict:
     """One stage label's record: calls, the four token counts, cost, and calls with no usage."""
-    return {"calls": 0, **dict.fromkeys(TOKEN_FIELDS, 0), "cost_usd": 0.0, "no_usage_calls": 0}
+    return {
+        "calls": 0,
+        **dict.fromkeys(TOKEN_FIELDS, 0),
+        "cost_usd": 0.0,
+        "no_usage_calls": 0,
+    }
 
 
 class BudgetExceededError(Exception):
@@ -50,7 +60,14 @@ class BudgetExceededError(Exception):
     ``diagnosis`` is :meth:`SpendLedger.diagnosis` at that moment.
     """
 
-    def __init__(self, message: str, *, diagnosis: str = "", cost_usd: float = 0.0, tokens: int = 0) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnosis: str = "",
+        cost_usd: float = 0.0,
+        tokens: int = 0,
+    ) -> None:
         super().__init__(message)
         self.diagnosis = diagnosis
         self.cost_usd = cost_usd
@@ -84,7 +101,12 @@ class SpendLedger:
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_creation_tokens
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_creation_tokens
+        )
 
     @property
     def fraction_used(self) -> float:
@@ -124,7 +146,9 @@ class SpendLedger:
 
     def diagnosis(self) -> str:
         """Where the spend went: totals, the ceilings, and cost per stage label, highest first."""
-        lines = [f"Spent ${self.cost_usd:.2f} over {self.calls} agent calls ({self.total_tokens:,} tokens)."]
+        lines = [
+            f"Spent ${self.cost_usd:.2f} over {self.calls} agent calls ({self.total_tokens:,} tokens)."
+        ]
         if self.max_usd:
             lines.append(f"  ceiling: ${self.max_usd:.2f}")
         if self.max_tokens:
@@ -146,17 +170,30 @@ class SpendLedger:
         over_tokens = bool(self.max_tokens) and self.total_tokens >= self.max_tokens  # type: ignore[operator]
         if over_usd or over_tokens:
             if over_usd:
-                message = (f"circuit breaker stopped the run at ${self.cost_usd:.2f}{where} "
-                           f"(ceiling ${self.max_usd:.2f})")
+                message = (
+                    f"circuit breaker stopped the run at ${self.cost_usd:.2f}{where} "
+                    f"(ceiling ${self.max_usd:.2f})"
+                )
             else:
-                message = (f"circuit breaker stopped the run at {self.total_tokens:,} tokens{where} "
-                           f"(ceiling {self.max_tokens:,} tokens)")
-            raise BudgetExceededError(message, diagnosis=self.diagnosis(), cost_usd=self.cost_usd,
-                                      tokens=self.total_tokens)
+                message = (
+                    f"circuit breaker stopped the run at {self.total_tokens:,} tokens{where} "
+                    f"(ceiling {self.max_tokens:,} tokens)"
+                )
+            raise BudgetExceededError(
+                message,
+                diagnosis=self.diagnosis(),
+                cost_usd=self.cost_usd,
+                tokens=self.total_tokens,
+            )
         used = self.fraction_used
         if used >= self.warn_fraction and not self._warned:
             self._warned = True
-            log.warning("%s has used %.0f%% of its budget — %s", self.run_name, used * 100, self.diagnosis())
+            log.warning(
+                "%s has used %.0f%% of its budget — %s",
+                self.run_name,
+                used * 100,
+                self.diagnosis(),
+            )
 
     def to_state(self) -> dict:
         """The spend as a JSON-ready dict, for a checkpoint."""
@@ -168,7 +205,10 @@ class SpendLedger:
             "cache_creation_tokens": self.cache_creation_tokens,
             "cost_usd": round(self.cost_usd, 6),
             "by_label": {k: round(v, 6) for k, v in self.by_label.items()},
-            "by_stage": {k: {**v, "cost_usd": round(v["cost_usd"], 6)} for k, v in self.by_stage.items()},
+            "by_stage": {
+                k: {**v, "cost_usd": round(v["cost_usd"], 6)}
+                for k, v in self.by_stage.items()
+            },
             "no_usage_calls": self.no_usage_calls,
             "max_usd": self.max_usd,
             "max_tokens": self.max_tokens,
@@ -187,7 +227,11 @@ class SpendLedger:
         for label, rec in (data.get("by_stage") or {}).items():
             stage = empty_stage()
             for key in stage:
-                stage[key] = float(rec.get(key, 0) or 0) if key == "cost_usd" else int(rec.get(key, 0) or 0)
+                stage[key] = (
+                    float(rec.get(key, 0) or 0)
+                    if key == "cost_usd"
+                    else int(rec.get(key, 0) or 0)
+                )
             self.by_stage[label] = stage
         self.no_usage_calls = int(data.get("no_usage_calls", 0) or 0)
 

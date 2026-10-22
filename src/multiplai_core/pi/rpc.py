@@ -148,7 +148,11 @@ class SubprocessTransport:
 
     @classmethod
     async def spawn(
-        cls, argv: list[str], *, cwd: str | None = None, env: dict[str, str] | None = None
+        cls,
+        argv: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> SubprocessTransport:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -211,7 +215,9 @@ class PiRpc:
 
     # --- commands --------------------------------------------------------
 
-    async def _command(self, command: str, payload: dict[str, Any] | None = None) -> None:
+    async def _command(
+        self, command: str, payload: dict[str, Any] | None = None
+    ) -> None:
         self.sent.append({"type": command, **(payload or {})})
         await self.transport.send(encode_command(command, payload))
 

@@ -15,12 +15,16 @@ def _paths_to_tmp(tmp_workspace):
 # Pricing math
 # ----------------------------------------------------------------------
 
+
 def test_price_opus_golden():
     # 1M of everything at Opus 4.8 rates (in 5.0 / out 25.0):
     # in 5 + out 25 + cw5m 6.25 + cw1h 10 + cr 0.5 = 46.75
     tokens = TokenCounts(
-        input=1_000_000, output=1_000_000,
-        cw5m=1_000_000, cw1h=1_000_000, cr=1_000_000,
+        input=1_000_000,
+        output=1_000_000,
+        cw5m=1_000_000,
+        cw1h=1_000_000,
+        cr=1_000_000,
     )
     cost, fallback = costing.price_tokens("claude-opus-4-8", tokens)
     assert cost == pytest.approx(46.75)
@@ -62,17 +66,25 @@ def test_unknown_model_falls_back_and_flags():
     assert cost == pytest.approx(5.0)  # fallback in-rate
 
     rec = costing.build_record(
-        ts="2026-07-06T00:00:00Z", source="transcript", session="s1",
-        model="gpt-nonsense", msg_id="m1", tokens=tokens,
+        ts="2026-07-06T00:00:00Z",
+        source="transcript",
+        session="s1",
+        model="gpt-nonsense",
+        msg_id="m1",
+        tokens=tokens,
     )
     assert rec["pricing_fallback"] is True
 
 
 def test_build_record_prefers_sdk_cost():
     rec = costing.build_record(
-        ts="2026-07-06T00:00:00Z", source="sdk", session="s1",
-        model="claude-opus-4-8", msg_id="run1",
-        tokens=TokenCounts(input=100), cost_usd=1.23456789,
+        ts="2026-07-06T00:00:00Z",
+        source="sdk",
+        session="s1",
+        model="claude-opus-4-8",
+        msg_id="run1",
+        tokens=TokenCounts(input=100),
+        cost_usd=1.23456789,
         component="buildme",
     )
     assert rec["cost_usd"] == pytest.approx(1.234568)
@@ -84,29 +96,37 @@ def test_build_record_prefers_sdk_cost():
 # Ledger I/O
 # ----------------------------------------------------------------------
 
+
 def _rec(ts: str, session: str = "s1", msg_id: str = "m1") -> dict:
     return costing.build_record(
-        ts=ts, source="transcript", session=session,
-        model="claude-opus-4-8", msg_id=msg_id,
+        ts=ts,
+        source="transcript",
+        session=session,
+        model="claude-opus-4-8",
+        msg_id=msg_id,
         tokens=TokenCounts(input=10, output=5),
     )
 
 
 def test_append_splits_by_month():
-    n = costing.append_records([
-        _rec("2026-06-30T23:59:00Z", msg_id="a"),
-        _rec("2026-07-01T00:01:00Z", msg_id="b"),
-    ])
+    n = costing.append_records(
+        [
+            _rec("2026-06-30T23:59:00Z", msg_id="a"),
+            _rec("2026-07-01T00:01:00Z", msg_id="b"),
+        ]
+    )
     assert n == 2
     assert costing.ledger_file("2026-06").exists()
     assert costing.ledger_file("2026-07").exists()
 
 
 def test_iter_ledger_roundtrip_and_month_filter():
-    costing.append_records([
-        _rec("2026-06-01T00:00:00Z", msg_id="a"),
-        _rec("2026-07-01T00:00:00Z", msg_id="b"),
-    ])
+    costing.append_records(
+        [
+            _rec("2026-06-01T00:00:00Z", msg_id="a"),
+            _rec("2026-07-01T00:00:00Z", msg_id="b"),
+        ]
+    )
     all_recs = list(costing.iter_ledger())
     assert [r["msg_id"] for r in all_recs] == ["a", "b"]
     july = list(costing.iter_ledger(months=["2026-07"]))
@@ -124,11 +144,13 @@ def test_iter_ledger_skips_malformed_lines():
 
 
 def test_session_msg_index():
-    costing.append_records([
-        _rec("2026-07-01T00:00:00Z", session="s1", msg_id="a"),
-        _rec("2026-07-01T00:01:00Z", session="s1", msg_id="b"),
-        _rec("2026-07-01T00:02:00Z", session="s2", msg_id="a"),
-    ])
+    costing.append_records(
+        [
+            _rec("2026-07-01T00:00:00Z", session="s1", msg_id="a"),
+            _rec("2026-07-01T00:01:00Z", session="s1", msg_id="b"),
+            _rec("2026-07-01T00:02:00Z", session="s2", msg_id="a"),
+        ]
+    )
     index = costing.session_msg_index()
     assert index == {"s1": {"a", "b"}, "s2": {"a"}}
 
@@ -182,7 +204,9 @@ def _fresh_pricing():
     ("name", "model_id"),
     [
         ("Claude Fable 5.1", "claude-fable-5-1"),
-        ("Claude Opus 5", "claude-opus-5"), ("Claude Opus 4", "claude-opus-4-0"), ("Claude Fable 5", "claude-fable-5"),
+        ("Claude Opus 5", "claude-opus-5"),
+        ("Claude Opus 4", "claude-opus-4-0"),
+        ("Claude Fable 5", "claude-fable-5"),
         ("Claude Opus 4.8", "claude-opus-4-8"),
         ("Claude Haiku 3.5", "claude-3-5-haiku"),
     ],
@@ -199,11 +223,27 @@ def test_model_id_rejects_non_claude():
 def test_parse_pricing_markdown_reads_only_model_table():
     models = costing.parse_pricing_markdown(_PRICING_MD)
     assert set(models) == {
-        "claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5",
-        "claude-opus-4-0", "claude-sonnet-5", "claude-3-5-haiku",
+        "claude-fable-5-1",
+        "claude-mythos-5-1",
+        "claude-opus-5",
+        "claude-opus-4-0",
+        "claude-sonnet-5",
+        "claude-3-5-haiku",
     }
-    assert models["claude-fable-5-1"] == {"in": 10.0, "out": 50.0, "cw5m": 12.5, "cw1h": 20.0, "cr": 0.25}
-    assert models["claude-sonnet-5"] == {"in": 2.0, "out": 10.0, "cw5m": 2.5, "cw1h": 4.0, "cr": 0.2}
+    assert models["claude-fable-5-1"] == {
+        "in": 10.0,
+        "out": 50.0,
+        "cw5m": 12.5,
+        "cw1h": 20.0,
+        "cr": 0.25,
+    }
+    assert models["claude-sonnet-5"] == {
+        "in": 2.0,
+        "out": 10.0,
+        "cw5m": 2.5,
+        "cw1h": 4.0,
+        "cr": 0.2,
+    }
     # the fast-mode table has 2 price cells and must not leak in
     assert "claude-opus-5-/-claude-opus-4-8" not in models
 
@@ -216,7 +256,13 @@ def test_parse_pricing_markdown_reads_columns_by_heading():
 | Claude Sonnet 5 | $10 / MTok | $2 / MTok | $0.20 / MTok | $4 / MTok | $2.50 / MTok |
 """
     models = costing.parse_pricing_markdown(reordered)
-    assert models["claude-sonnet-5"] == {"in": 2.0, "out": 10.0, "cw5m": 2.5, "cw1h": 4.0, "cr": 0.2}
+    assert models["claude-sonnet-5"] == {
+        "in": 2.0,
+        "out": 10.0,
+        "cw5m": 2.5,
+        "cw1h": 4.0,
+        "cr": 0.2,
+    }
 
 
 def test_parse_pricing_markdown_skips_inconsistent_rows(caplog):
@@ -267,7 +313,10 @@ def test_fetch_live_pricing_rejects_a_partial_table(monkeypatch):
 
 
 def test_parse_pricing_markdown_without_section_is_empty():
-    assert costing.parse_pricing_markdown("# nothing here\n| Claude Opus 5 | $5 / MTok |") == {}
+    assert (
+        costing.parse_pricing_markdown("# nothing here\n| Claude Opus 5 | $5 / MTok |")
+        == {}
+    )
 
 
 def test_bundled_table_has_current_models_and_fable_cache_read():
@@ -293,21 +342,37 @@ def test_opus_5_is_priced_not_fallback():
 
 
 def test_refresh_pricing_writes_cache_and_load_prefers_it(monkeypatch):
-    monkeypatch.setattr(costing, "fetch_live_pricing", lambda url, timeout: {
-        "claude-opus-5": {"in": 7.0, "out": 35.0, "cw5m": 8.75, "cw1h": 14.0, "cr": 0.7},
-    })
+    monkeypatch.setattr(
+        costing,
+        "fetch_live_pricing",
+        lambda url, timeout: {
+            "claude-opus-5": {
+                "in": 7.0,
+                "out": 35.0,
+                "cw5m": 8.75,
+                "cw1h": 14.0,
+                "cr": 0.7,
+            },
+        },
+    )
     path = costing.refresh_pricing(force=True)
     assert path == costing.pricing_cache_path() and path.is_file()
     pricing = costing.load_pricing()
-    assert pricing["models"]["claude-opus-5"]["in"] == 7.0       # refreshed wins
-    assert "claude-opus-4-1" in pricing["models"]                # bundled retired model kept
+    assert pricing["models"]["claude-opus-5"]["in"] == 7.0  # refreshed wins
+    assert "claude-opus-4-1" in pricing["models"]  # bundled retired model kept
     assert pricing["updated"] == costing._today().isoformat()
     assert costing.pricing_age_days() == 0
 
 
 def test_refresh_pricing_skips_fresh_cache(monkeypatch):
     calls = []
-    monkeypatch.setattr(costing, "fetch_live_pricing", lambda url, timeout: calls.append(1) or {"claude-opus-5": {"in": 5.0, "out": 25.0}})
+    monkeypatch.setattr(
+        costing,
+        "fetch_live_pricing",
+        lambda url, timeout: (
+            calls.append(1) or {"claude-opus-5": {"in": 5.0, "out": 25.0}}
+        ),
+    )
     assert costing.refresh_pricing(force=True) is not None
     assert costing.refresh_pricing() is not None
     assert len(calls) == 1
@@ -316,6 +381,7 @@ def test_refresh_pricing_skips_fresh_cache(monkeypatch):
 def test_refresh_pricing_failure_is_non_fatal(monkeypatch, caplog):
     def boom(url, timeout):
         raise OSError("no network")
+
     monkeypatch.setattr(costing, "fetch_live_pricing", boom)
     with caplog.at_level("WARNING"):
         assert costing.refresh_pricing(force=True) is None

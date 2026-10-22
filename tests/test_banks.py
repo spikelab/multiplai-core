@@ -61,9 +61,7 @@ class TestBackCompat:
         )
         assert [b.name for b in banks] == [PERSONAL_BANK]
 
-    def test_paths_memory_banks_matches_memory_dir_with_no_config(
-        self, tmp_workspace
-    ):
+    def test_paths_memory_banks_matches_memory_dir_with_no_config(self, tmp_workspace):
         """Scenario: the resolver's own accessor, with nothing configured."""
         from multiplai_core.paths import Paths
 
@@ -72,8 +70,7 @@ class TestBackCompat:
         assert len(banks) == 1
         assert banks[0].path == p.memory_dir()
         assert (
-            p.memory_banks_file()
-            == tmp_workspace / ".multiplai" / "memory-banks.yaml"
+            p.memory_banks_file() == tmp_workspace / ".multiplai" / "memory-banks.yaml"
         )
 
     def test_memory_banks_file_honours_option_override(
@@ -122,7 +119,9 @@ memory_banks:
 
     def test_absolute_path_is_used_verbatim(self, tmp_path):
         elsewhere = tmp_path / "elsewhere"
-        cfg = _write_banks(tmp_path, f"memory_banks:\n  - name: team\n    path: {elsewhere}\n")
+        cfg = _write_banks(
+            tmp_path, f"memory_banks:\n  - name: team\n    path: {elsewhere}\n"
+        )
         banks = load_banks(memory_dir=tmp_path / "memory", config_path=cfg)
         assert banks[1].path == elsewhere.resolve()
 
@@ -142,7 +141,9 @@ memory_banks:
     @pytest.mark.parametrize("mode", ["rw", "write", "RW", "banana"])
     def test_write_modes_are_coerced_to_propose(self, tmp_path, mode):
         """A shared bank is never directly writable, whatever the config says."""
-        cfg = _write_banks(tmp_path, f"memory_banks:\n  - name: team\n    mode: {mode}\n")
+        cfg = _write_banks(
+            tmp_path, f"memory_banks:\n  - name: team\n    mode: {mode}\n"
+        )
         team = load_banks(memory_dir=tmp_path / "memory", config_path=cfg)[1]
         assert team.mode in BANK_MODES
         assert team.mode == DEFAULT_SHARED_MODE
@@ -168,7 +169,9 @@ memory_banks:
         assert banks[0].mode == PERSONAL_MODE
 
     def test_bank_nested_inside_personal_memory_is_refused(self, tmp_path):
-        cfg = _write_banks(tmp_path, "memory_banks:\n  - name: team\n    path: memory/team\n")
+        cfg = _write_banks(
+            tmp_path, "memory_banks:\n  - name: team\n    path: memory/team\n"
+        )
         banks = load_banks(memory_dir=tmp_path / "memory", config_path=cfg)
         assert [b.name for b in banks] == [PERSONAL_BANK]
 
@@ -243,14 +246,18 @@ memory_banks:
 
     def test_bank_without_remote_does_not_sync(self, tmp_path):
         cfg = _write_banks(tmp_path, "memory_banks:\n  - name: team\n")
-        assert not load_banks(memory_dir=tmp_path / "memory", config_path=cfg)[1].syncs_at_session_start
+        assert not load_banks(memory_dir=tmp_path / "memory", config_path=cfg)[
+            1
+        ].syncs_at_session_start
 
     def test_manual_sync_is_honoured(self, tmp_path):
         cfg = _write_banks(
             tmp_path,
             "memory_banks:\n  - name: team\n    remote: git@x:y.git\n    sync: manual\n",
         )
-        assert not load_banks(memory_dir=tmp_path / "memory", config_path=cfg)[1].syncs_at_session_start
+        assert not load_banks(memory_dir=tmp_path / "memory", config_path=cfg)[
+            1
+        ].syncs_at_session_start
 
     def test_unknown_sync_value_becomes_manual(self, tmp_path):
         cfg = _write_banks(
@@ -324,7 +331,8 @@ class TestPersonalRelocation:
 
     def test_the_personal_bank_can_never_be_removed_by_configuration(self, tmp_path):
         cfg = _write_banks(
-            tmp_path, f"memory_banks:\n  - name: team\n    path: {tmp_path / 'memory'}\n"
+            tmp_path,
+            f"memory_banks:\n  - name: team\n    path: {tmp_path / 'memory'}\n",
         )
         banks = load_banks(memory_dir=tmp_path / "memory", config_path=cfg)
         assert banks[0].is_personal and banks[0].accepts_direct_writes
@@ -354,7 +362,9 @@ class TestOverlapIsOrderIndependent:
         body = "memory_banks:\n" + "".join(
             f"  - name: {n}\n    path: {tmp_path / p}\n" for n, p in entries
         )
-        banks = load_banks(memory_dir=tmp_path / "memory", config_path=_write_banks(tmp_path, body))
+        banks = load_banks(
+            memory_dir=tmp_path / "memory", config_path=_write_banks(tmp_path, body)
+        )
         personal = banks[0]
         shared = [b for b in banks if b.is_shared]
         # Whatever survives, the invariant is the same: no shared bank may
@@ -441,7 +451,9 @@ class TestConstructionIsGuarded:
     @pytest.mark.parametrize(
         "filename", ["/etc/passwd", "../x.md", "sub/dir.md", "", "  ", ".", "..", None]
     )
-    def test_file_refuses_anything_that_is_not_a_bare_filename(self, tmp_path, filename):
+    def test_file_refuses_anything_that_is_not_a_bare_filename(
+        self, tmp_path, filename
+    ):
         bank = personal_bank(tmp_path / "memory")
         with pytest.raises(ValueError):
             bank.file(filename)
@@ -453,9 +465,18 @@ class TestConstructionIsGuarded:
     @pytest.mark.parametrize(
         "name,expected",
         [
-            ("team", True), ("a", True), ("a-b_c.d", True), ("0", True),
-            ("Team", False), ("", False), ("-x", False), ("../x", False),
-            ("te/am", False), ("a" * 65, False), (None, False), (5, False),
+            ("team", True),
+            ("a", True),
+            ("a-b_c.d", True),
+            ("0", True),
+            ("Team", False),
+            ("", False),
+            ("-x", False),
+            ("../x", False),
+            ("te/am", False),
+            ("a" * 65, False),
+            (None, False),
+            (5, False),
         ],
     )
     def test_is_bank_name_is_exported_and_total(self, name, expected):

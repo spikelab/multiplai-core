@@ -21,7 +21,7 @@ def test_fenced_json():
 
 
 def test_fenced_no_lang():
-    text = "```\n{\"y\": true}\n```"
+    text = '```\n{"y": true}\n```'
     assert extract_json(text) == {"y": True}
 
 
@@ -42,16 +42,13 @@ def test_escaped_quote_in_string():
 
 def test_non_json_fence_before_json_fence():
     # A ```python example before the answer must not shadow the real ```json.
-    text = (
-        "Some code:\n```python\nx = 1\n```\n"
-        "Result:\n```json\n{\"a\": 1}\n```"
-    )
+    text = 'Some code:\n```python\nx = 1\n```\nResult:\n```json\n{"a": 1}\n```'
     assert extract_json(text) == {"a": 1}
 
 
 def test_non_json_bare_fence_falls_through_to_balancer():
     # A bare ``` fence that isn't JSON should fall through, not raise.
-    text = "```\nnot json at all\n```\nthen: {\"b\": 2}"
+    text = '```\nnot json at all\n```\nthen: {"b": 2}'
     assert extract_json(text) == {"b": 2}
 
 

@@ -64,7 +64,7 @@ def lines_at(repo: str, sha: str, path: str, start: int, end: int) -> list[str] 
         return None
     if start < 1 or end < start:
         return []
-    return text.split("\n")[start - 1:end]
+    return text.split("\n")[start - 1 : end]
 
 
 def normalise_ws(text: str) -> str:
@@ -72,7 +72,9 @@ def normalise_ws(text: str) -> str:
     return " ".join(text.split())
 
 
-def check_quote(repo: str, sha: str, path: str, start: int, end: int, quote: str) -> str | None:
+def check_quote(
+    repo: str, sha: str, path: str, start: int, end: int, quote: str
+) -> str | None:
     """None when *quote* is inside lines *start*..*end* of *path* at *sha*.
 
     Both sides are whitespace-normalised first, so a quote that differs from

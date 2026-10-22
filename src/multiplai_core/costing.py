@@ -200,7 +200,11 @@ def parse_pricing_markdown(text: str) -> dict[str, dict[str, float]]:
         if len(prices) != len(columns):
             continue
         if prices["out"] < prices["in"] or prices["cr"] > prices["in"]:
-            logger.warning("Pricing row for %r fails the sanity check, skipped: %s", row.group(1), prices)
+            logger.warning(
+                "Pricing row for %r fails the sanity check, skipped: %s",
+                row.group(1),
+                prices,
+            )
             continue
         try:
             model_id = model_id_from_display_name(row.group(1))
@@ -210,7 +214,9 @@ def parse_pricing_markdown(text: str) -> dict[str, dict[str, float]]:
     return models
 
 
-def fetch_live_pricing(url: str = PRICING_URL, timeout: float = 10.0) -> dict[str, dict[str, float]]:
+def fetch_live_pricing(
+    url: str = PRICING_URL, timeout: float = 10.0
+) -> dict[str, dict[str, float]]:
     """GET the pricing page and parse it. Raises on network or parse failure."""
     req = urllib.request.Request(url, headers={"User-Agent": "multiplai-core costing"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -247,7 +253,9 @@ def refresh_pricing(
     try:
         models = fetch_live_pricing(url, timeout=timeout)
     except Exception as exc:  # noqa: BLE001 — network/parse failure is non-fatal
-        logger.warning("Pricing refresh from %s failed (%s); using cached/bundled table", url, exc)
+        logger.warning(
+            "Pricing refresh from %s failed (%s); using cached/bundled table", url, exc
+        )
         return None
     payload = {
         "updated": _today().isoformat(),
@@ -307,9 +315,7 @@ def resolve_model_rates(model: str) -> tuple[dict, bool]:
     stripped = _DATE_SUFFIX.sub("", model)
     if stripped in models:
         return models[stripped], False
-    best_prefix = max(
-        (k for k in models if model.startswith(k)), key=len, default=None
-    )
+    best_prefix = max((k for k in models if model.startswith(k)), key=len, default=None)
     if best_prefix is not None:
         return models[best_prefix], False
     if model not in _fallback_warned:
@@ -318,7 +324,9 @@ def resolve_model_rates(model: str) -> tuple[dict, bool]:
             "No list price for model %r; pricing at fallback $%s/$%s per MTok "
             "(records carry pricing_fallback=true). Run refresh_pricing() or "
             "add the model to pricing.json.",
-            model, pricing["fallback"]["in"], pricing["fallback"]["out"],
+            model,
+            pricing["fallback"]["in"],
+            pricing["fallback"]["out"],
         )
     return pricing["fallback"], True
 
@@ -451,8 +459,10 @@ def iter_ledger(months: Iterable[str] | None = None) -> Iterator[dict]:
         return
     wanted = set(months) if months is not None else None
     files = sorted(
-        p for p in directory.iterdir()
-        if (m := _LEDGER_NAME.match(p.name)) and (wanted is None or m.group(1) in wanted)
+        p
+        for p in directory.iterdir()
+        if (m := _LEDGER_NAME.match(p.name))
+        and (wanted is None or m.group(1) in wanted)
     )
     for path in files:
         with path.open("r", encoding="utf-8") as fh:

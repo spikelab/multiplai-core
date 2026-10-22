@@ -87,6 +87,7 @@ _NO_TOOLS_SUFFIX = (
 @dataclass(frozen=True)
 class ModelResponse:
     """Normalized response from any model client."""
+
     content: str
 
 
@@ -187,6 +188,7 @@ class AgentSDKClient:
         self._warned_ignored_params = False
         try:
             import claude_agent_sdk
+
             self._sdk = claude_agent_sdk
         except ImportError:
             raise ImportError(
@@ -234,7 +236,8 @@ class AgentSDKClient:
                 "AgentSDKClient ignores max_tokens/temperature "
                 "(got max_tokens=%s, temperature=%s); the SDK uses session "
                 "defaults. Use AnthropicAPIClient if you need to control them.",
-                max_tokens, temperature,
+                max_tokens,
+                temperature,
             )
             self._warned_ignored_params = True
 
@@ -242,7 +245,9 @@ class AgentSDKClient:
         system_bytes = len(system.encode("utf-8")) if system else 0
         logger.info(
             "SDK call start: model=%s system=%d bytes prompt=%d bytes",
-            model, system_bytes, len(prompt.encode("utf-8")),
+            model,
+            system_bytes,
+            len(prompt.encode("utf-8")),
         )
 
         # The timeout/retry knobs are read at call time so a caller (or test)
@@ -261,9 +266,7 @@ class AgentSDKClient:
                 model=model,
                 effort=effort,
                 thinking=thinking,
-                timeout_s=(
-                    _SDK_CALL_TIMEOUT_S if timeout_s is None else timeout_s
-                ),
+                timeout_s=(_SDK_CALL_TIMEOUT_S if timeout_s is None else timeout_s),
                 max_attempts=_SDK_MAX_ATTEMPTS,
                 retry_backoff_s=_SDK_RETRY_BACKOFF_S,
                 prompt_file_fallback=False,
@@ -303,11 +306,13 @@ def cacheable_system(system: str) -> str | list[dict[str, object]]:
     """
     if not system or len(system.encode("utf-8")) < MIN_CACHEABLE_SYSTEM_BYTES:
         return system
-    return [{
-        "type": "text",
-        "text": system,
-        "cache_control": {"type": "ephemeral"},
-    }]
+    return [
+        {
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 class AnthropicAPIClient:
@@ -331,6 +336,7 @@ class AnthropicAPIClient:
         """Lazily initialize the AsyncAnthropic client on first use."""
         if self._client is None:
             import anthropic
+
             self._client = anthropic.AsyncAnthropic(api_key=self._api_key)
         return self._client
 
@@ -369,14 +375,20 @@ class AnthropicAPIClient:
         relied on it can see the no-op.
         """
         if effort is not None:
-            logger.debug("AnthropicAPIClient ignores effort=%s (not a Messages API param)", effort)
+            logger.debug(
+                "AnthropicAPIClient ignores effort=%s (not a Messages API param)",
+                effort,
+            )
         if temperature != 1.0:
             logger.warning(
                 "AnthropicAPIClient ignores temperature=%s: sampling parameters are "
-                "not accepted by the Messages API on current models", temperature,
+                "not accepted by the Messages API on current models",
+                temperature,
             )
         if timeout_s is not None:
-            logger.debug("AnthropicAPIClient ignores timeout_s=%s (SDK-path guard)", timeout_s)
+            logger.debug(
+                "AnthropicAPIClient ignores timeout_s=%s (SDK-path guard)", timeout_s
+            )
         client = self._ensure_client()
         create_kwargs: dict = dict(
             model=model,
@@ -409,6 +421,7 @@ def detect_client_type() -> str:
     """
     try:
         import claude_agent_sdk  # noqa: F401
+
         return "AgentSDKClient"
     except ImportError:
         key = option("anthropic_api_key")
@@ -476,8 +489,9 @@ class UnknownProviderError(RuntimeError):
 _PROVIDERS: dict[str, ProviderFactory] = {}
 
 
-async def _anthropic_factory(spec: ModelSpec, *, api_key: str | None = None,
-                             component: str = "model_client") -> ModelClient:
+async def _anthropic_factory(
+    spec: ModelSpec, *, api_key: str | None = None, component: str = "model_client"
+) -> ModelClient:
     """Built-in provider: the existing SDK-then-API-key ladder, unchanged.
 
     The model in *spec* is deliberately not baked into the client — both

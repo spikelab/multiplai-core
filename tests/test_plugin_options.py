@@ -380,9 +380,7 @@ class TestSettingsFileProblems:
         install.run_as(install.script)
         assert option("memory_router") == "llm"
 
-    def test_unknown_home_uses_default_instead_of_raising(
-        self, install, monkeypatch
-    ):
+    def test_unknown_home_uses_default_instead_of_raising(self, install, monkeypatch):
         install.options({"memory_router": "llm"})
         install.run_as(install.script)
         monkeypatch.delenv("CLAUDE_CONFIG_DIR")
@@ -393,13 +391,25 @@ class TestSettingsFileProblems:
         monkeypatch.setattr(plugin_options.Path, "home", staticmethod(no_home))
         assert option("memory_router", "token_overlap") == "token_overlap"
 
-    def test_config_dir_defaults_to_home_dot_claude(self, install, monkeypatch, tmp_path):
+    def test_config_dir_defaults_to_home_dot_claude(
+        self, install, monkeypatch, tmp_path
+    ):
         home = tmp_path / "home"
         (home / ".claude").parent.mkdir(parents=True)
         install.config.rename(home / ".claude")
         monkeypatch.delenv("CLAUDE_CONFIG_DIR")
         monkeypatch.setenv("HOME", str(home))
-        script = home / ".claude" / "plugins" / "cache" / "mkt" / "myplug" / "1.0.0" / "scripts" / "tool.py"
+        script = (
+            home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "mkt"
+            / "myplug"
+            / "1.0.0"
+            / "scripts"
+            / "tool.py"
+        )
         install.config = home / ".claude"
         install.write_installed({PLUGIN_ID: script.parent.parent})
         install.options({"memory_router": "llm"})
@@ -462,16 +472,22 @@ class TestPluginIdentification:
         assert option("memory_router", "token_overlap") == "token_overlap"
 
     def test_module_run_from_site_packages_is_not_identified(self, install):
-        venv_main = install.root / "scripts" / ".venv" / "lib" / "site-packages" / "pytest" / "__main__.py"
+        venv_main = (
+            install.root
+            / "scripts"
+            / ".venv"
+            / "lib"
+            / "site-packages"
+            / "pytest"
+            / "__main__.py"
+        )
         venv_main.parent.mkdir(parents=True)
         install.options({"memory_router": "llm"})
         install.run_as(venv_main)
         assert option("memory_router", "token_overlap") == "token_overlap"
 
     @pytest.mark.parametrize("argv0", ["-c", "-", ""])
-    def test_no_entry_script_identifies_nothing(
-        self, install, monkeypatch, argv0
-    ):
+    def test_no_entry_script_identifies_nothing(self, install, monkeypatch, argv0):
         """``python -c`` / stdin have no script; the cwd must not decide."""
         install.options({"memory_router": "llm"})
         monkeypatch.chdir(install.root / "scripts")
@@ -502,7 +518,9 @@ class TestCaching:
         install.run_as(install.script)
         assert option("memory_router") == "llm"
         (install.config / "settings.json").write_text(
-            json.dumps({"pluginConfigs": {PLUGIN_ID: {"options": {"memory_router": "x"}}}})
+            json.dumps(
+                {"pluginConfigs": {PLUGIN_ID: {"options": {"memory_router": "x"}}}}
+            )
         )
         assert option("memory_router") == "llm"
         plugin_options._reset_cache()

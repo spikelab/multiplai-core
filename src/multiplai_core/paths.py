@@ -395,6 +395,7 @@ class Paths:
         read the full learnings backlog without changes.
         """
         from datetime import datetime
+
         if date_str is None:
             date_str = datetime.now(UTC).strftime("%Y-%m-%d")
         return self.learnings_dir / f"{date_str}.md"

@@ -87,9 +87,11 @@ _REJECTED_RE = re.compile(r"^(?P<base>.+)\.log\.(?P<date>\d{4}-\d{2}-\d{2})$")
 # Directory sweep (migrate + prune) runs at most once per process.
 _swept = False
 
+
 def _get_logs_dir() -> Path:
     """Logs directory from the path resolver (imported lazily), created."""
     from .paths import get_paths
+
     logs_dir = _pytest_guard(get_paths().logs_dir())
     logs_dir.mkdir(parents=True, exist_ok=True)
     return logs_dir
@@ -113,6 +115,7 @@ def _pytest_guard(logs_dir: Path) -> Path:
     if "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
         return logs_dir
     import tempfile
+
     tmp_root = Path(tempfile.gettempdir()).resolve()
     try:
         resolved = logs_dir.resolve()
@@ -141,7 +144,10 @@ def retention_days() -> int:
     raw = os.environ.get("MULTIPLAI_LOG_RETENTION_DAYS", "").strip()
     if not raw:
         from .env import load_multiplai_conf
-        raw = str(load_multiplai_conf().get("MULTIPLAI_LOG_RETENTION_DAYS") or "").strip()
+
+        raw = str(
+            load_multiplai_conf().get("MULTIPLAI_LOG_RETENTION_DAYS") or ""
+        ).strip()
     if not raw:
         return _DEFAULT_RETENTION_DAYS
     try:
@@ -159,7 +165,12 @@ def resolve_level() -> int:
         2. ``MULTIPLAI_LOG_LEVEL`` (DEBUG|INFO|WARNING|ERROR)
         3. INFO (default)
     """
-    if os.environ.get("MULTIPLAI_DEBUG", "").strip().lower() in ("1", "true", "yes", "on"):
+    if os.environ.get("MULTIPLAI_DEBUG", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
         return logging.DEBUG
     name = os.environ.get("MULTIPLAI_LOG_LEVEL", "").strip().upper()
     return _LEVELS.get(name, logging.INFO)
@@ -271,9 +282,7 @@ class _StandardFormatter(logging.Formatter):
         self._sid = _short_session(session_id)
 
     def format(self, record: logging.LogRecord) -> str:
-        ts = datetime.fromtimestamp(record.created, UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        ts = datetime.fromtimestamp(record.created, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         line = (
             f"[{ts}] [{record.name}] [session:{self._sid}] "
             f"{record.levelname}: {record.getMessage()}"
@@ -315,9 +324,7 @@ class _DatedRotatingFileHandler(logging.FileHandler):
                     if self.stream:
                         self.stream.flush()
                         self.stream.close()
-                    self.baseFilename = os.path.abspath(
-                        _dated_path(self._base, today)
-                    )
+                    self.baseFilename = os.path.abspath(_dated_path(self._base, today))
                     self.stream = self._open()
                     self._day = today
             finally:
@@ -536,9 +543,7 @@ def log_event(
         # Non-INFO severities are tagged inline so a WARNING/ERROR is
         # visible in the human log, not only in the JSONL mirror.
         sev = "" if level.upper() == "INFO" else f" [{level.upper()}]"
-        human = (
-            f"{now.strftime('%H:%M:%S')}Z [{sid}] [{component}]{sev} {message}"
-        )
+        human = f"{now.strftime('%H:%M:%S')}Z [{sid}] [{component}]{sev} {message}"
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(human + "\n")
 
@@ -607,8 +612,17 @@ _STAGE_NAME_SANITIZE = re.compile(r"[,:=\s]+")
 # `status=` / `ms=` token on the same line, and two parsers would disagree about
 # which one is the hook's real status — so they are prefixed, never overwritten.
 _RESERVED_FIELDS = frozenset(
-    {"hook", "status", "ms", "startup_ms", "session", "stages", "pid", "err",
-     "watchdog"}
+    {
+        "hook",
+        "status",
+        "ms",
+        "startup_ms",
+        "session",
+        "stages",
+        "pid",
+        "err",
+        "watchdog",
+    }
 )
 
 
@@ -631,9 +645,7 @@ def _startup_ms() -> float:
         # (comm) can contain spaces and parens, so index from the last ')' —
         # everything after it starts at field 3, making starttime index 19.
         start_ticks = float(stat[stat.rindex(")") + 2 :].split()[19])
-        uptime = float(
-            Path("/proc/uptime").read_text(encoding="ascii").split()[0]
-        )
+        uptime = float(Path("/proc/uptime").read_text(encoding="ascii").split()[0])
         elapsed = (uptime - start_ticks / os.sysconf("SC_CLK_TCK")) * 1000.0
         if elapsed >= 0:
             value = elapsed
@@ -760,9 +772,7 @@ class HookRun:
         return (time.monotonic() - self._t0) * 1000.0
 
     def _stages_field(self) -> str:
-        return ",".join(
-            f"{key}:{value:.0f}" for key, value in self._stages.items()
-        )
+        return ",".join(f"{key}:{value:.0f}" for key, value in self._stages.items())
 
 
 @contextmanager
@@ -823,13 +833,18 @@ def hook_run(
     run = HookRun()
     startup_ms = _startup_ms()
 
-    entry = [f"HOOK_ENTRY hook={safe_name}", f"pid={pid}", f"startup_ms={startup_ms:.0f}"]
+    entry = [
+        f"HOOK_ENTRY hook={safe_name}",
+        f"pid={pid}",
+        f"startup_ms={startup_ms:.0f}",
+    ]
     if sid:
         entry.append(f"session={sid}")
     _emit_hook_line(logger, logging.INFO, " ".join(entry))
 
     timer: threading.Timer | None = None
     if watchdog_s is not None and watchdog_s > 0:
+
         def _watchdog() -> None:
             try:
                 parts = [
@@ -907,6 +922,4 @@ def hook_run(
                 f"pid={pid} err=instrumentation_failure"
             )
             status = "error"
-        _emit_hook_line(
-            logger, logging.ERROR if status != "ok" else logging.INFO, line
-        )
+        _emit_hook_line(logger, logging.ERROR if status != "ok" else logging.INFO, line)

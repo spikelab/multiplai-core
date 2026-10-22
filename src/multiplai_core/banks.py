@@ -309,7 +309,10 @@ def _coerce_mode(name: str, raw: Any) -> str:
         logger.warning(
             "memory bank %r: mode %r is not one of %s — using %r "
             "(a shared bank is never written directly)",
-            name, mode, "/".join(BANK_MODES), DEFAULT_SHARED_MODE,
+            name,
+            mode,
+            "/".join(BANK_MODES),
+            DEFAULT_SHARED_MODE,
         )
     return DEFAULT_SHARED_MODE
 
@@ -320,7 +323,9 @@ def _coerce_sync(name: str, raw: Any) -> str:
         return sync
     logger.warning(
         "memory bank %r: sync %r is not one of %s — using 'manual'",
-        name, sync, "/".join(_SYNC_MODES),
+        name,
+        sync,
+        "/".join(_SYNC_MODES),
     )
     return "manual"
 
@@ -397,15 +402,14 @@ def _personal_relocation(entry: dict, *, workspace_base: Path) -> Path | None:
         logger.warning(
             "memory bank %r cannot be relocated to %s — it is not an existing "
             "directory; keeping the configured memory dir",
-            PERSONAL_BANK, path,
+            PERSONAL_BANK,
+            path,
         )
         return None
     return path
 
 
-def _bank_from_entry(
-    entry: dict, *, name: str, workspace_base: Path
-) -> MemoryBank:
+def _bank_from_entry(entry: dict, *, name: str, workspace_base: Path) -> MemoryBank:
     """One validated *shared* :class:`MemoryBank`.
 
     Overlap is deliberately **not** checked here — see :func:`load_banks`. A
@@ -413,7 +417,9 @@ def _bank_from_entry(
     at the moment the entry was parsed, which made the outcome depend on
     declaration order.
     """
-    path = _resolve_bank_path(entry.get("path"), name=name, workspace_base=workspace_base)
+    path = _resolve_bank_path(
+        entry.get("path"), name=name, workspace_base=workspace_base
+    )
     return MemoryBank(
         name=name,
         path=path,
@@ -440,7 +446,8 @@ def _read_config(config_path: Path | None) -> list[Any]:
     if not isinstance(raw, list):
         logger.warning(
             "memory_banks in %s is not a list (got %s) — no banks configured",
-            config_path, type(raw).__name__,
+            config_path,
+            type(raw).__name__,
         )
         return []
     return raw
@@ -488,7 +495,9 @@ def load_banks(
         # a config typo must never be able to break a session.
         try:
             if not isinstance(entry, dict):
-                logger.warning("memory bank entry is not a mapping (%r) — ignored", entry)
+                logger.warning(
+                    "memory bank entry is not a mapping (%r) — ignored", entry
+                )
                 continue
             name = str(entry.get("name") or "").strip().lower()
             if not is_bank_name(name):
@@ -498,7 +507,9 @@ def load_banks(
                 )
                 continue
             if name in seen:
-                logger.warning("memory bank %r declared twice — later entry ignored", name)
+                logger.warning(
+                    "memory bank %r declared twice — later entry ignored", name
+                )
                 continue
             seen.add(name)
             if name == PERSONAL_BANK:
@@ -527,7 +538,11 @@ def load_banks(
             logger.warning(
                 "memory bank %r cannot be relocated to %s — memory bank %r at %s "
                 "already covers it; keeping the configured memory dir %s",
-                PERSONAL_BANK, personal.path, clash.name, clash.path, configured.path,
+                PERSONAL_BANK,
+                personal.path,
+                clash.name,
+                clash.path,
+                configured.path,
             )
             personal = configured
 
@@ -554,7 +569,9 @@ def _without_overlaps(
             logger.warning(
                 "memory bank %r at %s overlaps the personal memory dir %s — ignored "
                 "(its files would be catalogued twice)",
-                bank.name, bank.path, personal.path,
+                bank.name,
+                bank.path,
+                personal.path,
             )
             continue
         clash = next(
@@ -564,7 +581,10 @@ def _without_overlaps(
         if clash is not None:
             logger.warning(
                 "memory bank %r at %s overlaps memory bank %r at %s — ignored",
-                bank.name, bank.path, clash.name, clash.path,
+                bank.name,
+                bank.path,
+                clash.name,
+                clash.path,
             )
             continue
         kept.append(bank)

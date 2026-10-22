@@ -89,6 +89,10 @@ def check_effort(value: str | None) -> str | None:
     if not value:
         return None
     if value.lower() not in KNOWN_EFFORTS:
-        log.warning("Ignoring unknown effort %r (expected one of %s)", value, ", ".join(sorted(KNOWN_EFFORTS)))
+        log.warning(
+            "Ignoring unknown effort %r (expected one of %s)",
+            value,
+            ", ".join(sorted(KNOWN_EFFORTS)),
+        )
         return None
     return value

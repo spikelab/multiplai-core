@@ -78,7 +78,9 @@ class TestBasicRuns:
             ]
         )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            result = _run(run_agent("go", allowed_tools=["Write", "Edit"], max_turns=10))
+            result = _run(
+                run_agent("go", allowed_tools=["Write", "Edit"], max_turns=10)
+            )
         assert result.files_changed == ["/a.py", "/b.py"]
         assert result.text == "done"
 
@@ -119,7 +121,9 @@ class TestBasicRuns:
             ]
         )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
-            result = _run(run_agent("go", allowed_tools=["Write", "Edit"], max_turns=10))
+            result = _run(
+                run_agent("go", allowed_tools=["Write", "Edit"], max_turns=10)
+            )
         assert [c.name for c in result.tool_calls] == ["Write", "Edit"]
         assert result.files_changed == ["/a.py"]
 
@@ -267,17 +271,15 @@ class TestOptionsIsolation:
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("hi", disallowed_tools=[]))
-        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs[
-            "disallowed_tools"
-        ] == []
+        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["disallowed_tools"] == []
 
     def test_explicit_deny_list_forwarded_verbatim(self):
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("hi", disallowed_tools=["Bash"]))
-        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs[
-            "disallowed_tools"
-        ] == ["Bash"]
+        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["disallowed_tools"] == [
+            "Bash"
+        ]
 
     def test_deny_list_helper_complements(self):
         assert deny_list(None) == list(TOOL_UNIVERSE)
@@ -294,9 +296,7 @@ class TestOptionsIsolation:
         mock_sdk = _make_mock_sdk()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("hi", allowed_tools=["WebFetch"]))
-        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["tools"] == [
-            "WebFetch"
-        ]
+        assert mock_sdk.ClaudeAgentOptions.call_args.kwargs["tools"] == ["WebFetch"]
 
     def test_no_tools_call_gets_an_empty_base_set(self):
         mock_sdk = _make_mock_sdk()
@@ -326,11 +326,19 @@ class TestOptionsIsolation:
         of them should break a test.
         """
         for tool in (
-            "Bash", "REPL",                      # execution
-            "WebFetch", "Artifact", "SendMessage",  # egress
-            "TaskCreate", "CronCreate", "Workflow",  # deferred execution
-            "Read", "Write", "Edit",             # local files
-            "ToolSearch", "Skill",               # loading tools back in
+            "Bash",
+            "REPL",  # execution
+            "WebFetch",
+            "Artifact",
+            "SendMessage",  # egress
+            "TaskCreate",
+            "CronCreate",
+            "Workflow",  # deferred execution
+            "Read",
+            "Write",
+            "Edit",  # local files
+            "ToolSearch",
+            "Skill",  # loading tools back in
         ):
             assert tool in TOOL_UNIVERSE, tool
 
@@ -509,10 +517,13 @@ class TestUsageLimit:
         mock.query = MagicMock(side_effect=_agen)
         return mock, calls
 
-    @pytest.mark.parametrize("message,limit,resets", [
-        (SESSION_LIMIT, "session", "9:40am (UTC)"),
-        (WEEKLY_LIMIT, "weekly", "Oct 19, 4am (UTC)"),
-    ])
+    @pytest.mark.parametrize(
+        "message,limit,resets",
+        [
+            (SESSION_LIMIT, "session", "9:40am (UTC)"),
+            (WEEKLY_LIMIT, "weekly", "Oct 19, 4am (UTC)"),
+        ],
+    )
     def test_limit_raises_usage_limit_error_without_retry(self, message, limit, resets):
         mock_sdk, calls = self._counting_sdk(message)
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
@@ -522,18 +533,25 @@ class TestUsageLimit:
         assert exc.value.attempts == 1
         assert exc.value.limit == limit
         assert exc.value.resets == resets
-        assert isinstance(exc.value, AgentRunError)  # old `except AgentRunError` still catches it
+        assert isinstance(
+            exc.value, AgentRunError
+        )  # old `except AgentRunError` still catches it
         assert "hit your " + limit + " limit" in str(exc.value)
         assert isinstance(exc.value.__cause__, _ResultError)
 
-    @pytest.mark.parametrize("stderr", [
-        "[ERROR] API rate_limit after retries: This request would exceed your account's rate limit.",
-        "[DEBUG] tool result: You've hit your session limit \u00b7 resets 9:40am (UTC)",
-    ])
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "[ERROR] API rate_limit after retries: This request would exceed your account's rate limit.",
+            "[DEBUG] tool result: You've hit your session limit \u00b7 resets 9:40am (UTC)",
+        ],
+    )
     def test_stderr_text_never_makes_a_usage_limit(self, stderr):
         """A 429 the CLI retried is transient, and debug lines can echo any text: only the
         result text says a limit was hit."""
-        mock_sdk = _make_mock_sdk(fail=RuntimeError("Command failed with exit code 1"), stderr_lines=[stderr])
+        mock_sdk = _make_mock_sdk(
+            fail=RuntimeError("Command failed with exit code 1"), stderr_lines=[stderr]
+        )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             with pytest.raises(AgentRunError) as exc:
                 _run(run_agent("hi"))
@@ -543,24 +561,46 @@ class TestUsageLimit:
     def test_the_phrase_quoted_inside_a_result_is_not_a_usage_limit(self):
         """The CLI's message starts with the phrase (it classifies it with startsWith)."""
         mock_sdk, calls = self._counting_sdk(
-            "Claude Code returned an error result: the finding says \"You've hit your session limit\" (exit code: 1)")
+            'Claude Code returned an error result: the finding says "You\'ve hit your session limit" (exit code: 1)'
+        )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             with pytest.raises(AgentRunError) as exc:
                 _run(run_agent("hi", max_attempts=2, retry_backoff_s=0))
         assert not isinstance(exc.value, UsageLimitError) and calls["n"] == 2
 
-    @pytest.mark.parametrize("message,limit,resets", [
-        ("Claude Code returned an error result: You've hit your session limit \u00b7 resets 5pm "
-         "\u00b7 progress saved (exit code: 1)", "session", "5pm"),
-        ("Claude Code returned an error result: You've hit your Opus limit \u00b7 resets 9:40am (UTC) "
-         "\u00b7 progress saved", "opus", "9:40am (UTC)"),
-        ("Claude Code returned an error result: You've hit your team's shared budget. /model to switch models.",
-         "team's shared", ""),
-        ("Claude Code returned an error result: You've hit your session limit \u00b7 resets 5pm (exit code: 1)",
-         "session", "5pm"),
-        ("Claude Code returned an error result: You've hit your Opus 4.1 limit (exit code: 1)", "opus 4.1", ""),
-        ("You've hit your limit (exit code: 1)", "", ""),
-    ])
+    @pytest.mark.parametrize(
+        "message,limit,resets",
+        [
+            (
+                "Claude Code returned an error result: You've hit your session limit \u00b7 resets 5pm "
+                "\u00b7 progress saved (exit code: 1)",
+                "session",
+                "5pm",
+            ),
+            (
+                "Claude Code returned an error result: You've hit your Opus limit \u00b7 resets 9:40am (UTC) "
+                "\u00b7 progress saved",
+                "opus",
+                "9:40am (UTC)",
+            ),
+            (
+                "Claude Code returned an error result: You've hit your team's shared budget. /model to switch models.",
+                "team's shared",
+                "",
+            ),
+            (
+                "Claude Code returned an error result: You've hit your session limit \u00b7 resets 5pm (exit code: 1)",
+                "session",
+                "5pm",
+            ),
+            (
+                "Claude Code returned an error result: You've hit your Opus 4.1 limit (exit code: 1)",
+                "opus 4.1",
+                "",
+            ),
+            ("You've hit your limit (exit code: 1)", "", ""),
+        ],
+    )
     def test_other_wordings_of_the_bundled_cli(self, message, limit, resets):
         """Shapes the CLI bundled with claude-agent-sdk 0.2.168 builds: `You've hit your ${name}${resets}${saved}`."""
         mock_sdk, _ = self._counting_sdk(message)
@@ -571,14 +611,25 @@ class TestUsageLimit:
 
     def test_limit_logs_one_fail_line_with_the_stderr_and_no_retry_line(self, caplog):
         mock_sdk, _ = self._counting_sdk(SESSION_LIMIT)
-        mock_sdk.ClaudeAgentOptions = _make_mock_sdk(stderr_lines=["[ERROR] cli: limit reached"]).ClaudeAgentOptions
+        mock_sdk.ClaudeAgentOptions = _make_mock_sdk(
+            stderr_lines=["[ERROR] cli: limit reached"]
+        ).ClaudeAgentOptions
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             with caplog.at_level(logging.WARNING, logger="multiplai_core.agent_runner"):
                 with pytest.raises(UsageLimitError):
-                    _run(run_agent("hi", max_attempts=3, retry_backoff_s=0, label="verify"))
-        fails = [r.getMessage() for r in caplog.records if r.getMessage().startswith("FAIL")]
+                    _run(
+                        run_agent(
+                            "hi", max_attempts=3, retry_backoff_s=0, label="verify"
+                        )
+                    )
+        fails = [
+            r.getMessage() for r in caplog.records if r.getMessage().startswith("FAIL")
+        ]
         assert len(fails) == 1 and "usage limit hit, not retried" in fails[0]
-        assert "--- captured CLI stderr (errors) ---" in fails[0] and "cli: limit reached" in fails[0]
+        assert (
+            "--- captured CLI stderr (errors) ---" in fails[0]
+            and "cli: limit reached" in fails[0]
+        )
         assert "retrying" not in caplog.text
 
     def test_limit_records_partial_usage(self, tmp_workspace):
@@ -637,14 +688,18 @@ class TestIsUsageLimit:
         from multiplai_core.model_client import SDKQueryError
 
         line = "[DEBUG] Claude Code returned an error result: You've hit your session limit"
-        e = AgentRunError("run_agent [x] failed: exit 1", reason="failed: exit 1", stderr_tail=line)
+        e = AgentRunError(
+            "run_agent [x] failed: exit 1", reason="failed: exit 1", stderr_tail=line
+        )
         assert not is_usage_limit(e)
         try:
             try:
                 raise e
             except AgentRunError as inner:
-                raise SDKQueryError("claude_agent_sdk.query() failed: exit 1 after 2 attempts",
-                                    stderr_tail=line) from inner
+                raise SDKQueryError(
+                    "claude_agent_sdk.query() failed: exit 1 after 2 attempts",
+                    stderr_tail=line,
+                ) from inner
         except SDKQueryError as w:
             assert line in str(w)
             assert not is_usage_limit(w)
@@ -652,7 +707,8 @@ class TestIsUsageLimit:
     def test_a_message_quoting_the_sdk_message_does_not_count(self):
         assert not is_usage_limit(
             "Claude Code returned an error result: finding F1: 'Claude Code returned an error result: "
-            "You've hit your session limit'")
+            "You've hit your session limit'"
+        )
 
     def test_true_for_the_raw_message_anywhere_in_the_chain(self):
         try:
@@ -666,12 +722,15 @@ class TestIsUsageLimit:
     def test_true_for_a_string(self):
         assert is_usage_limit(SESSION_LIMIT)
 
-    @pytest.mark.parametrize("value", [
-        RuntimeError("Command failed with exit code 1"),
-        AgentRunError("run_agent [x] timed out after 600s"),
-        "This request would exceed your account's rate limit. Please try again later.",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "value",
+        [
+            RuntimeError("Command failed with exit code 1"),
+            AgentRunError("run_agent [x] timed out after 600s"),
+            "This request would exceed your account's rate limit. Please try again later.",
+            "",
+        ],
+    )
     def test_false_otherwise(self, value):
         assert not is_usage_limit(value)
 
@@ -764,6 +823,7 @@ class TestLargePromptsInline:
     def _run_big(tmp_path, monkeypatch, **kwargs):
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         import tempfile as _tf
+
         _tf.tempdir = None  # force TMPDIR re-resolution
         big_prompt = "x" * (MAX_PROMPT_BYTES + 20_001)
         mock_sdk = _make_mock_sdk()
@@ -827,11 +887,7 @@ class TestHeartbeat:
 
     @staticmethod
     def _alive_lines(caplog) -> list[str]:
-        return [
-            r.getMessage()
-            for r in caplog.records
-            if " alive " in r.getMessage()
-        ]
+        return [r.getMessage() for r in caplog.records if " alive " in r.getMessage()]
 
     @staticmethod
     def _slow_sdk(delay: float) -> MagicMock:
@@ -960,10 +1016,12 @@ class TestCostLedgerTap:
     def test_component_writes_ledger_record(self):
         from multiplai_core.costing import iter_ledger
 
-        mock_sdk = _make_mock_sdk([
-            _FakeAssistantMessage([_FakeTextBlock("done")]),
-            self._result_message(),
-        ])
+        mock_sdk = _make_mock_sdk(
+            [
+                _FakeAssistantMessage([_FakeTextBlock("done")]),
+                self._result_message(),
+            ]
+        )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("p", model="claude-opus-4-8", component="buildme"))
         records = list(iter_ledger())
@@ -972,7 +1030,13 @@ class TestCostLedgerTap:
         assert rec["source"] == "sdk"
         assert rec["component"] == "buildme"
         assert rec["cost_usd"] == pytest.approx(0.123)  # SDK cost wins
-        assert rec["tokens"] == {"in": 1000, "out": 500, "cw5m": 200, "cw1h": 0, "cr": 3000}
+        assert rec["tokens"] == {
+            "in": 1000,
+            "out": 500,
+            "cw5m": 200,
+            "cw1h": 0,
+            "cr": 3000,
+        }
 
     def test_no_component_writes_nothing(self):
         from multiplai_core.costing import iter_ledger
@@ -997,10 +1061,12 @@ class TestCostLedgerTap:
             raise OSError("disk full")
 
         monkeypatch.setattr(costing, "append_records", _boom)
-        mock_sdk = _make_mock_sdk([
-            _FakeAssistantMessage([_FakeTextBlock("done")]),
-            self._result_message(),
-        ])
+        mock_sdk = _make_mock_sdk(
+            [
+                _FakeAssistantMessage([_FakeTextBlock("done")]),
+                self._result_message(),
+            ]
+        )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             result = _run(run_agent("p", component="buildme"))
         assert result.text == "done"
@@ -1050,7 +1116,9 @@ def sdk_logs(tmp_path, monkeypatch):
 class TestDebugLog:
     def test_lines_reach_disk_while_the_call_is_running(self, sdk_logs):
         seen: dict = {}
-        mock = _make_mock_sdk(stderr_lines=["[DEBUG] [API REQUEST] /v1/messages x-client-request-id=abc"])
+        mock = _make_mock_sdk(
+            stderr_lines=["[DEBUG] [API REQUEST] /v1/messages x-client-request-id=abc"]
+        )
 
         async def _agen(prompt, options):
             # Read the file mid-call: the line must already be on disk, not
@@ -1108,7 +1176,9 @@ class TestDebugLog:
             _run(run_agent("hi"))
         assert len(list(sdk_logs.glob("*.log"))) == 1
 
-    def test_concurrent_same_label_calls_get_their_own_files(self, sdk_logs, monkeypatch):
+    def test_concurrent_same_label_calls_get_their_own_files(
+        self, sdk_logs, monkeypatch
+    ):
         # Two calls in one process, same label and component, started in the
         # same second. The fast one deletes its file on success; that must not
         # take the slow one's evidence with it.
@@ -1145,7 +1215,9 @@ class TestDebugLog:
         assert "EAI_AGAIN" in open(path).read()
 
     def test_timeout_keeps_the_file(self, sdk_logs):
-        mock = _make_mock_sdk(stderr_lines=["[DEBUG] [API:auth] OAuth token check starting"])
+        mock = _make_mock_sdk(
+            stderr_lines=["[DEBUG] [API:auth] OAuth token check starting"]
+        )
 
         async def _agen(prompt, options):
             await asyncio.sleep(10)
@@ -1196,7 +1268,9 @@ class TestDebugLog:
         old = sdk_logs / "old.log"
         old.write_text("x")
         eight_days = 8 * 86400
-        os.utime(old, (old.stat().st_atime - eight_days, old.stat().st_mtime - eight_days))
+        os.utime(
+            old, (old.stat().st_atime - eight_days, old.stat().st_mtime - eight_days)
+        )
         fresh = sdk_logs / "fresh.log"
         fresh.write_text("y")
         with patch.dict(sys.modules, {"claude_agent_sdk": _make_mock_sdk()}):
@@ -1231,7 +1305,10 @@ class TestDebugLog:
         )
         env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
         proc = subprocess.Popen(
-            [sys.executable, str(script)], stdout=subprocess.PIPE, text=True, env=env,
+            [sys.executable, str(script)],
+            stdout=subprocess.PIPE,
+            text=True,
+            env=env,
         )
         try:
             assert proc.stdout.readline().strip() == "READY"
@@ -1247,17 +1324,22 @@ class TestDebugLog:
 
 class TestTimingLines:
     def test_cli_ready_and_first_reply_are_logged(self, sdk_logs, caplog):
-        mock = _make_mock_sdk([
-            _FakeSystemMessage("init", {"session_id": "child-123"}),
-            _FakeAssistantMessage([_FakeTextBlock("a")]),
-            _FakeAssistantMessage([_FakeTextBlock("b")]),
-        ])
+        mock = _make_mock_sdk(
+            [
+                _FakeSystemMessage("init", {"session_id": "child-123"}),
+                _FakeAssistantMessage([_FakeTextBlock("a")]),
+                _FakeAssistantMessage([_FakeTextBlock("b")]),
+            ]
+        )
         mock.SystemMessage = _FakeSystemMessage
         with caplog.at_level(logging.INFO, logger="multiplai_core.agent_runner"):
             with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
                 _run(run_agent("hi", label="router", max_turns=3))
         msgs = [r.getMessage() for r in caplog.records]
-        assert any(re.search(r"CLI ready after [\d.]+s child_session=child-123", m) for m in msgs)
+        assert any(
+            re.search(r"CLI ready after [\d.]+s child_session=child-123", m)
+            for m in msgs
+        )
         assert sum("first reply after" in m for m in msgs) == 1
         assert any("CLI debug log:" in m for m in msgs)
 
@@ -1327,8 +1409,9 @@ class TestPathAllowed:
 
     def test_absolute_path_inside_is_allowed(self, tmp_path):
         (tmp_path / "a.py").write_text("x")
-        assert path_allowed("Read", {"file_path": str(tmp_path / "a.py")},
-                            [tmp_path], tmp_path)
+        assert path_allowed(
+            "Read", {"file_path": str(tmp_path / "a.py")}, [tmp_path], tmp_path
+        )
 
     def test_relative_path_resolves_against_cwd(self, tmp_path):
         (tmp_path / "sub").mkdir()
@@ -1339,8 +1422,11 @@ class TestPathAllowed:
         root.mkdir()
         assert not path_allowed("Read", {"file_path": "../secret.txt"}, [root], root)
         assert not path_allowed(
-            "Read", {"file_path": str(root / "sub" / ".." / ".." / "secret.txt")},
-            [root], root)
+            "Read",
+            {"file_path": str(root / "sub" / ".." / ".." / "secret.txt")},
+            [root],
+            root,
+        )
 
     def test_symlink_inside_root_pointing_outside_is_denied(self, tmp_path):
         root = tmp_path / "root"
@@ -1349,16 +1435,18 @@ class TestPathAllowed:
         outside.mkdir()
         (outside / "secret.txt").write_text("x")
         (root / "link").symlink_to(outside)
-        assert not path_allowed("Read", {"file_path": str(root / "link" / "secret.txt")},
-                                [root], root)
+        assert not path_allowed(
+            "Read", {"file_path": str(root / "link" / "secret.txt")}, [root], root
+        )
         assert not path_allowed("Grep", {"path": "link"}, [root], root)
 
     def test_root_given_through_a_symlink_still_matches(self, tmp_path):
         real = tmp_path / "real"
         real.mkdir()
         (tmp_path / "alias").symlink_to(real)
-        assert path_allowed("Read", {"file_path": str(real / "a.py")},
-                            [tmp_path / "alias"], real)
+        assert path_allowed(
+            "Read", {"file_path": str(real / "a.py")}, [tmp_path / "alias"], real
+        )
 
     def test_grep_with_no_path_uses_cwd(self, tmp_path):
         root = tmp_path / "root"
@@ -1369,26 +1457,31 @@ class TestPathAllowed:
     def test_glob_with_absolute_pattern_outside_is_denied(self, tmp_path):
         root = tmp_path / "root"
         root.mkdir()
-        assert not path_allowed("Glob", {"pattern": f"{tmp_path}/**/*.txt"}, [root], root)
+        assert not path_allowed(
+            "Glob", {"pattern": f"{tmp_path}/**/*.txt"}, [root], root
+        )
         assert not path_allowed("Glob", {"pattern": "/etc/*"}, [root], root)
 
     def test_glob_relative_pattern_inside_is_allowed(self, tmp_path):
         assert path_allowed("Glob", {"pattern": "**/*.py"}, [tmp_path], tmp_path)
-        assert path_allowed("Glob", {"pattern": "src/*.py", "path": "pkg"},
-                            [tmp_path], tmp_path)
+        assert path_allowed(
+            "Glob", {"pattern": "src/*.py", "path": "pkg"}, [tmp_path], tmp_path
+        )
 
     def test_glob_relative_pattern_escaping_is_denied(self, tmp_path):
         root = tmp_path / "root"
         root.mkdir()
         assert not path_allowed("Glob", {"pattern": "../*"}, [root], root)
-        assert not path_allowed("Glob", {"pattern": "*.py", "path": str(tmp_path)},
-                                [root], root)
+        assert not path_allowed(
+            "Glob", {"pattern": "*.py", "path": str(tmp_path)}, [root], root
+        )
 
     def test_notebook_and_ls_paths_are_checked(self, tmp_path):
         root = tmp_path / "root"
         root.mkdir()
-        assert not path_allowed("NotebookRead", {"notebook_path": str(tmp_path / "n.ipynb")},
-                                [root], root)
+        assert not path_allowed(
+            "NotebookRead", {"notebook_path": str(tmp_path / "n.ipynb")}, [root], root
+        )
         assert not path_allowed("LS", {"path": str(tmp_path)}, [root], root)
         assert path_allowed("LS", {"path": str(root)}, [root], root)
 
@@ -1402,7 +1495,9 @@ class TestPathAllowed:
         assert not path_allowed("Glob", {"pattern": "~/*"}, [root], root)
 
     def test_non_string_path_is_denied(self, tmp_path):
-        assert not path_allowed("Read", {"file_path": ["/etc/passwd"]}, [tmp_path], tmp_path)
+        assert not path_allowed(
+            "Read", {"file_path": ["/etc/passwd"]}, [tmp_path], tmp_path
+        )
 
     def test_any_of_several_roots(self, tmp_path):
         a, b = tmp_path / "a", tmp_path / "b"
@@ -1413,8 +1508,9 @@ class TestPathAllowed:
     def test_sibling_with_shared_prefix_is_denied(self, tmp_path):
         root = tmp_path / "root"
         root.mkdir()
-        assert not path_allowed("Read", {"file_path": str(tmp_path / "root-other" / "x")},
-                                [root], root)
+        assert not path_allowed(
+            "Read", {"file_path": str(tmp_path / "root-other" / "x")}, [root], root
+        )
 
 
 class TestReadRoots:
@@ -1444,8 +1540,17 @@ class TestReadRoots:
 
     def test_hook_denies_outside(self, tmp_path):
         hook = self._hook(tmp_path, cwd=tmp_path)
-        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
-                         "tool_input": {"file_path": "/etc/passwd"}}, "t1", None))
+        out = _run(
+            hook(
+                {
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "/etc/passwd"},
+                },
+                "t1",
+                None,
+            )
+        )
         spec = out["hookSpecificOutput"]
         assert spec["hookEventName"] == "PreToolUse"
         assert spec["permissionDecision"] == "deny"
@@ -1453,19 +1558,46 @@ class TestReadRoots:
 
     def test_hook_allows_inside(self, tmp_path):
         hook = self._hook(tmp_path, cwd=tmp_path)
-        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
-                         "tool_input": {"file_path": str(tmp_path / "a.py")}}, "t1", None))
+        out = _run(
+            hook(
+                {
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": str(tmp_path / "a.py")},
+                },
+                "t1",
+                None,
+            )
+        )
         assert out == {}
 
     def test_relative_paths_resolve_against_run_cwd(self, tmp_path):
         root = tmp_path / "root"
         root.mkdir()
         hook = self._hook(root, cwd=root)
-        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Grep",
-                         "tool_input": {"pattern": "x"}}, "t1", None))
+        out = _run(
+            hook(
+                {
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Grep",
+                    "tool_input": {"pattern": "x"},
+                },
+                "t1",
+                None,
+            )
+        )
         assert out == {}
-        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
-                         "tool_input": {"file_path": "../x"}}, "t1", None))
+        out = _run(
+            hook(
+                {
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "../x"},
+                },
+                "t1",
+                None,
+            )
+        )
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_empty_read_roots_denies_every_read(self, tmp_path):
@@ -1473,8 +1605,17 @@ class TestReadRoots:
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             _run(run_agent("hi", allowed_tools=["Read"], read_roots=[], cwd=tmp_path))
         hook = mock_sdk.HookMatcher.call_args.kwargs["hooks"][0]
-        out = _run(hook({"hook_event_name": "PreToolUse", "tool_name": "Read",
-                         "tool_input": {"file_path": str(tmp_path / "a")}}, "t1", None))
+        out = _run(
+            hook(
+                {
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": str(tmp_path / "a")},
+                },
+                "t1",
+                None,
+            )
+        )
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     def test_old_sdk_without_hook_matcher_refuses(self, tmp_path):
@@ -1490,6 +1631,7 @@ class TestReadRoots:
         import inspect
 
         from multiplai_core.pi.backend import run_pi_agent
+
         param = inspect.signature(run_pi_agent).parameters["read_roots"]
         assert param.kind is inspect.Parameter.KEYWORD_ONLY
         assert param.default is None

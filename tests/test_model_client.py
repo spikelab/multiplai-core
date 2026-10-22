@@ -45,6 +45,7 @@ class TestModelClientInterface:
 
     def test_model_client_is_protocol(self):
         from multiplai_core.model_client import ModelClient
+
         assert hasattr(ModelClient, "query")
 
     def test_query_is_async(self):
@@ -59,18 +60,22 @@ class TestModelClientInterface:
         ``test_model_client_is_protocol``.
         """
         from multiplai_core.model_client import ModelClient
+
         assert inspect.iscoroutinefunction(ModelClient.query)
 
     def test_unimplemented_subclass_fails(self):
         from multiplai_core.model_client import ModelClient
+
         class BadClient:
             pass
+
         assert not isinstance(BadClient(), ModelClient)
 
     def test_query_signature_accepts_all_specified_params(self):
         """WHEN query() is called with system, messages, model, max_tokens, temperature
         THEN the method accepts all parameters without error."""
         from multiplai_core.model_client import ModelClient
+
         sig = inspect.signature(ModelClient.query)
         param_names = set(sig.parameters.keys())
         # Must include all specified parameters
@@ -91,6 +96,7 @@ class TestAgentSDKClient:
 
     def test_raises_import_error_when_sdk_missing(self):
         from multiplai_core.model_client import AgentSDKClient
+
         with patch.dict(sys.modules, {"claude_agent_sdk": None}):
             with pytest.raises(ImportError, match="claude_agent_sdk"):
                 AgentSDKClient()
@@ -99,6 +105,7 @@ class TestAgentSDKClient:
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
             assert client._sdk is mock_sdk
 
@@ -106,10 +113,13 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["test response"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             async def _test():
-                result = await client.query("system", [{"role": "user", "content": "hello"}])
+                result = await client.query(
+                    "system", [{"role": "user", "content": "hello"}]
+                )
                 assert result.content == "test response"
 
             asyncio.run(_test())
@@ -123,6 +133,7 @@ class TestAgentSDKClient:
         )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient, SDKQueryError
+
             client = AgentSDKClient()
 
             async def _test():
@@ -141,6 +152,7 @@ class TestAgentSDKClient:
 
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import _NO_TOOLS_SUFFIX, AgentSDKClient
+
             client = AgentSDKClient()
 
             messages = [{"role": "user", "content": "test"}]
@@ -171,6 +183,7 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["ok"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             async def _test():
@@ -188,6 +201,7 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["ok"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             async def _test():
@@ -204,6 +218,7 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["ok"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             async def _test():
@@ -219,6 +234,7 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["ok"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             messages = [
@@ -242,14 +258,18 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["ok"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             messages = [
-                {"role": "user", "content": [
-                    {"type": "text", "text": "block one"},
-                    {"type": "image", "source": {}},
-                    {"type": "text", "text": "block two"},
-                ]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "block one"},
+                        {"type": "image", "source": {}},
+                        {"type": "text", "text": "block two"},
+                    ],
+                },
             ]
 
             async def _test():
@@ -265,16 +285,17 @@ class TestAgentSDKClient:
         mock_sdk = _make_mock_sdk(["first ", "second"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             async def _test():
                 result = await client.query(
-                    "sys", [{"role": "user", "content": "hi"}],
+                    "sys",
+                    [{"role": "user", "content": "hi"}],
                 )
                 assert result.content == "first second"
 
             asyncio.run(_test())
-
 
     def test_safe_query_skips_unknown_message_types(self):
         """WHEN the SDK parser raises 'Unknown message type' mid-stream
@@ -304,6 +325,7 @@ class TestAgentSDKClient:
 
         with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             async def _test():
@@ -328,6 +350,7 @@ class TestAgentSDKClient:
 
         with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
             from multiplai_core import model_client
+
             client = model_client.AgentSDKClient()
 
             async def _test():
@@ -349,6 +372,7 @@ class TestAgentSDKClient:
         )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core import model_client
+
             client = model_client.AgentSDKClient()
 
             async def _test():
@@ -383,6 +407,7 @@ class TestAgentSDKClient:
         mock_sdk.query = MagicMock(side_effect=_agen)
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core import model_client
+
             client = model_client.AgentSDKClient()
 
             async def _test():
@@ -410,6 +435,7 @@ class TestAgentSDKClient:
         )
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core import model_client
+
             client = model_client.AgentSDKClient()
 
             async def _test():
@@ -426,10 +452,12 @@ class TestAgentSDKClient:
         """REGRESSION: stderr is captured in memory only — the per-invocation
         file machinery (and its helper) must not come back."""
         from multiplai_core import model_client
+
         assert not hasattr(model_client, "_stderr_log_dir")
-        assert "stderr_log_path" not in inspect.signature(
-            model_client.SDKQueryError.__init__
-        ).parameters
+        assert (
+            "stderr_log_path"
+            not in inspect.signature(model_client.SDKQueryError.__init__).parameters
+        )
 
 
 class TestSummarizeStderr:
@@ -437,6 +465,7 @@ class TestSummarizeStderr:
 
     def test_keeps_error_lines_and_dedups_consecutive(self):
         from multiplai_core.model_client import _summarize_stderr
+
         out = _summarize_stderr(
             error_lines=["[ERROR] boom", "[ERROR] boom", "[ERROR] kapow"],
             recent_lines=["[DEBUG] noise"],
@@ -445,6 +474,7 @@ class TestSummarizeStderr:
 
     def test_falls_back_to_recent_lines_when_no_errors(self):
         from multiplai_core.model_client import _summarize_stderr
+
         out = _summarize_stderr(
             error_lines=[],
             recent_lines=["[DEBUG] a", "[WARN] b", "last line"],
@@ -453,6 +483,7 @@ class TestSummarizeStderr:
 
     def test_empty_when_nothing_captured(self):
         from multiplai_core.model_client import _summarize_stderr
+
         assert _summarize_stderr([], []) == ""
 
 
@@ -461,21 +492,25 @@ class TestAnthropicAPIClient:
 
     def test_raises_value_error_on_empty_key(self):
         from multiplai_core.model_client import AnthropicAPIClient
+
         with pytest.raises(ValueError, match="API key is required"):
             AnthropicAPIClient("")
 
     def test_raises_value_error_on_none_key(self):
         from multiplai_core.model_client import AnthropicAPIClient
+
         with pytest.raises(ValueError, match="API key is required"):
             AnthropicAPIClient(None)
 
     def test_successful_instantiation(self):
         from multiplai_core.model_client import AnthropicAPIClient
+
         client = AnthropicAPIClient("sk-test-key")
         assert client._api_key == "sk-test-key"
 
     def test_default_model(self):
         from multiplai_core.model_client import DEFAULT_MODEL, AnthropicAPIClient
+
         client = AnthropicAPIClient("sk-test-key")
         sig = inspect.signature(client.query)
         assert sig.parameters["model"].default == DEFAULT_MODEL
@@ -501,10 +536,11 @@ class TestAnthropicAPIClient:
                 mock_async_client.messages.create.assert_called_once()
                 call_kwargs = mock_async_client.messages.create.call_args
                 assert call_kwargs.kwargs["system"] == "You are helpful."
-                assert call_kwargs.kwargs["messages"] == [{"role": "user", "content": "hello"}]
+                assert call_kwargs.kwargs["messages"] == [
+                    {"role": "user", "content": "hello"}
+                ]
 
             asyncio.run(_test())
-
 
     def test_temperature_is_never_sent_to_the_api(self, caplog):
         """WHEN AnthropicAPIClient.query() is called with a non-default temperature
@@ -522,13 +558,16 @@ class TestAnthropicAPIClient:
 
             async def _test():
                 with caplog.at_level(logging.WARNING):
-                    await client.query("s", [{"role": "user", "content": "hi"}], temperature=0.0)
+                    await client.query(
+                        "s", [{"role": "user", "content": "hi"}], temperature=0.0
+                    )
                 kwargs = mock_async_client.messages.create.call_args.kwargs
                 assert "temperature" not in kwargs
                 assert "top_p" not in kwargs and "top_k" not in kwargs
                 assert "ignores temperature=0.0" in caplog.text
 
             asyncio.run(_test())
+
     def test_model_override(self):
         """WHEN query() is called with model='claude-opus-4-20250514'
         THEN the request uses that model instead of the default."""
@@ -604,7 +643,9 @@ class TestAnthropicAPIClient:
 
             async def _test():
                 await client.query("sys", [])
-                assert "thinking" not in mock_async_client.messages.create.call_args.kwargs
+                assert (
+                    "thinking" not in mock_async_client.messages.create.call_args.kwargs
+                )
 
             asyncio.run(_test())
 
@@ -707,7 +748,8 @@ class TestResponseNormalization:
             async def _test():
                 client = AgentSDKClient()
                 result = await client.query(
-                    "sys", [{"role": "user", "content": "hi"}],
+                    "sys",
+                    [{"role": "user", "content": "hi"}],
                 )
                 assert hasattr(result, "content")
                 assert isinstance(result.content, str)
@@ -720,9 +762,7 @@ class TestResponseNormalization:
         extracted from the Anthropic API's response.content[0].text structure."""
         from multiplai_core.model_client import AnthropicAPIClient, ModelResponse
 
-        mock_anthropic, mock_async_client = _mock_anthropic(
-            "anthropic response text"
-        )
+        mock_anthropic, mock_async_client = _mock_anthropic("anthropic response text")
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test-key")
@@ -750,7 +790,9 @@ class TestResponseNormalization:
 
         mock_anthropic, mock_async_client = _mock_anthropic("api text")
 
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk, "anthropic": mock_anthropic}):
+        with patch.dict(
+            sys.modules, {"claude_agent_sdk": mock_sdk, "anthropic": mock_anthropic}
+        ):
             sdk_client = AgentSDKClient()
             api_client = AnthropicAPIClient("sk-test")
             api_client._client = None
@@ -781,11 +823,13 @@ class TestResponseNormalization:
             b.text = text
             return b
 
-        mock_anthropic, mock_async_client = _mock_anthropic(blocks=[
-            _blk("text", "first "),
-            _blk("thinking", "IGNORED"),
-            _blk("text", "second"),
-        ])
+        mock_anthropic, mock_async_client = _mock_anthropic(
+            blocks=[
+                _blk("text", "first "),
+                _blk("thinking", "IGNORED"),
+                _blk("text", "second"),
+            ]
+        )
 
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             client = AnthropicAPIClient("sk-test")
@@ -819,6 +863,7 @@ class TestAsyncInterface:
 
     def test_query_is_coroutine(self):
         from multiplai_core.model_client import AnthropicAPIClient
+
         client = AnthropicAPIClient("sk-test")
         result = client.query("sys", [])
         assert asyncio.iscoroutine(result)
@@ -826,6 +871,7 @@ class TestAsyncInterface:
 
     def test_create_client_is_coroutine(self):
         from multiplai_core.model_client import create_client
+
         result = create_client()
         assert asyncio.iscoroutine(result)
         result.close()
@@ -853,6 +899,7 @@ class TestAsyncInterface:
         mock_sdk = _make_mock_sdk(["ok"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
             result = client.query("sys", [{"role": "user", "content": "hi"}])
             assert asyncio.iscoroutine(result)
@@ -867,6 +914,7 @@ class TestNoVendoring:
         """Module imports without claude_agent_sdk installed."""
         # Just importing the module should succeed
         from multiplai_core import model_client
+
         assert hasattr(model_client, "ModelClient")
 
     def test_pyproject_declares_deps_not_vendored(self):
@@ -891,6 +939,7 @@ class TestMaxTokensDefaults:
 
     def test_default_max_tokens_value(self):
         from multiplai_core.model_client import DEFAULT_MAX_TOKENS
+
         assert DEFAULT_MAX_TOKENS == 4096
 
     def test_agent_sdk_accepts_max_tokens_for_interface_parity(self):
@@ -904,6 +953,7 @@ class TestMaxTokensDefaults:
         mock_sdk = _make_mock_sdk(["ok"])
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import AgentSDKClient
+
             client = AgentSDKClient()
 
             async def _test():
@@ -926,6 +976,7 @@ class TestLoggingOnFallback:
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             from multiplai_core.model_client import create_client
             from multiplai_core.model_client import logger as mc_logger
+
             records = []
 
             class Capture(logging.Handler):
@@ -947,6 +998,7 @@ class TestLoggingOnFallback:
     def test_fallback_logs_warning(self):
         """Verify fallback to API client is logged as warning."""
         from multiplai_core import model_client
+
         records = []
 
         class Capture(logging.Handler):
@@ -1005,9 +1057,11 @@ class TestSDKCallTimeout:
         from multiplai_core import model_client
 
         mock_sdk = self._hanging_sdk()
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}), \
-                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05), \
-                patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0):
+        with (
+            patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}),
+            patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05),
+            patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0),
+        ):
             client = model_client.AgentSDKClient()
 
             async def _test():
@@ -1023,9 +1077,11 @@ class TestSDKCallTimeout:
         from multiplai_core import model_client
 
         mock_sdk = self._hanging_sdk()
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}), \
-                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05), \
-                patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0):
+        with (
+            patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}),
+            patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05),
+            patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0),
+        ):
             client = model_client.AgentSDKClient()
 
             async def _test():
@@ -1054,9 +1110,11 @@ class TestSDKCallTimeout:
 
         mock.query = MagicMock(side_effect=_agen)
 
-        with patch.dict(sys.modules, {"claude_agent_sdk": mock}), \
-                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05), \
-                patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0):
+        with (
+            patch.dict(sys.modules, {"claude_agent_sdk": mock}),
+            patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 0.05),
+            patch.object(model_client, "_SDK_RETRY_BACKOFF_S", 0.0),
+        ):
             client = model_client.AgentSDKClient()
 
             async def _test():
@@ -1078,6 +1136,7 @@ class TestProviderSeam:
     @pytest.fixture(autouse=True)
     def _restore_registry(self):
         from multiplai_core import model_client as mc
+
         before = dict(mc._PROVIDERS)
         yield
         mc._PROVIDERS.clear()
@@ -1085,10 +1144,12 @@ class TestProviderSeam:
 
     def test_anthropic_registered_by_default(self):
         from multiplai_core.model_client import registered_providers
+
         assert "anthropic" in registered_providers()
 
     def test_bare_model_string_routes_to_anthropic(self):
         from multiplai_core.model_client import AgentSDKClient, create_client_for
+
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             client = asyncio.run(create_client_for("claude-opus-4-8"))
@@ -1115,8 +1176,16 @@ class TestProviderSeam:
             def __init__(self, spec):
                 self.spec = spec
 
-            async def query(self, system, messages, *, model=None, max_tokens=None,
-                            temperature=1.0, effort=None):
+            async def query(
+                self,
+                system,
+                messages,
+                *,
+                model=None,
+                max_tokens=None,
+                temperature=1.0,
+                effort=None,
+            ):
                 return ModelResponse(content="stub")
 
         register_provider("acme", lambda spec, **kw: _Stub(spec))
@@ -1139,6 +1208,7 @@ class TestProviderSeam:
 
     def test_factory_receives_component_and_api_key(self):
         from multiplai_core.model_client import create_client_for, register_provider
+
         seen = {}
 
         def _factory(spec, *, api_key=None, component="model_client"):
@@ -1153,6 +1223,7 @@ class TestProviderSeam:
     def test_model_spec_object_accepted(self):
         from multiplai_core.env import ModelSpec
         from multiplai_core.model_client import create_client_for, register_provider
+
         register_provider("acme", lambda spec, **kw: MagicMock(name=spec.model))
         assert asyncio.run(create_client_for(ModelSpec("acme", "m"))) is not None
 
@@ -1164,6 +1235,7 @@ class TestProviderSeam:
             registered_providers,
             unregister_provider,
         )
+
         register_provider("acme", lambda spec, **kw: MagicMock())
         assert "acme" in registered_providers()
         unregister_provider("acme")
@@ -1176,20 +1248,28 @@ class TestEffortForwarding:
 
     def test_effort_forwarded_to_run_agent(self):
         from multiplai_core.model_client import AgentSDKClient
+
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             client = AgentSDKClient()
-        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+        with patch(
+            "multiplai_core.model_client.run_agent", new_callable=AsyncMock
+        ) as ra:
             ra.return_value = types.SimpleNamespace(text="ok")
-            asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}], effort="low"))
+            asyncio.run(
+                client.query("sys", [{"role": "user", "content": "hi"}], effort="low")
+            )
         assert ra.call_args.kwargs["effort"] == "low"
 
     def test_effort_none_by_default(self):
         from multiplai_core.model_client import AgentSDKClient
+
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             client = AgentSDKClient()
-        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+        with patch(
+            "multiplai_core.model_client.run_agent", new_callable=AsyncMock
+        ) as ra:
             ra.return_value = types.SimpleNamespace(text="ok")
             asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}]))
         # None means run_agent omits the option entirely — older SDKs keep working.
@@ -1208,24 +1288,33 @@ class TestPerCallTimeout:
     @staticmethod
     def _client():
         from multiplai_core.model_client import AgentSDKClient
+
         mock_sdk = MagicMock()
         with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
             return AgentSDKClient()
 
     def test_timeout_s_reaches_run_agent(self):
         client = self._client()
-        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+        with patch(
+            "multiplai_core.model_client.run_agent", new_callable=AsyncMock
+        ) as ra:
             ra.return_value = types.SimpleNamespace(text="ok")
-            asyncio.run(client.query(
-                "sys", [{"role": "user", "content": "hi"}], timeout_s=1800.0,
-            ))
+            asyncio.run(
+                client.query(
+                    "sys",
+                    [{"role": "user", "content": "hi"}],
+                    timeout_s=1800.0,
+                )
+            )
         assert ra.call_args.kwargs["timeout_s"] == 1800.0
 
     def test_omitting_it_preserves_the_module_default(self):
         from multiplai_core import model_client
 
         client = self._client()
-        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra:
+        with patch(
+            "multiplai_core.model_client.run_agent", new_callable=AsyncMock
+        ) as ra:
             ra.return_value = types.SimpleNamespace(text="ok")
             asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}]))
         assert ra.call_args.kwargs["timeout_s"] == model_client._SDK_CALL_TIMEOUT_S
@@ -1235,8 +1324,12 @@ class TestPerCallTimeout:
         from multiplai_core import model_client
 
         client = self._client()
-        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra, \
-                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 123.0):
+        with (
+            patch(
+                "multiplai_core.model_client.run_agent", new_callable=AsyncMock
+            ) as ra,
+            patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 123.0),
+        ):
             ra.return_value = types.SimpleNamespace(text="ok")
             asyncio.run(client.query("sys", [{"role": "user", "content": "hi"}]))
         assert ra.call_args.kwargs["timeout_s"] == 123.0
@@ -1245,12 +1338,20 @@ class TestPerCallTimeout:
         from multiplai_core import model_client
 
         client = self._client()
-        with patch("multiplai_core.model_client.run_agent", new_callable=AsyncMock) as ra, \
-                patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 123.0):
+        with (
+            patch(
+                "multiplai_core.model_client.run_agent", new_callable=AsyncMock
+            ) as ra,
+            patch.object(model_client, "_SDK_CALL_TIMEOUT_S", 123.0),
+        ):
             ra.return_value = types.SimpleNamespace(text="ok")
-            asyncio.run(client.query(
-                "sys", [{"role": "user", "content": "hi"}], timeout_s=7.0,
-            ))
+            asyncio.run(
+                client.query(
+                    "sys",
+                    [{"role": "user", "content": "hi"}],
+                    timeout_s=7.0,
+                )
+            )
         assert ra.call_args.kwargs["timeout_s"] == 7.0
 
     def test_keyword_only_and_defaults_to_none(self):
@@ -1261,8 +1362,11 @@ class TestPerCallTimeout:
             AnthropicAPIClient,
             ModelClient,
         )
+
         for meth in (
-            ModelClient.query, AgentSDKClient.query, AnthropicAPIClient.query,
+            ModelClient.query,
+            AgentSDKClient.query,
+            AnthropicAPIClient.query,
         ):
             p = inspect.signature(meth).parameters["timeout_s"]
             assert p.kind is inspect.Parameter.KEYWORD_ONLY
@@ -1280,7 +1384,9 @@ class TestPerCallTimeout:
 
             async def _test():
                 result = await client.query(
-                    "sys", [{"role": "user", "content": "hi"}], timeout_s=1800.0,
+                    "sys",
+                    [{"role": "user", "content": "hi"}],
+                    timeout_s=1800.0,
                 )
                 assert result.content == "ok"
                 assert "timeout_s" not in (
@@ -1296,10 +1402,12 @@ class TestPromptCaching:
 
     def test_short_system_prompt_passes_through_unchanged(self):
         from multiplai_core.model_client import cacheable_system
+
         assert cacheable_system("You are helpful.") == "You are helpful."
 
     def test_empty_system_passes_through(self):
         from multiplai_core.model_client import cacheable_system
+
         assert cacheable_system("") == ""
 
     def test_long_system_prompt_gets_a_cache_breakpoint(self):
@@ -1307,10 +1415,12 @@ class TestPromptCaching:
             MIN_CACHEABLE_SYSTEM_BYTES,
             cacheable_system,
         )
+
         big = "x" * (MIN_CACHEABLE_SYSTEM_BYTES + 1)
         out = cacheable_system(big)
-        assert out == [{"type": "text", "text": big,
-                        "cache_control": {"type": "ephemeral"}}]
+        assert out == [
+            {"type": "text", "text": big, "cache_control": {"type": "ephemeral"}}
+        ]
 
     def test_threshold_is_measured_in_bytes_not_characters(self):
         """Multi-byte text must not be counted as cacheable on character
@@ -1320,6 +1430,7 @@ class TestPromptCaching:
             MIN_CACHEABLE_SYSTEM_BYTES,
             cacheable_system,
         )
+
         # Under the byte floor despite a large character count would be wrong;
         # 'é' is 2 bytes, so this crosses the floor with half the characters.
         text = "é" * (MIN_CACHEABLE_SYSTEM_BYTES // 2 + 1)
@@ -1330,6 +1441,7 @@ class TestPromptCaching:
             MIN_CACHEABLE_SYSTEM_BYTES,
             AnthropicAPIClient,
         )
+
         mock_anthropic, mock_async_client = _mock_anthropic("ok")
 
         big = "y" * (MIN_CACHEABLE_SYSTEM_BYTES + 10)

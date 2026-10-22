@@ -68,7 +68,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
         # `.get()` far from the cause; treat it as unusable.
         logger.warning(
             "%s did not contain a mapping (got %s), starting fresh",
-            path.name, type(loaded).__name__,
+            path.name,
+            type(loaded).__name__,
         )
         return {}
     return loaded
@@ -87,7 +88,9 @@ def save_yaml(path: Path, data: dict[str, Any]) -> None:
     _atomic_write(path, yaml.dump(data, default_flow_style=False))
 
 
-def read_memory_files(memory_dir: Path, *, exclude: set[str] | None = None) -> dict[str, str]:
+def read_memory_files(
+    memory_dir: Path, *, exclude: set[str] | None = None
+) -> dict[str, str]:
     """Read all ``.md`` files from *memory_dir*, returning ``{name: content}``.
 
     Files whose names appear in *exclude* are skipped.  Missing or
@@ -160,12 +163,12 @@ def load_config(config_path: Path) -> dict[str, Any]:
         parsed = json.loads(config_path.read_text())
     elif suffix in (".yaml", ".yml"):
         import yaml
+
         with config_path.open() as f:
             parsed = yaml.safe_load(f)
     else:
         raise ValueError(
-            f"Unsupported config file format: {suffix}. "
-            f"Use .json or .yaml/.yml."
+            f"Unsupported config file format: {suffix}. Use .json or .yaml/.yml."
         )
 
     if parsed is None:

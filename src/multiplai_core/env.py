@@ -80,7 +80,8 @@ def load_env(start: Path | None = None) -> bool:
     except ImportError:
         log.warning(
             "python-dotenv not installed; cannot auto-load %s "
-            "(pip install python-dotenv)", env_file,
+            "(pip install python-dotenv)",
+            env_file,
         )
         return False
     loaded = load_dotenv(env_file, override=False)
@@ -181,7 +182,9 @@ def resolve_model(requested: str, ceiling: str | None = None) -> str:
     """
     warnings.warn(
         "resolve_model() no longer caps anything and will be removed; "
-        "use the model as is", DeprecationWarning, stacklevel=2,
+        "use the model as is",
+        DeprecationWarning,
+        stacklevel=2,
     )
     return requested
 
@@ -233,7 +236,9 @@ class ModelSpec:
         return self.provider == DEFAULT_PROVIDER
 
 
-def parse_model_spec(value: str, *, default_provider: str = DEFAULT_PROVIDER) -> ModelSpec:
+def parse_model_spec(
+    value: str, *, default_provider: str = DEFAULT_PROVIDER
+) -> ModelSpec:
     """Parse ``provider:model`` (or a bare model ID) into a :class:`ModelSpec`.
 
     A bare ID keeps *default_provider*, so every existing config value and code
@@ -302,7 +307,8 @@ def resolve_model_spec(
     if ceiling is not None:
         warnings.warn(
             "resolve_model_spec(ceiling=...) is ignored and will be removed",
-            DeprecationWarning, stacklevel=2,
+            DeprecationWarning,
+            stacklevel=2,
         )
     raw = next((c.strip() for c in chain if c and c.strip()), None)
     if raw is None:
@@ -352,7 +358,9 @@ def resolve_effort(requested: str, ceiling: str | None = None) -> str:
     """
     warnings.warn(
         "resolve_effort() no longer caps anything and will be removed; "
-        "use the effort as is", DeprecationWarning, stacklevel=2,
+        "use the effort as is",
+        DeprecationWarning,
+        stacklevel=2,
     )
     return requested
 

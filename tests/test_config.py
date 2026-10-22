@@ -10,6 +10,7 @@ from multiplai_core import config
 # load_yaml / save_yaml
 # ---------------------------------------------------------------------------
 
+
 def test_load_yaml_missing_returns_empty(tmp_path):
     assert config.load_yaml(tmp_path / "nope.yaml") == {}
 
@@ -32,6 +33,7 @@ def test_load_yaml_malformed_returns_empty(tmp_path):
 # read_memory_files
 # ---------------------------------------------------------------------------
 
+
 def test_read_memory_files_missing_dir(tmp_path):
     assert config.read_memory_files(tmp_path / "absent") == {}
 
@@ -49,6 +51,7 @@ def test_read_memory_files_reads_md_and_excludes(tmp_path):
 # ---------------------------------------------------------------------------
 # session state read/write
 # ---------------------------------------------------------------------------
+
 
 def test_read_session_state_missing_returns_none(tmp_path):
     assert config.read_session_state(tmp_path) is None
@@ -73,6 +76,7 @@ def test_read_session_state_malformed_returns_none(tmp_path):
 # ---------------------------------------------------------------------------
 # load_config
 # ---------------------------------------------------------------------------
+
 
 def test_load_config_missing_raises(tmp_path):
     with pytest.raises(FileNotFoundError):

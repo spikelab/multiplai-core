@@ -114,4 +114,3 @@ def _mock_anthropic(*texts: str, blocks: list | None = None):
     module = MagicMock()
     module.AsyncAnthropic.return_value = async_client
     return module, async_client
-

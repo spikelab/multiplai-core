@@ -28,9 +28,21 @@ SECOND = "import os\n\n\ndef greet(name):\n    return f'hello {name}'\n\n\nVALUE
 
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
-         "-c", "commit.gpgsign=false", *args],
-        capture_output=True, text=True, check=True,
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return proc.stdout.strip()
 
@@ -65,14 +77,18 @@ def test_a_quote_at_the_right_lines_in_one_commit_but_not_the_other(repo):
     path, first, second = repo
     quote = "def greet(name):"
     assert check_quote(path, first, "mod.py", 1, 2, quote) is None
-    assert check_quote(path, second, "mod.py", 1, 2, quote) == "quote not at cited lines"
+    assert (
+        check_quote(path, second, "mod.py", 1, 2, quote) == "quote not at cited lines"
+    )
     assert check_quote(path, second, "mod.py", 4, 5, quote) is None
 
 
 def test_a_path_missing_at_a_commit(repo):
     path, first, second = repo
     assert check_quote(path, first, "old.py", 1, 1, "gone = True") is None
-    assert check_quote(path, second, "old.py", 1, 1, "gone = True") == "path not at commit"
+    assert (
+        check_quote(path, second, "old.py", 1, 1, "gone = True") == "path not at commit"
+    )
     assert file_at(path, second, "old.py") is None
     assert lines_at(path, second, "old.py", 1, 1) is None
 
@@ -93,7 +109,10 @@ def test_line_end_past_the_end_of_the_file(repo):
     # FIRST has 5 lines and a trailing newline, so git's numbering ends at 5.
     assert lines_at(path, first, "mod.py", 5, 500) == ["VALUE = 1", ""]
     assert check_quote(path, first, "mod.py", 5, 500, "VALUE = 1") is None
-    assert check_quote(path, first, "mod.py", 6, 500, "VALUE = 1") == "quote not at cited lines"
+    assert (
+        check_quote(path, first, "mod.py", 6, 500, "VALUE = 1")
+        == "quote not at cited lines"
+    )
 
 
 @pytest.mark.parametrize(
@@ -106,13 +125,18 @@ def test_a_line_range_that_is_not_valid_is_an_empty_window(repo, start, end):
     # and an end before the start covers no lines at all.
     assert lines_at(path, first, "mod.py", start, end) == []
     for quote in ("def greet(name):", "VALUE = 1"):
-        assert check_quote(path, first, "mod.py", start, end, quote) == "quote not at cited lines"
+        assert (
+            check_quote(path, first, "mod.py", start, end, quote)
+            == "quote not at cited lines"
+        )
 
 
 def test_a_line_range_that_is_not_valid_still_reports_a_missing_path(repo):
     path, _, second = repo
     assert lines_at(path, second, "old.py", 0, 1) is None
-    assert check_quote(path, second, "old.py", 0, 1, "gone = True") == "path not at commit"
+    assert (
+        check_quote(path, second, "old.py", 0, 1, "gone = True") == "path not at commit"
+    )
 
 
 def test_lines_at_is_one_based_and_inclusive(repo):
