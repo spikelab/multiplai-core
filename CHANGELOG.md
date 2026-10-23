@@ -18,6 +18,16 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`spec_files` / `spec_revision` no longer hash `plan.md` of an old-layout
+  change.** 0.26.0 hashed `plan.md` everywhere, so a change in the
+  `requirements/` layout with a `plan.md` beside it (pm-spec 0.7.2 epic
+  children, `--plan-file` changes) that an older core marked ready read as
+  stale, and buildme refused it. `plan.md` now counts only for a component
+  (`change_root(d) != d`) or a change dir that holds a `specs.md`. Revisions of
+  new-layout changes and components are unchanged; nothing to re-mark.
+
 ## [0.26.0] – 2026-10-23
 
 ### Added
