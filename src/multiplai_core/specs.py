@@ -8,16 +8,29 @@ same code. Layout::
     specs/
       changes/<name>/              one active change
         .change.yaml               metadata, including the ready record below
-        proposal.md                ## Capabilities lists one `name` per capability
+        proposal.md
         use-cases.md
-        requirements/<cap>.md      a delta: ## ADDED/MODIFIED/REMOVED Requirements
+        components.md              | Component | Depends on | Ticket | table
+        components/<id>/           one component, when the change has several
+          .change.yaml             its own ready record
+          plan.md
+          specs.md                 # Capability: <cap> sections, each a delta
+        plan.md                    instead of components/, when there is one
+        specs.md
       registry/<cap>.md            the merged current behaviour, one file per capability
       archive/YYYY-MM-DD-<name>/   archived changes
 
-A requirement file is markdown: ``### Requirement: <name>`` blocks, each with
-one or more ``#### Scenario: <name>`` blocks whose text holds a ``WHEN`` line
-and a ``THEN`` line. A requirement under ``## REMOVED Requirements`` needs no
-scenario.
+The older layout is still read: a change with no ``specs.md`` keeps one delta
+per capability in ``requirements/<cap>.md``, and its ``proposal.md`` lists the
+capabilities under ``## Capabilities``. ``requirement_texts`` reads either.
+
+A delta is markdown: ``## ADDED/MODIFIED/REMOVED Requirements`` sections of
+``### Requirement: <name>`` blocks, each with one or more
+``#### Scenario: <name>`` blocks whose text holds a ``WHEN`` line and a
+``THEN`` line. A requirement under ``## REMOVED Requirements`` needs no
+scenario. In ``specs.md`` each delta sits under a ``# Capability: <cap>``
+heading; split at those headings, the file gives back one
+``requirements/<cap>.md`` per capability.
 
 The ready record is four keys in ``.change.yaml``: ``spec_status`` (``draft``
 or ``ready``), ``spec_revision`` (``spec_revision()`` of the files when they
@@ -94,6 +107,28 @@ def archived_change_dirs(specs_dir: Path, name: str) -> list[Path]:
     return sorted(
         d for d in archive_root.iterdir() if d.is_dir() and pattern.match(d.name)
     )
+
+
+def component_dirs(change_dir: Path) -> list[Path]:
+    """The change's ``components/<id>/`` directories that hold a ``plan.md``,
+    sorted by name; ``[]`` when there are none."""
+    root = Path(change_dir) / "components"
+    if not root.is_dir():
+        return []
+    return sorted(d for d in root.iterdir() if (d / "plan.md").is_file())
+
+
+def change_root(dir: Path) -> Path:
+    """The change a directory belongs to: ``.../changes/<c>`` for a component
+    at ``.../changes/<c>/components/<id>``, else *dir* itself.
+
+    The change root holds the proposal, use cases and prototype that every
+    component shares. Only the path is read; nothing on disk is checked.
+    """
+    dir = Path(dir)
+    if dir.parent.name == "components" and dir.parent.parent.parent.name == "changes":
+        return dir.parent.parent
+    return dir
 
 
 # --- proposal capabilities and requirement files ----------------------------
@@ -228,6 +263,79 @@ def valid_requirement_text(text: str) -> bool:
     return True
 
 
+_CAPABILITY_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def split_capabilities(text: str) -> dict[str, str]:
+    """The ``# Capability: <name>`` sections of a ``specs.md``, as
+    ``{name: delta}`` in file order.
+
+    A delta is the text after its heading line, up to the next
+    ``# Capability:`` heading or the end, stripped and ending in one newline
+    (``""`` when empty). Text before the first heading is ignored, and so is a
+    heading inside an HTML comment, such as a template's placeholder. Raises
+    ValueError for a name that is not kebab-case, which would otherwise fold
+    one capability's requirements into the one above it, and for a name that
+    appears twice.
+    """
+    comments = [m.span() for m in re.finditer(r"<!--.*?-->", text, re.DOTALL)]
+    headings = [
+        m
+        for m in re.finditer(r"^# Capability:([^\n]*)$", text, re.MULTILINE)
+        if not any(start <= m.start() < end for start, end in comments)
+    ]
+    sections: dict[str, str] = {}
+    for i, heading in enumerate(headings):
+        name = heading.group(1).strip()
+        if not _CAPABILITY_NAME.fullmatch(name):
+            raise ValueError(f"capability name {name!r} is not kebab-case")
+        if name in sections:
+            raise ValueError(f"capability {name!r} appears twice")
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        delta = text[heading.end() : end].strip()
+        sections[name] = delta + "\n" if delta else ""
+    return sections
+
+
+def valid_specs_text(text: str) -> bool:
+    """True when ``split_capabilities(text)`` has at least one section and
+    each passes ``valid_requirement_text``; False when it raises."""
+    try:
+        sections = split_capabilities(text)
+    except ValueError:
+        return False
+    return bool(sections) and all(map(valid_requirement_text, sections.values()))
+
+
+def requirement_texts(change_dir: Path) -> dict[str, str]:
+    """``{capability: delta}`` for a change or a component.
+
+    Read from ``specs.md`` (``split_capabilities``) when it exists, else from
+    ``requirements/*.md`` sorted by name, the file stem being the capability.
+    ``{}`` when there is neither. Raises ValueError as ``split_capabilities``
+    does, and OSError when a file cannot be read.
+    """
+    change_dir = Path(change_dir)
+    specs = change_dir / "specs.md"
+    if specs.is_file():
+        return split_capabilities(specs.read_text())
+    delta_dir = change_dir / "requirements"
+    if not delta_dir.is_dir():
+        return {}
+    return {p.stem: p.read_text() for p in sorted(delta_dir.glob("*.md"))}
+
+
+def capabilities(change_dir: Path) -> list[str]:
+    """The capability names of a change or a component: the keys of
+    ``requirement_texts``, or, when it has none, ``expected_capabilities`` of
+    the ``proposal.md`` in *change_dir* (``[]`` without one)."""
+    names = list(requirement_texts(change_dir))
+    if names:
+        return names
+    proposal = Path(change_dir) / "proposal.md"
+    return expected_capabilities(proposal.read_text()) if proposal.is_file() else []
+
+
 # --- merging a change's requirements into the registry ----------------------
 
 _DELTA_OPS = ("ADDED", "MODIFIED", "REMOVED", "RENAMED")
@@ -300,24 +408,39 @@ def apply_delta(main: str, delta: str) -> str:
     return main.strip() + "\n"
 
 
+def _component_order(change_dir: Path) -> list[Path]:
+    """``component_dirs(change_dir)`` in the order of the first column of the
+    ``components.md`` table, then any it does not list, sorted."""
+    dirs = {d.name: d for d in component_dirs(change_dir)}
+    table = Path(change_dir) / "components.md"
+    listed = (
+        re.findall(r"^\|\s*`?([^|`\s]+)`?\s*\|", table.read_text(), re.MULTILINE)
+        if table.is_file()
+        else []
+    )
+    ordered = [dirs.pop(name) for name in dict.fromkeys(listed) if name in dirs]
+    return ordered + sorted(dirs.values())
+
+
 def merge_delta_requirements(change_dir: Path, registry_dir: Path) -> None:
     """Merge delta requirements from a change into the main registry.
 
-    Reads flat files from changes/<name>/requirements/<capability>.md and
-    merges them into registry/<capability>.md: a capability with no registry
-    file gets the delta copied as-is, any other gets ``apply_delta``. Does
-    nothing when the change has no ``requirements/`` directory.
+    Merges ``requirement_texts(change_dir)``, then that of each of its
+    ``component_dirs``, in ``components.md`` table order (sorted when the
+    table does not list one), into registry/<capability>.md: a capability
+    with no registry file gets the delta copied as-is, any other gets
+    ``apply_delta``. Does nothing when there is no delta. Every delta is read
+    before the first registry file is written, so a ValueError from
+    ``requirement_texts`` leaves the registry as it was.
     """
-    delta_dir = change_dir / "requirements"
-    if not delta_dir.exists():
-        return
-
-    registry_dir.mkdir(parents=True, exist_ok=True)
-    for delta_file in sorted(delta_dir.glob("*.md")):
-        capability_name = delta_file.stem
+    deltas = [
+        delta
+        for source in [Path(change_dir), *_component_order(change_dir)]
+        for delta in requirement_texts(source).items()
+    ]
+    for capability_name, delta_content in deltas:
+        registry_dir.mkdir(parents=True, exist_ok=True)
         target_file = registry_dir / f"{capability_name}.md"
-
-        delta_content = delta_file.read_text()
         if not target_file.exists():
             # New capability — copy the delta as the main registry file
             target_file.write_text(delta_content)
@@ -342,7 +465,8 @@ def archive_change(
 
     Moves change to <specs_dir>/archive/YYYY-MM-DD-<name>/ (*today*, default
     ``date.today()``) and, with *merge_specs*, first merges its delta
-    requirements into <specs_dir>/registry/. Returns the archive path.
+    requirements and its components' into <specs_dir>/registry/
+    (``merge_delta_requirements``). Returns the archive path.
     """
     archive_dir = specs_dir / "archive"
     archive_dir.mkdir(parents=True, exist_ok=True)
@@ -415,16 +539,28 @@ def write_change_meta(change_dir: Path, updates: Mapping[str, Any]) -> dict[str,
 
 def spec_files(change_dir: Path) -> list[Path]:
     """The files ``spec_revision`` hashes, in the order it hashes them:
-    ``proposal.md``, ``use-cases.md`` and ``requirements/*.md`` (not
-    recursive), those that exist as files, sorted by their path relative to
-    *change_dir* in POSIX form."""
+    ``proposal.md`` and ``use-cases.md`` of ``change_root(change_dir)``, then
+    ``plan.md``, ``specs.md`` and ``requirements/*.md`` (not recursive) of
+    *change_dir*, those that exist as files, sorted by their path relative to
+    the change root in POSIX form.
+
+    For a change, the root is *change_dir*. For a component, it is the change
+    above it, so an edit to the change's proposal or use cases changes the
+    component's revision too.
+    """
     change_dir = Path(change_dir)
-    candidates = [change_dir / "proposal.md", change_dir / "use-cases.md"]
+    root = change_root(change_dir)
+    candidates = [
+        root / "proposal.md",
+        root / "use-cases.md",
+        change_dir / "plan.md",
+        change_dir / "specs.md",
+    ]
     req_dir = change_dir / "requirements"
     if req_dir.is_dir():
         candidates.extend(req_dir.glob("*.md"))
     files = [p for p in candidates if p.is_file()]
-    return sorted(files, key=lambda p: p.relative_to(change_dir).as_posix())
+    return sorted(files, key=lambda p: p.relative_to(root).as_posix())
 
 
 def spec_revision(change_dir: Path) -> str:
@@ -432,10 +568,14 @@ def spec_revision(change_dir: Path) -> str:
 
     The algorithm, exactly:
 
-    1. Take ``spec_files(change_dir)``: ``proposal.md``, ``use-cases.md`` and
-       ``requirements/*.md`` (not recursive) that exist as regular files.
-    2. Sort them by their path relative to *change_dir*, in POSIX form
-       (``proposal.md`` < ``requirements/a.md`` < ``use-cases.md``), comparing
+    1. Take ``spec_files(change_dir)``: ``proposal.md`` and ``use-cases.md``
+       of the change root (``change_root(change_dir)``, which is *change_dir*
+       except for a component), and ``plan.md``, ``specs.md`` and
+       ``requirements/*.md`` (not recursive) of *change_dir*, that exist as
+       regular files.
+    2. Sort them by their path relative to the change root, in POSIX form
+       (``components/a/plan.md`` < ``components/a/specs.md`` <
+       ``proposal.md`` < ``requirements/a.md`` < ``use-cases.md``), comparing
        the strings by code point.
     3. For each file, read its bytes and normalise line endings to LF:
        every ``\r\n`` becomes ``\n``, then every remaining ``\r`` becomes
@@ -452,10 +592,11 @@ def spec_revision(change_dir: Path) -> str:
     cannot be read.
     """
     change_dir = Path(change_dir)
+    root = change_root(change_dir)
     digest = hashlib.sha256()
     for path in spec_files(change_dir):
         content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        rel = path.relative_to(change_dir).as_posix().encode("utf-8")
+        rel = path.relative_to(root).as_posix().encode("utf-8")
         digest.update(rel + b"\0" + str(len(content)).encode("ascii") + b"\0" + content)
     return digest.hexdigest()
 
