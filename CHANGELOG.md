@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.26.1] – 2026-10-23
+
 ### Fixed
 
 - **`spec_files` / `spec_revision` no longer hash `plan.md` of an old-layout
@@ -1130,7 +1132,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/spikelab/multiplai-core/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/spikelab/multiplai-core/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/spikelab/multiplai-core/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/spikelab/multiplai-core/compare/v0.24.0...v0.24.1
