@@ -7,6 +7,7 @@ with `ChangeManager` replaced by the module-level functions and
 `cm.create_change` by a plain directory.
 """
 
+import shutil
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,7 +19,10 @@ from multiplai_core.specs import (
     apply_delta,
     archive_change,
     archived_change_dirs,
+    capabilities,
+    change_root,
     clear_spec_issues,
+    component_dirs,
     expected_capabilities,
     is_ready,
     mark_draft,
@@ -27,11 +31,14 @@ from multiplai_core.specs import (
     normalize_change_name,
     parse_requirements,
     read_change_meta,
+    requirement_texts,
     set_spec_issues,
     spec_files,
     spec_revision,
+    split_capabilities,
     valid_requirement,
     valid_requirement_text,
+    valid_specs_text,
     write_change_meta,
 )
 
@@ -669,3 +676,327 @@ class TestSpecIssues:
         clear_spec_issues(change)
         meta = read_change_meta(change)
         assert "spec_issues" in meta and meta["spec_issues"] is None
+
+
+# --- nested components and specs.md ---
+#
+# The samples are the auth-session change on the pm-spec workflow samples
+# page: two components, token-retry and timeout-setting, whose specs.md files
+# touch three capabilities.
+
+SESSION_LENGTH = (
+    "## ADDED Requirements\n\n"
+    "### Requirement: A session lasts the account's session length\n"
+    "A new session expires after the session length the admin set.\n\n"
+    "#### Scenario: Admin set 8 hours\n"
+    "- **WHEN** a user signs in on an account set to 8 hours\n"
+    "- **THEN** the session is still valid 7 hours 59 minutes later\n"
+)
+ACCOUNT_SETTINGS = (
+    "## MODIFIED Requirements\n\n"
+    "### Requirement: Only admins change account settings\n"
+    "Only an account admin changes the settings, now with the session length.\n\n"
+    "#### Scenario: Out-of-range session length\n"
+    "- **WHEN** an admin enters 20 hours\n"
+    "- **THEN** the value is refused\n"
+)
+SESSION_REFRESH = (
+    "## ADDED Requirements\n\n"
+    "### Requirement: Retry the refresh after the device wakes\n"
+    "A failed refresh right after a wake is retried, not treated as a logout.\n\n"
+    "#### Scenario: Network back after 5 seconds\n"
+    "- **WHEN** the refresh fails while the network comes back\n"
+    "- **THEN** the session is kept\n"
+)
+TIMEOUT_SPECS = (
+    f"# Capability: session-length\n\n{SESSION_LENGTH}\n"
+    f"# Capability: account-settings\n\n{ACCOUNT_SETTINGS}"
+)
+COMPONENTS_TABLE = (
+    "# Components: Stop logging people out in the middle of a task\n\n"
+    "| Component        | Depends on   | Ticket  |\n"
+    "|------------------|--------------|---------|\n"
+    "| token-retry      |              | pending |\n"
+    "| timeout-setting  | token-retry  | pending |\n"
+)
+
+
+def _component(change: Path, name: str, specs: str | None = None) -> Path:
+    d = change / "components" / name
+    d.mkdir(parents=True)
+    (d / "plan.md").write_text(f"# Plan: {name}\n")
+    (d / ".change.yaml").write_text("depends_on: []\n")
+    if specs is not None:
+        (d / "specs.md").write_text(specs)
+    return d
+
+
+@pytest.fixture
+def nested(specs_dir):
+    """auth-session with both components, as at handoff."""
+    change = _change(specs_dir, "auth-session")
+    (change / "proposal.md").write_text("## Why\nPeople get logged out.\n")
+    (change / "use-cases.md").write_text("## Use cases\n- Ana keeps her form\n")
+    (change / "components.md").write_text(COMPONENTS_TABLE)
+    _component(
+        change, "token-retry", f"# Capability: session-refresh\n\n{SESSION_REFRESH}"
+    )
+    _component(change, "timeout-setting", TIMEOUT_SPECS)
+    return change
+
+
+class TestComponentDirs:
+    def test_sorted_dirs_that_hold_a_plan(self, nested):
+        (nested / "components" / "no-plan").mkdir()
+        (nested / "components" / "stray.md").write_text("x")
+        assert component_dirs(nested) == [
+            nested / "components" / "timeout-setting",
+            nested / "components" / "token-retry",
+        ]
+
+    def test_none_without_components(self, change):
+        assert component_dirs(change) == []
+        assert component_dirs(change / "missing") == []
+
+
+class TestChangeRoot:
+    def test_component_belongs_to_its_change(self, nested):
+        assert change_root(nested / "components" / "token-retry") == nested
+
+    def test_a_change_is_its_own_root(self, nested, change):
+        assert change_root(nested) == nested
+        assert change_root(change) == change, "old layout"
+
+    def test_needs_the_changes_dir_above(self, tmp_path):
+        stray = tmp_path / "x" / "components" / "y"
+        assert change_root(stray) == stray
+        named = tmp_path / "specs" / "changes" / "components"
+        assert change_root(named) == named
+
+
+class TestSplitCapabilities:
+    def test_sections_in_file_order_are_todays_delta_files(self):
+        sections = split_capabilities(TIMEOUT_SPECS)
+        assert list(sections) == ["session-length", "account-settings"]
+        assert sections == {
+            "session-length": SESSION_LENGTH,
+            "account-settings": ACCOUNT_SETTINGS,
+        }
+
+    def test_text_before_the_first_heading_is_ignored(self):
+        assert split_capabilities("Intro\n## ADDED Requirements\n" + TIMEOUT_SPECS) == (
+            split_capabilities(TIMEOUT_SPECS)
+        )
+        assert split_capabilities("no headings\n") == {}
+
+    def test_heading_in_a_comment_is_not_a_section(self):
+        text = "<!--\n# Capability: <name>\n-->\n" + TIMEOUT_SPECS
+        assert list(split_capabilities(text)) == ["session-length", "account-settings"]
+
+    def test_empty_section(self):
+        assert split_capabilities("# Capability: a\n\n# Capability: b\nx\n") == {
+            "a": "",
+            "b": "x\n",
+        }
+
+    def test_repeated_name_is_an_error(self):
+        with pytest.raises(ValueError, match="'session-length' appears twice"):
+            split_capabilities(TIMEOUT_SPECS + "\n# Capability: session-length\n")
+
+    def test_name_that_is_not_kebab_case_is_an_error(self):
+        with pytest.raises(ValueError, match="'Session length' is not kebab-case"):
+            split_capabilities("# Capability: Session length\n" + SESSION_LENGTH)
+
+
+class TestValidSpecsText:
+    def test_every_section_valid(self):
+        assert valid_specs_text(TIMEOUT_SPECS)
+
+    def test_one_invalid_section_fails_it(self):
+        assert not valid_specs_text(
+            TIMEOUT_SPECS + "\n# Capability: other\n\n## ADDED Requirements\n\n"
+            "### Requirement: No scenario\nText.\n"
+        )
+        assert not valid_specs_text(TIMEOUT_SPECS + "\n# Capability: empty\n")
+
+    def test_needs_a_section(self):
+        assert not valid_specs_text(SESSION_LENGTH), "a delta with no heading"
+        assert not valid_specs_text("")
+
+    def test_split_error_is_false(self):
+        assert not valid_specs_text(TIMEOUT_SPECS + TIMEOUT_SPECS)
+
+
+class TestRequirementTexts:
+    def test_reads_specs_md(self, nested):
+        assert requirement_texts(nested / "components" / "timeout-setting") == {
+            "session-length": SESSION_LENGTH,
+            "account-settings": ACCOUNT_SETTINGS,
+        }
+
+    def test_old_layout_reads_requirements_sorted(self, specs_dir):
+        change = _change(specs_dir, "old")
+        (change / "requirements").mkdir()
+        (change / "requirements" / "b.md").write_text(SESSION_LENGTH)
+        (change / "requirements" / "a.md").write_text(ACCOUNT_SETTINGS)
+        (change / "requirements" / "notes.txt").write_text("x")
+        texts = requirement_texts(change)
+        assert list(texts) == ["a", "b"]
+        assert texts == {"a": ACCOUNT_SETTINGS, "b": SESSION_LENGTH}
+
+    def test_specs_md_wins_over_requirements(self, change):
+        (change / "specs.md").write_text(TIMEOUT_SPECS)
+        assert list(requirement_texts(change)) == ["session-length", "account-settings"]
+
+    def test_neither_is_empty(self, nested):
+        assert requirement_texts(nested) == {}
+
+
+class TestCapabilities:
+    def test_from_specs_md(self, nested):
+        assert capabilities(nested / "components" / "timeout-setting") == [
+            "session-length",
+            "account-settings",
+        ]
+
+    def test_old_layout_from_requirements(self, change):
+        (change / "requirements" / "billing.md").write_text(SESSION_LENGTH)
+        assert capabilities(change) == ["auth", "billing"]
+
+    def test_falls_back_to_the_proposal(self, change):
+        shutil.rmtree(change / "requirements")
+        assert capabilities(change) == ["auth"]
+
+    def test_nothing(self, nested, tmp_path):
+        assert capabilities(nested) == []
+        assert capabilities(tmp_path) == []
+
+
+class TestNestedMerge:
+    def test_archive_merges_two_components_into_three_registry_files(
+        self, specs_dir, nested
+    ):
+        registry = specs_dir / "registry"
+        (registry / "account-settings.md").write_text(
+            "### Requirement: Only admins change account settings\nOld text.\n\n"
+            "#### Scenario: Non-admin\n- **WHEN** a member opens settings\n"
+            "- **THEN** they are refused\n"
+        )
+        (registry / "session-refresh.md").write_text(
+            "### Requirement: Refresh before expiry\nRefreshes.\n\n"
+            "#### Scenario: Near expiry\n- **WHEN** 1 minute is left\n"
+            "- **THEN** the token is refreshed\n"
+        )
+        dest = archive_change(nested, specs_dir, today=date(2026, 10, 23))
+        assert dest == specs_dir / "archive" / "2026-10-23-auth-session"
+        assert sorted(p.name for p in registry.iterdir()) == [
+            "account-settings.md",
+            "session-length.md",
+            "session-refresh.md",
+        ]
+        account = (registry / "account-settings.md").read_text()
+        assert "now with the session length" in account and "Old text." not in account
+        assert (registry / "session-length.md").read_text() == SESSION_LENGTH
+        refresh = (registry / "session-refresh.md").read_text()
+        assert refresh.index("Refresh before expiry") < refresh.index(
+            "Retry the refresh after the device wakes"
+        )
+
+    def _three_adding(self, specs_dir, table: str | None) -> Path:
+        change = _change(specs_dir, "ordered")
+        if table is not None:
+            (change / "components.md").write_text(table)
+        for name in ("alpha", "beta", "gamma"):
+            _component(
+                change,
+                name,
+                f"# Capability: shared\n\n## ADDED Requirements\n\n"
+                f"### Requirement: From {name}\nText.\n",
+            )
+        return change
+
+    def _order(self, registry: Path) -> list[str]:
+        return [
+            line.removeprefix("### Requirement: From ")
+            for line in (registry / "shared.md").read_text().splitlines()
+            if line.startswith("### Requirement:")
+        ]
+
+    def test_components_md_order_then_unlisted_sorted(self, specs_dir):
+        change = self._three_adding(
+            specs_dir,
+            "| Component | Depends on | Ticket |\n|---|---|---|\n"
+            "| `gamma` | | pending |\n| alpha | gamma | pending |\n",
+        )
+        merge_delta_requirements(change, specs_dir / "registry")
+        assert self._order(specs_dir / "registry") == ["gamma", "alpha", "beta"]
+
+    def test_sorted_without_components_md(self, specs_dir):
+        change = self._three_adding(specs_dir, None)
+        merge_delta_requirements(change, specs_dir / "registry")
+        assert self._order(specs_dir / "registry") == ["alpha", "beta", "gamma"]
+
+    def test_single_component_change_merges_its_own_specs_md(self, specs_dir):
+        change = _change(specs_dir, "single")
+        (change / "plan.md").write_text("# Plan\n")
+        (change / "specs.md").write_text(TIMEOUT_SPECS)
+        merge_delta_requirements(change, specs_dir / "registry")
+        assert sorted(p.name for p in (specs_dir / "registry").iterdir()) == [
+            "account-settings.md",
+            "session-length.md",
+        ]
+
+    def test_a_bad_specs_md_writes_nothing(self, specs_dir, nested):
+        (nested / "components" / "token-retry" / "specs.md").write_text(
+            TIMEOUT_SPECS + TIMEOUT_SPECS
+        )
+        with pytest.raises(ValueError):
+            merge_delta_requirements(nested, specs_dir / "registry")
+        assert list((specs_dir / "registry").iterdir()) == []
+
+
+class TestComponentRevision:
+    def test_files_are_the_roots_what_documents_and_the_components(self, nested):
+        component = nested / "components" / "token-retry"
+        assert [p.relative_to(nested).as_posix() for p in spec_files(component)] == [
+            "components/token-retry/plan.md",
+            "components/token-retry/specs.md",
+            "proposal.md",
+            "use-cases.md",
+        ]
+        import hashlib
+
+        h = hashlib.sha256()
+        for p in spec_files(component):
+            rel, data = p.relative_to(nested).as_posix(), p.read_bytes()
+            h.update(rel.encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
+        assert spec_revision(component) == h.hexdigest()
+
+    def test_change_root_hashes_its_plan_and_specs_md(self, change):
+        (change / "plan.md").write_text("# Plan\n")
+        (change / "specs.md").write_text(TIMEOUT_SPECS)
+        assert [p.relative_to(change).as_posix() for p in spec_files(change)] == [
+            "plan.md",
+            "proposal.md",
+            "requirements/auth.md",
+            "specs.md",
+            "use-cases.md",
+        ]
+
+    @pytest.mark.parametrize(
+        "rel", ["proposal.md", "use-cases.md", "components/token-retry/plan.md"]
+    )
+    def test_an_edit_makes_a_ready_component_stale(self, nested, rel):
+        component = nested / "components" / "token-retry"
+        mark_ready(component)
+        assert is_ready(component) == (True, "")
+        (nested / rel).write_text((nested / rel).read_text() + "More.\n")
+        ok, reason = is_ready(component)
+        assert not ok and reason.startswith("the specs changed")
+
+    def test_the_other_components_files_do_not_count(self, nested):
+        component = nested / "components" / "token-retry"
+        before = spec_revision(component)
+        (nested / "components" / "timeout-setting" / "specs.md").write_text("x")
+        (nested / "components.md").write_text("changed")
+        assert spec_revision(component) == before

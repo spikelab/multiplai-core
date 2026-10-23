@@ -56,6 +56,36 @@ not backfilled; their contents are recoverable from `git log`.
   yourself, you can switch to these; nothing you use today changes. No new
   dependency: `pyyaml` already was one.
 
+- **`multiplai_core.specs` reads a change split into components, and a
+  `specs.md` that holds every capability of a change or component.** A
+  change with several components keeps each under
+  `specs/changes/<change>/components/<id>/`, with its own `plan.md`,
+  `specs.md` and `.change.yaml`, listed in `components.md`. A change with one
+  component has `plan.md` and `specs.md` in its own directory. `specs.md` is
+  one delta per capability, each under a `# Capability: <name>` heading. The
+  `requirements/<cap>.md` layout is still read by every function. All names
+  below are also exported from `multiplai_core`.
+  - `component_dirs(change_dir)` lists the `components/*/` directories that
+    hold a `plan.md`, sorted. `change_root(dir)` gives the change above a
+    component, where its proposal, use cases and prototype are.
+  - `split_capabilities(text)` splits a `specs.md` into
+    `{capability: delta}`; a repeated or non-kebab-case name raises
+    ValueError. `valid_specs_text(text)` is `valid_requirement_text` applied
+    to each section. `requirement_texts(change_dir)` reads `specs.md`, or
+    else `requirements/*.md`, and `capabilities(change_dir)` lists their
+    names, falling back to the proposal's `## Capabilities`. **If you read
+    `requirements/` yourself, switch to `requirement_texts` to read both
+    layouts.**
+  - `merge_delta_requirements` (and so `archive_change`) also merges each
+    component, in `components.md` order, and reads every delta before
+    writing any registry file.
+  - `spec_files` / `spec_revision` also hash `plan.md` and `specs.md`. A
+    component's revision includes its change's `proposal.md` and
+    `use-cases.md`, hashed by path relative to the change, so editing either
+    makes the component's ready record stale. **A change marked ready with a
+    `plan.md` beside it reads as changed after you move to this commit; mark
+    it ready again.** A change without those files hashes as before.
+
 ### Changed
 
 - **Tooling only — no public API or behaviour change.** The code is now linted
