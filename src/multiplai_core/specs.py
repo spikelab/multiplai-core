@@ -547,15 +547,19 @@ def spec_files(change_dir: Path) -> list[Path]:
     For a change, the root is *change_dir*. For a component, it is the change
     above it, so an edit to the change's proposal or use cases changes the
     component's revision too.
+
+    ``plan.md`` counts only in the new layout: for a component, or for a
+    change dir that holds a ``specs.md``. A change in the old layout
+    (``requirements/``, no ``specs.md``) that also holds a ``plan.md`` was
+    marked ready by core before 0.26.0 without its plan hashed, and hashing
+    it now would make every such ready record read as stale.
     """
     change_dir = Path(change_dir)
     root = change_root(change_dir)
-    candidates = [
-        root / "proposal.md",
-        root / "use-cases.md",
-        change_dir / "plan.md",
-        change_dir / "specs.md",
-    ]
+    candidates = [root / "proposal.md", root / "use-cases.md"]
+    if root != change_dir or (change_dir / "specs.md").is_file():
+        candidates.append(change_dir / "plan.md")
+    candidates.append(change_dir / "specs.md")
     req_dir = change_dir / "requirements"
     if req_dir.is_dir():
         candidates.extend(req_dir.glob("*.md"))
@@ -572,7 +576,8 @@ def spec_revision(change_dir: Path) -> str:
        of the change root (``change_root(change_dir)``, which is *change_dir*
        except for a component), and ``plan.md``, ``specs.md`` and
        ``requirements/*.md`` (not recursive) of *change_dir*, that exist as
-       regular files.
+       regular files. ``plan.md`` is taken only for a component or when
+       *change_dir* holds a ``specs.md`` (see ``spec_files``).
     2. Sort them by their path relative to the change root, in POSIX form
        (``components/a/plan.md`` < ``components/a/specs.md`` <
        ``proposal.md`` < ``requirements/a.md`` < ``use-cases.md``), comparing

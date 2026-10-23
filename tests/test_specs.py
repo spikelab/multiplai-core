@@ -983,6 +983,35 @@ class TestComponentRevision:
             "use-cases.md",
         ]
 
+    def test_old_layout_plan_md_is_not_hashed(self, change):
+        (change / "plan.md").write_text("# Plan\n")
+        assert [p.relative_to(change).as_posix() for p in spec_files(change)] == [
+            "proposal.md",
+            "requirements/auth.md",
+            "use-cases.md",
+        ]
+
+    def test_old_ready_record_on_old_layout_with_plan_md_stays_ready(self, change):
+        # Core before 0.26.0 hashed proposal, use cases and requirements/*.md
+        # only. A pm-spec 0.7.2 epic child or a --plan-file change also holds
+        # plan.md; the record written then must still match.
+        import hashlib
+
+        h = hashlib.sha256()
+        for rel in ("proposal.md", "requirements/auth.md", "use-cases.md"):
+            data = (change / rel).read_bytes()
+            h.update(rel.encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
+        write_change_meta(
+            change,
+            {
+                "spec_status": "ready",
+                "spec_revision": h.hexdigest(),
+                "spec_ready_at": "2026-10-01T09:00:00+00:00",
+            },
+        )
+        (change / "plan.md").write_text("# Plan: A\n\n## Done means\n1. x\n")
+        assert is_ready(change) == (True, "")
+
     @pytest.mark.parametrize(
         "rel", ["proposal.md", "use-cases.md", "components/token-retry/plan.md"]
     )
