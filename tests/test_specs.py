@@ -265,6 +265,36 @@ class TestApplyDelta:
         )
         assert apply_delta(main, delta) == "### Requirement: New\nnew\n"
 
+    def test_removing_a_requirement_keeps_one_whose_name_extends_it(self):
+        main = (
+            "### Requirement: Login\nlogin\n\n### Requirement: Login timeout\ntimeout\n"
+        )
+        delta = "## REMOVED Requirements\n\n### Requirement: Login\n"
+        assert apply_delta(main, delta) == "### Requirement: Login timeout\ntimeout\n"
+
+    def test_modifying_a_requirement_keeps_one_whose_name_extends_it(self):
+        main = (
+            "### Requirement: Login\nold\n\n### Requirement: Login timeout\ntimeout\n"
+        )
+        delta = "## MODIFIED Requirements\n\n### Requirement: Login\nnew\n"
+        assert (
+            apply_delta(main, delta)
+            == "### Requirement: Login\nnew\n\n### Requirement: Login timeout\ntimeout\n"
+        )
+
+    def test_removing_the_last_requirement_keeps_the_next_section(self):
+        main = "### Requirement: A\na\n\n### Requirement: B\nb\n\n## Notes\nnotes\n"
+        delta = "## REMOVED Requirements\n\n### Requirement: B\n"
+        assert apply_delta(main, delta) == "### Requirement: A\na\n\n## Notes\nnotes\n"
+
+    def test_modifying_the_last_requirement_keeps_the_next_section(self):
+        main = "### Requirement: A\na\n\n### Requirement: B\nold\n\n## Notes\nnotes\n"
+        delta = "## MODIFIED Requirements\n\n### Requirement: B\nnew\n"
+        assert (
+            apply_delta(main, delta)
+            == "### Requirement: A\na\n\n### Requirement: B\nnew\n\n## Notes\nnotes\n"
+        )
+
     def test_result_ends_with_one_newline(self):
         assert (
             apply_delta("### Requirement: A\na\n\n\n", "") == "### Requirement: A\na\n"
