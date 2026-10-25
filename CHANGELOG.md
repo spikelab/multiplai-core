@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.26.2] – 2026-10-25
+
 ### Fixed
 
 - **`apply_delta` removes or replaces only the requirement it names.** A
@@ -1142,7 +1144,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.26.1...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.26.2...HEAD
+[0.26.2]: https://github.com/spikelab/multiplai-core/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/spikelab/multiplai-core/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/spikelab/multiplai-core/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/spikelab/multiplai-core/compare/v0.24.1...v0.25.0
