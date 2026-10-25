@@ -18,6 +18,16 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`apply_delta` removes or replaces only the requirement it names.** A
+  REMOVED or MODIFIED entry for "Login" also matched "Login timeout", because
+  the name was matched as a prefix of the heading; it now has to match the
+  whole heading. A block also used to run to the next requirement or the end of
+  the file, so removing or modifying the last requirement deleted any `## `
+  section after it (`## Notes`, say). A block now ends at the next `## `
+  heading too. No signature changes.
+
 ## [0.26.1] – 2026-10-23
 
 ### Fixed

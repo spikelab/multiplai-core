@@ -352,14 +352,25 @@ def _delta_section(delta: str, op: str) -> re.Match | None:
     )
 
 
+def _requirement_block(name: str) -> re.Pattern[str]:
+    """The block whose ``### Requirement:`` heading is exactly *name*, up to the
+    next requirement heading, the next ``## `` heading or the end."""
+    return re.compile(
+        rf"^### Requirement:[ \t]*{re.escape(name)}[ \t]*$.*?"
+        rf"(?=^### Requirement:|^## |\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+
+
 def apply_delta(main: str, delta: str) -> str:
     """Apply delta spec operations (ADDED/MODIFIED/REMOVED) to main spec.
 
     In this order: the ADDED section's text is appended to *main*; each
     requirement named under REMOVED is deleted from *main*; each requirement
     under MODIFIED replaces the block of the same name in *main*. A block runs
-    from its ``### Requirement:`` heading to the next one or the end, and is
-    matched by name as a prefix of the heading text. RENAMED is not applied.
+    from its ``### Requirement:`` heading to the next one, the next ``## ``
+    heading or the end, and is matched by its whole name: removing "Login"
+    leaves "Login timeout" in place. RENAMED is not applied.
     The result ends with exactly one newline.
     """
     # Extract ADDED requirements — append to main
@@ -375,11 +386,7 @@ def apply_delta(main: str, delta: str) -> str:
         removed_block = removed_match.group(1)
         req_names = re.findall(r"### Requirement:\s*(.+)", removed_block)
         for name in req_names:
-            pattern = re.compile(
-                rf"### Requirement:\s*{re.escape(name.strip())}.*?"
-                rf"(?=### Requirement:|\Z)",
-                re.DOTALL,
-            )
+            pattern = _requirement_block(name.strip())
             main = pattern.sub("", main)
 
     # Extract MODIFIED requirements — replace matching blocks
@@ -392,11 +399,7 @@ def apply_delta(main: str, delta: str) -> str:
             if not name_match:
                 continue
             name = name_match.group(1).strip()
-            pattern = re.compile(
-                rf"### Requirement:\s*{re.escape(name)}.*?"
-                rf"(?=### Requirement:|\Z)",
-                re.DOTALL,
-            )
+            pattern = _requirement_block(name)
             # Use a function replacement so backslash sequences in the
             # requirement text (e.g. a regex like `\d+` or `\1` in a BDD
             # scenario) are inserted literally instead of being interpreted
