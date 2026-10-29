@@ -358,6 +358,61 @@ class TestOptionsIsolation:
         assert opts.model == "claude-x"
 
 
+class TestPromptCacheTtl:
+    """multiplai.conf's ``agent_prompt_cache_ttl`` reaches the CLI as
+    ``CLAUDE_CODE_PROMPT_CACHE_TTL``; unset, nothing is added."""
+
+    @pytest.fixture
+    def conf(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
+        monkeypatch.delenv("CLAUDE_CODE_PROMPT_CACHE_TTL", raising=False)
+
+        def _write(text: str) -> None:
+            (tmp_path / "multiplai.conf").write_text(text)
+
+        return _write
+
+    def _env(self, **kwargs):
+        mock_sdk = _make_mock_sdk()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock_sdk}):
+            _run(run_agent("hi", **kwargs))
+        return mock_sdk.query.call_args.kwargs["options"].env
+
+    def test_unset_by_default(self, conf):
+        conf("MULTIPLAI_MODEL=opus\n")
+        assert "CLAUDE_CODE_PROMPT_CACHE_TTL" not in self._env()
+
+    def test_conf_key_sets_it(self, conf):
+        conf("agent_prompt_cache_ttl = 5m\n")
+        env = self._env()
+        assert env["CLAUDE_CODE_PROMPT_CACHE_TTL"] == "5m"
+        assert list(env)[-1] == "_HOOK_CHILD_SESSION"
+
+    def test_blank_value_counts_as_unset(self, conf):
+        conf("agent_prompt_cache_ttl =\n")
+        assert "CLAUDE_CODE_PROMPT_CACHE_TTL" not in self._env()
+
+    def test_a_callers_env_wins(self, conf):
+        conf("agent_prompt_cache_ttl = 5m\n")
+        env = self._env(env={"CLAUDE_CODE_PROMPT_CACHE_TTL": "1h", "FOO": "bar"})
+        assert env["CLAUDE_CODE_PROMPT_CACHE_TTL"] == "1h"
+        assert env["FOO"] == "bar"
+        assert list(env)[-1] == "_HOOK_CHILD_SESSION"
+        assert env["_HOOK_CHILD_SESSION"] == "1"
+
+    def test_a_value_already_exported_is_not_replaced(self, conf, monkeypatch):
+        """The SDK lets ``options.env`` override the inherited environment, so
+        run_agent leaves the key out and the exported value reaches the CLI."""
+        conf("agent_prompt_cache_ttl = 5m\n")
+        monkeypatch.setenv("CLAUDE_CODE_PROMPT_CACHE_TTL", "1h")
+        assert "CLAUDE_CODE_PROMPT_CACHE_TTL" not in self._env()
+
+    def test_guard_still_wins_over_the_callers_env(self, conf):
+        conf("agent_prompt_cache_ttl = 5m\n")
+        env = self._env(env={"_HOOK_CHILD_SESSION": ""})
+        assert env["_HOOK_CHILD_SESSION"] == "1"
+
+
 class TestUnknownMessageSkip:
     def test_skips_unknown_message_types(self):
         class _UnknownThenGood:
