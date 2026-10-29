@@ -22,7 +22,7 @@ own drifting copy:
 | `multiplai_core.aio` | `hard_timeout()` and async task helpers. |
 | `multiplai_core.log_utils` | `setup_logging(component)`, `log_event(...)` — ISO-8601 UTC, one file per component per day, kept 365 days unless `MULTIPLAI_LOG_RETENTION_DAYS` (environment, then `multiplai.conf`) says otherwise; `0` keeps them forever. `hook-errors.log` moves to `hook-errors-YYYY-MM-DD.log` each day and is never shortened. `hook_run(name, logger)` / `HookRun` — ENTRY/EXIT timing pair that makes a killed hook diagnosable. |
 | `multiplai_core.model_client` | `create_client()` — Agent SDK first, Anthropic API fallback — plus the [provider seam](#provider-seam) (`create_client_for`, `register_provider`). |
-| `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting), and the [agent backend](#agent-backends) registry (`register_agent_backend`). A hit Claude usage limit raises `UsageLimitError` and is never retried; `is_usage_limit(exc)` recognises it through a wrapper. |
+| `multiplai_core.agent_runner` | `run_agent()` — the single SDK agent invocation path (isolation flags, hard timeout, stderr capture, big-prompt fallback, retry, usage/files-changed reporting). Connection errors and HTTP 5xx are retried with backoff for up to 15 minutes, whatever `max_attempts` says, and the [agent backend](#agent-backends) registry (`register_agent_backend`). A hit Claude usage limit raises `UsageLimitError` and is never retried; `is_usage_limit(exc)` recognises it through a wrapper. |
 | `multiplai_core.pi` | The `pi` agent backend: `run_agent(model="pi:<model-id>@<provider>")` through `pi --mode rpc`. Imported on first use only. |
 | `multiplai_core.structured` | `parse_answer()` / `reformat_prompt()` — validate an agent's answer against a pydantic schema, and build the no-tools re-ask that reformats one that did not parse. No call loop: the retry policy stays in each pipeline. |
 | `multiplai_core.budget` | `SpendLedger` — per-run token and cost ledger with a circuit breaker (`BudgetExceededError`), checkpointable spend, and ContextVar helpers (`start`/`get`/`record`/`check`) for one ledger per asyncio task. |
@@ -270,6 +270,12 @@ Sonnet/Opus, 2048 for Haiku), and the gate is on **bytes** to avoid a tokenizer
 dependency — ~2 bytes/token is a deliberately conservative floor, so the
 breakpoint is only skipped on prompts that could not have been cached anyway.
 This changes billing, not behaviour: responses are identical.
+
+`agent_prompt_cache_ttl` in `multiplai.conf` (for example `5m` or `1h`) sets
+`CLAUDE_CODE_PROMPT_CACHE_TTL` for every `run_agent` child on the Agent-SDK
+path. It is unset by default, so the CLI keeps its own default. A
+`CLAUDE_CODE_PROMPT_CACHE_TTL` the caller passes in `env=`, or one already in
+the process environment, wins over it.
 
 ## Develop
 

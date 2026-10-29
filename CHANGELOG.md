@@ -18,6 +18,28 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`run_agent` retries connection errors and HTTP 5xx for up to 15 minutes.**
+  When the CLI's error result says the request could not reach the API
+  (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `EPIPE`, `ECONNABORTED`,
+  `ENETUNREACH`, `ENETDOWN`, `EHOSTUNREACH`, `EHOSTDOWN`) or the server answered
+  5xx (including "Repeated 529 Overloaded errors"), `run_agent` waits 10 s,
+  doubling up to 60 s, and tries again, until 15 minutes have passed since the
+  first such failure in that call. This happens with the default
+  `max_attempts=1`, and these retries do not use up `max_attempts`. A usage
+  limit still raises `UsageLimitError` at once, and every other failure
+  (timeouts, 4xx, `ECONNREFUSED`, SSL errors) is retried only as
+  `max_attempts` says, as before. A caller that wraps `run_agent` in its own
+  retry loop may now wait up to 15 minutes longer before an outage reaches it.
+  `AgentRunError.attempts` and the "after N attempt(s)" text now count every
+  attempt made, network retries included. No signature changes.
+- **`agent_prompt_cache_ttl` in `multiplai.conf`** sets
+  `CLAUDE_CODE_PROMPT_CACHE_TTL` (for example `5m`) for every `run_agent`
+  child on the Agent-SDK path. Unset by default, so nothing changes until you
+  set it. A value passed in `env=`, or already in the process environment,
+  wins over it, and `_HOOK_CHILD_SESSION` is still merged last.
+
 ## [0.26.2] – 2026-10-25
 
 ### Fixed
