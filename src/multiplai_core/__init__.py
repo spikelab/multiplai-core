@@ -315,7 +315,7 @@ def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__) | set(_LAZY_ATTRS))
 
 
-__version__ = "0.26.2"
+__version__ = "0.27.0"
 
 __all__ = [
     # agent runner
