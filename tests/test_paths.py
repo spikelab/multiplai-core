@@ -38,7 +38,7 @@ class TestPluginEnvResolution:
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
-        assert p.plugin_root() == Path("/home/user/.claude/plugins/multiplai")
+        assert p.plugin_root() == Path("/home/user/.claude/plugins/multiplai").resolve()
 
     def test_resolve_plugin_data_from_env(self, monkeypatch, reset_paths_cache):
         """Scenario: Resolve plugin data directory from environment."""
@@ -49,7 +49,10 @@ class TestPluginEnvResolution:
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
-        assert p.plugin_data() == Path("/home/user/.claude/plugins/multiplai/data")
+        assert (
+            p.plugin_data()
+            == Path("/home/user/.claude/plugins/multiplai/data").resolve()
+        )
 
     def test_resolve_memory_dir_from_env(self, monkeypatch, reset_paths_cache):
         """Scenario: Resolve user-configured memory directory."""
@@ -60,7 +63,7 @@ class TestPluginEnvResolution:
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
-        assert p.memory_dir() == Path("/home/user/custom-memory")
+        assert p.memory_dir() == Path("/home/user/custom-memory").resolve()
 
     def test_resolve_diary_dir_from_env(self, monkeypatch, reset_paths_cache):
         """Scenario: Resolve user-configured diary directory."""
@@ -69,7 +72,7 @@ class TestPluginEnvResolution:
         from multiplai_core.paths import Paths
 
         p = Paths.resolve()
-        assert p.diary_dir() == Path("/home/user/custom-diary")
+        assert p.diary_dir() == Path("/home/user/custom-diary").resolve()
 
 
 # ---------------------------------------------------------------------------
