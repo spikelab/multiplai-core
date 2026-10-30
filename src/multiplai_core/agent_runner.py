@@ -29,6 +29,10 @@ Every invocation always gets the isolation/hardening bundle:
   integrations; without it the nested CLI attempts non-interactive OAuth and
   exits 1 with no usable stderr (verified root cause 2026-05-19).
 - ``env["_HOOK_CHILD_SESSION"]="1"`` — any hook that still loads skips work.
+  It is merged last, after the caller's ``env`` and after
+  ``CLAUDE_CODE_PROMPT_CACHE_TTL`` from multiplai.conf's
+  ``agent_prompt_cache_ttl`` (unset by default; the caller's ``env`` and the
+  process environment both win over it).
 - default ``cwd`` = ``$CLAUDE_CONFIG_DIR/hook-sessions`` — prevents project
   settings.json pickup and keeps child sessions out of the user's history.
 
@@ -37,6 +41,13 @@ denies ``Read``/``Grep``/``Glob``/``LS``/``NotebookRead`` calls whose path
 resolves outside the given folders. A hook's deny holds under
 ``bypassPermissions`` (verified 2026-10-16 with a real call on
 claude-agent-sdk 0.2.139).
+
+An attempt whose error result says a connection error (``EAI_AGAIN``,
+``ENOTFOUND``, ``ECONNRESET``, ...) or an HTTP 5xx is retried whatever
+``max_attempts`` says, with a wait of 10 s that doubles up to 60 s, until 15
+minutes have passed since the run's first such failure. Those retries do not
+use up ``max_attempts``. Nothing is saved between calls: a run killed while it
+waits keeps nothing, and the next call gets the whole 15 minutes again.
 
 Every run also logs an ``alive`` heartbeat at INFO while an attempt is in
 flight, every ``MULTIPLAI_AGENT_HEARTBEAT_S`` seconds (default 60; ``0`` or
@@ -78,7 +89,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from .aio import hard_timeout
-from .env import DEFAULT_PROVIDER, parse_model_spec
+from .env import DEFAULT_PROVIDER, load_multiplai_conf, parse_model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +114,18 @@ _STDERR_ERROR_CAPTURE_CAP = 200  # absolute cap on captured [ERROR] lines
 # "slow but producing" from "stalled with nothing".
 _HEARTBEAT_ENV = "MULTIPLAI_AGENT_HEARTBEAT_S"
 _HEARTBEAT_DEFAULT_S = 60.0
+
+# Connection errors and HTTP 5xx are retried, whatever ``max_attempts`` says,
+# until this many seconds have passed since the run's first such failure. The
+# wait between attempts starts at the first value and doubles up to the max.
+_NETWORK_RETRY_WINDOW_S = 900.0
+_NETWORK_BACKOFF_FIRST_S = 10.0
+_NETWORK_BACKOFF_MAX_S = 60.0
+
+# multiplai.conf key whose value run_agent passes to the CLI as
+# CLAUDE_CODE_PROMPT_CACHE_TTL (e.g. ``5m``). Unset by default.
+_CACHE_TTL_CONF_KEY = "agent_prompt_cache_ttl"
+_CACHE_TTL_ENV = "CLAUDE_CODE_PROMPT_CACHE_TTL"
 
 # CLI debug stderr on disk, per attempt. The in-memory capture above is only
 # summarized when an attempt ends, so a caller that is killed mid-call (a hook
@@ -505,6 +528,33 @@ def is_usage_limit(error: BaseException | str) -> bool:
     return False
 
 
+# The CLI's result text when a request failed on the network or the server,
+# as the bundled CLI (claude-agent-sdk 0.2.168) writes it: "API Error: " and
+# then either a 5xx status ("500 Internal server error. This is a server-side
+# issue, ..."), "Repeated 529 Overloaded errors", or a connection message that
+# ends in the socket error code ("Can't reach the API server — check your
+# internet or DNS (EAI_AGAIN)", "Connection dropped (ECONNRESET)"). Anchored
+# like _USAGE_LIMIT_RE, so the phrase quoted later in a result does not count.
+# ECONNREFUSED (a firewall or proxy), SSL errors and 4xx are left out: waiting
+# does not fix them.
+_NETWORK_ERROR_RE = re.compile(
+    r"\A(?:[^\n:]*error result:\s*)?API Error:\s*(?:"
+    r"5\d\d\b"
+    r"|Repeated 529\b"
+    r"|[^\n]*?\((?:EAI_AGAIN|ENOTFOUND|ECONNRESET|EPIPE|ECONNABORTED"
+    r"|ENETUNREACH|ENETDOWN|EHOSTUNREACH|EHOSTDOWN)\)"
+    r"|[^\n]*This is a server-side issue"
+    r")"
+)
+
+
+def _is_network_error(text: str) -> bool:
+    """Whether an agent's error text says the request failed on a connection
+    error or an HTTP 5xx. Reads the result text only, never the CLI's stderr:
+    its debug lines log EAI_AGAIN for telemetry even on runs that work."""
+    return bool(text) and _NETWORK_ERROR_RE.search(text) is not None
+
+
 AgentBackend = Callable[..., Awaitable["AgentRunResult"]]
 """An agent backend: ``async (prompt, *, <run_agent's keywords>) -> AgentRunResult``."""
 
@@ -839,7 +889,9 @@ async def run_agent(
         timeout_s: Hard wall-clock ceiling per attempt (``hard_timeout`` — a
             wedged CLI subprocess can block ``asyncio.wait_for`` forever).
         max_attempts: Total attempts; >1 turns the bundled CLI's intermittent
-            exit-1 into a transparent recovery.
+            exit-1 into a transparent recovery. Connection errors and HTTP 5xx
+            are retried for up to 15 minutes on top of this and do not count
+            against it (see the module docstring).
         label: Short identifier used in log lines to tell concurrent calls
             apart.
         component: Cost-ledger component tag (e.g. ``"buildme"``). When set,
@@ -860,7 +912,8 @@ async def run_agent(
 
     Raises:
         AgentRunTimeout: every attempt exceeded ``timeout_s``.
-        AgentRunError: every attempt failed for another reason, or the SDK is
+        AgentRunError: every attempt failed for another reason, connection
+            errors or HTTP 5xx went on past the 15-minute window, or the SDK is
             not importable. Carries ``.partial`` with whatever was consumed.
         UnknownAgentBackendError: ``model`` names a provider with no backend.
         UsageLimitError: the CLI reported a hit usage limit. Raised on that
@@ -936,7 +989,18 @@ async def run_agent(
     # Guard merged LAST so a caller's env can never clear it: the reversed
     # order ({guard, **env}) let env={"_HOOK_CHILD_SESSION": ""} disable the
     # fork-bomb guard.
-    run_env: dict[str, str] = {**(env or {}), "_HOOK_CHILD_SESSION": "1"}
+    # The cache TTL from multiplai.conf goes first, so a caller's env wins over
+    # it; a value already in this process's environment reaches the CLI
+    # unchanged, so the conf does not replace it either.
+    conf_env: dict[str, str] = {}
+    cache_ttl = str(load_multiplai_conf().get(_CACHE_TTL_CONF_KEY) or "").strip()
+    if cache_ttl and not os.environ.get(_CACHE_TTL_ENV):
+        conf_env[_CACHE_TTL_ENV] = cache_ttl
+    run_env: dict[str, str] = {
+        **conf_env,
+        **(env or {}),
+        "_HOOK_CHILD_SESSION": "1",
+    }
     prompt_bytes = len(prompt.encode("utf-8"))
 
     read_hooks: dict[str, list] | None = None
@@ -988,8 +1052,11 @@ async def run_agent(
     last_debug_path = ""
     any_attempt_failed = False
     timed_out = False
+    counted_failures = 0  # failures that use up max_attempts
+    network_deadline: float | None = None
+    network_backoff_s = _NETWORK_BACKOFF_FIRST_S
 
-    for attempt in range(max_attempts):
+    for attempt in itertools.count():
         # Fresh per-attempt capture: a ring of recent lines for trailing
         # context plus a bounded list of [ERROR] lines so a fatal error is
         # never evicted by a DEBUG burst.
@@ -1171,6 +1238,7 @@ async def run_agent(
             asyncio.create_task(_heartbeat(heartbeat_s)) if heartbeat_s > 0 else None
         )
         backoff_s = 0.0
+        retry = False
 
         attempt_ok = False
         try:
@@ -1246,7 +1314,32 @@ async def run_agent(
                     partial=last_partial,
                     debug_log_path=last_debug_path,
                 ) from e
-            if attempt + 1 < max_attempts:
+            if not timed_out and _is_network_error(str(e)):
+                now = loop.time()
+                if network_deadline is None:
+                    network_deadline = now + _NETWORK_RETRY_WINDOW_S
+                left = network_deadline - now
+                if left > 0:
+                    backoff_s = min(network_backoff_s, left)
+                    network_backoff_s = min(
+                        network_backoff_s * 2, _NETWORK_BACKOFF_MAX_S
+                    )
+                    retry = True
+                    logger.warning(
+                        "run_agent [%s] %s (attempt %d), network error, retrying "
+                        "in %.1fs (%.0fs left of %.0fs) — CLI debug log: %s",
+                        label,
+                        last_reason,
+                        attempt + 1,
+                        backoff_s,
+                        left,
+                        _NETWORK_RETRY_WINDOW_S,
+                        last_debug_path or "(none)",
+                    )
+            if not retry:
+                counted_failures += 1
+            if not retry and counted_failures < max_attempts:
+                retry = True
                 logger.warning(
                     "run_agent [%s] %s (attempt %d/%d), retrying in %.1fs"
                     " — CLI debug log: %s",
@@ -1278,6 +1371,8 @@ async def run_agent(
                 with contextlib.suppress(asyncio.CancelledError):
                     await heartbeat_task
 
+        if not retry:
+            break
         # Backoff sits outside the attempt so the heartbeat is already
         # stopped: an "alive" line during the gap would report the failed
         # attempt's turn count as if the run were still producing.
@@ -1291,7 +1386,7 @@ async def run_agent(
         "--- captured CLI stderr (errors) ---\n%s",
         label,
         last_reason,
-        max_attempts,
+        attempt + 1,
         elapsed,
         last_debug_path or "(none)",
         last_tail or "(none)",
@@ -1301,9 +1396,9 @@ async def run_agent(
         _record_cost(component, label, model, last_partial.usage, last_session_id)
     err_cls = AgentRunTimeout if timed_out else AgentRunError
     raise err_cls(
-        f"run_agent [{label}] {last_reason} after {max_attempts} attempt(s)",
+        f"run_agent [{label}] {last_reason} after {attempt + 1} attempt(s)",
         reason=last_reason,
-        attempts=max_attempts,
+        attempts=attempt + 1,
         stderr_tail=last_tail,
         partial=last_partial,
         debug_log_path=last_debug_path,
