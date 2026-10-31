@@ -18,6 +18,16 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **The `pi` backend now gives agents web tools:** `WebSearch` and `WebFetch`
+  in `allowed_tools` map onto the pi-web-access extension's `web_search` and
+  `fetch_content` (they were dropped with a warning, so a `pi:` model in a
+  search or fetch step ran with no tools). Needs `npm:pi-web-access` installed
+  in Pi; its search provider comes from that extension's `web-search.json`.
+  Not available under `MULTIPLAI_PI_GATE_EXT`, which runs Pi with
+  `--no-extensions`.
+
 ### Changed
 
 - **The `haiku`, `sonnet` and `opus` aliases now resolve to the 5.5
