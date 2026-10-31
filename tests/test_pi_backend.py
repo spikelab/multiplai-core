@@ -203,7 +203,7 @@ class TestParsePiSpec:
 
 class TestToolMap:
     def test_translates_dedupes_and_drops_unknown(self):
-        assert pb.pi_tools(["Read", "Grep", "Glob", "Bash", "Read", "WebFetch"]) == [
+        assert pb.pi_tools(["Read", "Grep", "Glob", "Bash", "Read", "Task"]) == [
             "read",
             "grep",
             "find",
@@ -212,6 +212,9 @@ class TestToolMap:
 
     def test_disallowed_removes_from_allow_list(self):
         assert pb.pi_tools(["Read", "Bash"], ["Bash"]) == ["read"]
+
+    def test_web_tools_map_to_pi_web_access(self):
+        assert pb.pi_tools(["WebSearch", "WebFetch"]) == ["web_search", "fetch_content"]
 
     def test_none_and_empty_are_no_tools(self):
         assert pb.pi_tools(None) == [] and pb.pi_tools([]) == []
