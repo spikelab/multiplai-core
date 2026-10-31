@@ -18,6 +18,21 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Changed
+
+- **The `haiku`, `sonnet` and `opus` aliases now resolve to the 5.5
+  generation:** `claude-haiku-5-5`, `claude-sonnet-5-5` and `claude-opus-5-5`
+  (were `claude-haiku-4-5`, `claude-sonnet-5` and `claude-opus-4-8`).
+  `model_client.DEFAULT_MODEL` follows `CURRENT_MODEL["sonnet"]`, so every call
+  that names no model moves too. A caller that needs the old model must name
+  its ID. `--thinking disabled` through the Agent SDK was checked live on all
+  three new IDs; through `AnthropicAPIClient`, Sonnet 5.5 and Opus 5.5 reject
+  `thinking={"type": "disabled"}` with a 400.
+- **`pricing.json` lists the three 5.5 models:** Opus 5.5 $4/$20 per MTok
+  (cache reads $0.20), Sonnet 5.5 $2/$10, Haiku 5.5 $0.10/$0.50 (the rate for
+  prompts up to 100K tokens; longer prompts cost $0.50/$2.50 and are
+  under-counted).
+
 ## [0.27.0] – 2026-10-30
 
 ### Added
