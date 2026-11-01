@@ -20,7 +20,9 @@ How the arguments map onto Pi:
   (``~/.pi/agent/models.json``), which this package does not manage.
 - ``allowed_tools`` → ``-t <pi tools>`` through :data:`TOOL_MAP`. Pi's ``-t``
   is a true allow-list: an unlisted tool does not exist for the run. Names
-  with no Pi equivalent are dropped with a warning. ``None``/``[]`` (or an
+  with no Pi equivalent are dropped with a warning. ``WebSearch`` and
+  ``WebFetch`` map onto the pi-web-access extension's ``web_search`` and
+  ``fetch_content``. ``None``/``[]`` (or an
   allow-list that maps to nothing) → ``--no-tools``, a no-tool call.
   ``disallowed_tools`` removes names from the allow-list.
 - ``effort`` → ``--thinking <level>``; ``None`` leaves the flag off, so Pi's
@@ -98,6 +100,12 @@ TOOL_MAP = {
     "Bash": "bash",
     "Glob": "find",
     "Grep": "grep",
+    # The pi-web-access extension's tools (npm:pi-web-access). They exist only
+    # while that extension loads, so not under MULTIPLAI_PI_GATE_EXT, which
+    # runs Pi with --no-extensions. Its search provider is set in
+    # web-search.json, not here.
+    "WebSearch": "web_search",
+    "WebFetch": "fetch_content",
 }
 _CLAUDE_NAME = {pi: claude for claude, pi in TOOL_MAP.items()}
 
