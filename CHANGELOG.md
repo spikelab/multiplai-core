@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.28.0] – 2026-11-02
+
 ### Added
 
 - **The `pi` backend now gives agents web tools:** `WebSearch` and `WebFetch`
@@ -1201,7 +1203,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/spikelab/multiplai-core/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/spikelab/multiplai-core/compare/v0.26.2...v0.27.0
 [0.26.2]: https://github.com/spikelab/multiplai-core/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/spikelab/multiplai-core/compare/v0.26.0...v0.26.1
