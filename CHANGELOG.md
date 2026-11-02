@@ -43,6 +43,14 @@ not backfilled; their contents are recoverable from `git log`.
   prompts up to 100K tokens; longer prompts cost $0.50/$2.50 and are
   under-counted).
 
+### Fixed
+
+- **`extract_json` accepts a literal newline or tab inside a JSON string.** It
+  parsed with the stdlib's strict default, so an answer containing one raised
+  `Invalid control character`, and so did the reformat retry in
+  `agent_structured`, stopping the caller (seen in pm-spec's component check).
+  No action needed; answers that parsed before parse the same.
+
 ## [0.27.0] – 2026-10-30
 
 ### Added

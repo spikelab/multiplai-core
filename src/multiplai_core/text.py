@@ -24,6 +24,10 @@ def extract_json(text: str) -> dict | list:
     - Plain JSON with surrounding prose (the first complete object/array,
       via ``json.JSONDecoder.raw_decode``)
 
+    Raw control characters (a literal newline or tab) inside a string are
+    accepted (``strict=False``): models write them, and rejecting the whole
+    answer for one is never what a caller wants.
+
     Raises ``ValueError`` (``json.JSONDecodeError`` is a subclass) on empty
     input, no JSON found, or malformed/unbalanced JSON.
     """
@@ -37,7 +41,7 @@ def extract_json(text: str) -> dict | list:
     for pattern in _FENCE_RES:
         for fence_match in pattern.finditer(text):
             try:
-                return json.loads(fence_match.group(1).strip())
+                return json.loads(fence_match.group(1).strip(), strict=False)
             except json.JSONDecodeError:
                 continue
 
@@ -51,5 +55,5 @@ def extract_json(text: str) -> dict | list:
     )
     if start is None:
         raise ValueError("No JSON object/array found in response")
-    value, _ = json.JSONDecoder().raw_decode(stripped, start)
+    value, _ = json.JSONDecoder(strict=False).raw_decode(stripped, start)
     return value
