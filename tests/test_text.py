@@ -65,3 +65,15 @@ def test_no_json_raises():
 def test_unbalanced_raises():
     with pytest.raises(ValueError):
         extract_json('{"a": 1')
+
+
+def test_raw_control_characters_in_strings_are_accepted():
+    # Models sometimes write a literal newline or tab inside a JSON string;
+    # strict parsing rejected the whole answer ("Invalid control character").
+    text = '{"description": "line one\nline two\tend"}'
+    assert extract_json(text) == {"description": "line one\nline two\tend"}
+
+
+def test_raw_control_characters_in_fenced_json_are_accepted():
+    text = 'Answer:\n```json\n{"a": "x\ty"}\n```\n'
+    assert extract_json(text) == {"a": "x\ty"}
