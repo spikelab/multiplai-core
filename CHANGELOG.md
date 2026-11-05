@@ -18,6 +18,18 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- **`multiplai_core.runs`: one shared record per pipeline run.** `make_row`
+  builds a row, `append_row` appends it as one line to `<data_dir>/runs.jsonl`
+  (under a `flock`, never raising), and `read_rows` reads back only rows of a
+  `row_version` it knows. `producer(plugin_root, skill)` stamps the plugin
+  version. `change_folder(repo, branch)` names a change's machine-data folder,
+  `<data_dir>/changes/<repo>/<branch>/`. Review, buildme and pm-spec append a row
+  when a run ends, so the review and pipeline viewers can list every run, and
+  compare them by producer version, from one file. Additive: nothing changes for
+  existing callers.
+
 ## [0.28.0] – 2026-11-02
 
 ### Added

@@ -94,6 +94,7 @@ from .untrusted import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover — for type checkers only; runtime is lazy
+    from . import runs
     from .agent_runner import (
         MAX_PROMPT_BYTES,
         TOOL_UNIVERSE,
@@ -296,6 +297,7 @@ _LAZY_ATTRS: dict[str, str] = {
         ),
         "specs",
     ),
+    "runs": "runs",
 }
 
 
@@ -475,5 +477,7 @@ __all__ = [
     "valid_requirement_text",
     "valid_specs_text",
     "write_change_meta",
+    # one line per pipeline run in <data_dir>/runs.jsonl, read by the viewers
+    "runs",
     "__version__",
 ]
