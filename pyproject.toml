@@ -53,7 +53,7 @@ dependencies = [
 # generation, deterministically, so the retry wrapper cannot help.
 #
 # Keep this floor aligned with multiplai-kit (`requirements.txt`) and
-# multiplai-gui (`hub/pyproject.toml`) so all SDK consumers resolve compatibly.
+# multiplai-hub (`pyproject.toml`) so all SDK consumers resolve compatibly.
 #
 # Ceiling is <0.3: claude-agent-sdk is a fast-moving 0.x package where a single
 # minor bump (0.1 -> 0.2) already shipped a breaking result-message parse
