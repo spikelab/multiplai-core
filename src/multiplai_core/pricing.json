@@ -4,6 +4,8 @@
   "comment": "API list prices per MTok, bundled snapshot. refresh_pricing() overwrites <data_dir>/costs/pricing.json from the source URL; this file is the offline fallback. A model may carry explicit cw5m/cw1h/cr prices; when absent the multipliers apply to the input rate.",
   "multipliers": {"cw5m": 1.25, "cw1h": 2.0, "cr": 0.1},
   "models": {
+    "claude-fable-5-2":  {"in": 8.0,  "out": 40.0, "cr": 0.2},
+    "claude-mythos-5-2": {"in": 8.0,  "out": 40.0, "cr": 0.2},
     "claude-fable-5-1":  {"in": 10.0, "out": 50.0, "cw5m": 12.5, "cw1h": 20.0, "cr": 0.25},
     "claude-mythos-5-1": {"in": 10.0, "out": 50.0, "cw5m": 12.5, "cw1h": 20.0, "cr": 0.25},
     "claude-fable-5":    {"in": 10.0, "out": 50.0},

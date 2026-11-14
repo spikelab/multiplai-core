@@ -79,6 +79,7 @@ import itertools
 import logging
 import os
 import re
+import sys
 import time
 import warnings
 from collections import deque
@@ -406,6 +407,9 @@ class AgentRunResult:
     # Every ToolUseBlock in the order it arrived, Write/Edit included. Last and
     # defaulted so callers that build an AgentRunResult keep working.
     tool_calls: tuple[ToolCall, ...] = ()
+    # The model the run was sent to, after the Fable guard ("" when the CLI
+    # default was used). Defaulted for the same reason as tool_calls.
+    model: str = ""
 
 
 class AgentRunError(RuntimeError):
@@ -822,6 +826,34 @@ def _record_cost(
         )
 
 
+async def _guard_fable(model: str, label: str) -> str:
+    """The model to run: *model*, or the Fable guard's fallback when it switches.
+
+    Runs once per :func:`run_agent` call, before the SDK call, never during
+    it. A non-Fable model returns at once with no I/O. The guard's own failure
+    keeps *model*: it is never worth failing a run.
+    """
+    from . import fable_guard
+
+    if not fable_guard.is_fable(model):
+        return model
+    try:
+        decision = await asyncio.to_thread(fable_guard.decide, model, label)
+    except Exception:
+        logger.warning(
+            "run_agent [%s]: fable guard failed (ignored)", label, exc_info=True
+        )
+        return model
+    if decision.switched:
+        line = (
+            f"FABLE-GUARD: {label} runs on {decision.model_used} "
+            f"instead of {model}: {decision.reason}"
+        )
+        print(line, file=sys.stderr)
+        logger.warning("%s", line)
+    return decision.model_used
+
+
 def _sdk_class(sdk, name: str) -> type | None:
     """Fetch a message/block class off the SDK module, tolerating absence.
 
@@ -962,6 +994,7 @@ async def run_agent(
             )
             return await runner(prompt, **kwargs)
         model = parsed
+        model = await _guard_fable(model, label)
 
     try:
         import claude_agent_sdk as sdk
@@ -1266,6 +1299,7 @@ async def run_agent(
                 files_changed=files_changed,
                 tool_calls=tuple(tool_calls),
                 stderr_tail="",
+                model=model or "",
             )
         except Exception as e:
             last_exc = e
@@ -1282,6 +1316,7 @@ async def run_agent(
                 files_changed=files_changed,
                 tool_calls=tuple(tool_calls),
                 stderr_tail=last_tail,
+                model=model or "",
             )
             last_session_id = session_id
             last_debug_path = str(debug_log.path) if debug_log else ""

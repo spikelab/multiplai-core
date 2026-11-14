@@ -20,6 +20,28 @@ not backfilled; their contents are recoverable from `git log`.
 
 ### Added
 
+- **`multiplai_core.fable_guard`: a Fable step runs on Opus when the Fable or
+  weekly allowance is used faster than it refills.** `run_agent` calls
+  `fable_guard.decide` once before each step whose model is Fable or Mythos
+  (`fable`, `claude-fable-*`, `claude-mythos-*`). It reads the subscription's
+  usage from the OAuth usage endpoint (cached 60 s) and picks
+  `FABLE_GUARD_FALLBACK` (default the current Opus) when Fable is at 80%, Fable
+  is past 25% and on pace to run out before its weekly reset, the weekly
+  allowance is past 50% and on pace to run out, or the five-hour window is at
+  85%. It returns to Fable only once every pace is below 0.8. `FABLE_GUARD` in
+  `multiplai.conf` is `off`, `monitor` (the default: logs what it would do and
+  never switches) or `enforce`; the thresholds are `FABLE_GUARD_*` keys read on
+  each decision. Each decision is one line in
+  `skill_state_dir("fable-guard")/decisions.jsonl`; a switch also prints a
+  `FABLE-GUARD:` line to stderr. `python -m multiplai_core.fable_guard status`
+  prints the percentages, the paces and the next decision. Non-Fable models
+  are not checked and cost nothing. Nothing to change unless you want
+  `enforce`.
+- **`AgentRunResult.model`**: the model the run was sent to, after the guard
+  (`""` when the CLI default was used). Defaulted, so code that builds an
+  `AgentRunResult` keeps working. Record this, not the model you asked for,
+  when you ledger a step.
+
 - **`multiplai_core.runs`: one shared record per pipeline run.** `make_row`
   builds a row, `append_row` appends it as one line to `<data_dir>/runs.jsonl`
   (under a `flock`, never raising), and `read_rows` reads back only rows of a
@@ -29,6 +51,13 @@ not backfilled; their contents are recoverable from `git log`.
   when a run ends, so the review and pipeline viewers can list every run, and
   compare them by producer version, from one file. Additive: nothing changes for
   existing callers.
+
+### Changed
+
+- **`fable` now means Claude Fable 5.2** (`CURRENT_MODEL["fable"] ==
+  "claude-fable-5-2"`), and `pricing.json` prices `claude-fable-5-2` and
+  `claude-mythos-5-2` at $8 / $40 per MTok, cache reads $0.20 (cache writes from
+  the multipliers). A config naming `claude-fable-5-1` keeps getting 5.1.
 
 ## [0.28.0] – 2026-11-02
 

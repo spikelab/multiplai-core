@@ -325,13 +325,13 @@ class TestClaudeAlias:
 
 class TestFable:
     def test_fable_is_a_known_family(self):
-        assert CURRENT_MODEL["fable"] == "claude-fable-5-1"
+        assert CURRENT_MODEL["fable"] == "claude-fable-5-2"
         assert parse_model_spec("fable") == parse_model_spec("claude:fable")
 
     def test_pick_model_fable_task_override(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_MULTIPLAI_HOME", str(tmp_path))
         _write_conf(tmp_path, "[t]\nMODEL=fable\n")
-        assert pick_model("opus", task="t") == "claude-fable-5-1"
+        assert pick_model("opus", task="t") == "claude-fable-5-2"
 
 
 class TestResolveModelSpec:

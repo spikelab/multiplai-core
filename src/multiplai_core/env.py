@@ -195,12 +195,13 @@ def resolve_model(requested: str, ceiling: str | None = None) -> str:
 # aliases, haiku's alias resolves to claude-haiku-4-5-20251001. fable verified
 # against the same catalog (cached 2026-10-06) on 2026-10-11: Claude Fable 5.1
 # is `claude-fable-5-1`. haiku/sonnet/opus moved to the 5.5 generation on
-# 2026-10-31, IDs from the same catalog (cached 2026-10-06).
+# 2026-10-31, IDs from the same catalog (cached 2026-10-06). fable moved to
+# Claude Fable 5.2 (`claude-fable-5-2`) on 2026-11-14, catalog cached 2026-11-03.
 CURRENT_MODEL = {
     "haiku": "claude-haiku-5-5",
     "sonnet": "claude-sonnet-5-5",
     "opus": "claude-opus-5-5",
-    "fable": "claude-fable-5-1",
+    "fable": "claude-fable-5-2",
 }
 
 
