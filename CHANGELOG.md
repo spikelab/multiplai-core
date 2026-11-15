@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.29.0] – 2026-11-15
+
 ### Added
 
 - **`multiplai_core.fable_guard`: a Fable step runs on Opus when the Fable or
@@ -1244,7 +1246,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/spikelab/multiplai-core/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/spikelab/multiplai-core/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/spikelab/multiplai-core/compare/v0.26.2...v0.27.0
 [0.26.2]: https://github.com/spikelab/multiplai-core/compare/v0.26.1...v0.26.2
