@@ -18,6 +18,10 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `run_agent` returns when the CLI sends a successful result, instead of waiting for the stream to end; a shell the agent left running no longer holds the call open until the timeout.
+
 ## [0.29.0] – 2026-11-15
 
 ### Added

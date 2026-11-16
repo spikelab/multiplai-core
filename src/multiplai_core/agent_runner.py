@@ -1243,6 +1243,13 @@ async def run_agent(
                             cache_read_tokens=u.get("cache_read_input_tokens", 0) or 0,
                             cost_usd=getattr(message, "total_cost_usd", 0.0) or 0.0,
                         )
+                        # A successful result is the end of the run. A shell
+                        # the agent left in the background keeps the CLI's
+                        # stream open, so waiting for it to end would hold the
+                        # call until the timeout. An error result is followed
+                        # by the SDK's exception, which must reach the caller.
+                        if not getattr(message, "is_error", False):
+                            return
             finally:
                 await gen.aclose()
 

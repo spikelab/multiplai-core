@@ -692,7 +692,9 @@ class TestUsageLimit:
 
         async def _agen(prompt, options):
             yield _FakeAssistantMessage([_FakeTextBlock("some")])
-            yield _FakeResultMessage(usage={"input_tokens": 10, "output_tokens": 2})
+            yield _FakeResultMessage(
+                usage={"input_tokens": 10, "output_tokens": 2}, is_error=True
+            )
             raise _ResultError(SESSION_LIMIT)
 
         mock_sdk = _make_mock_sdk()
@@ -1178,10 +1180,14 @@ class TestCostLedgerTap:
     def test_failed_run_records_partial_usage(self):
         from multiplai_core.costing import iter_ledger
 
-        # Result message arrives, then the stream dies — partial usage exists.
+        # An error result arrives, then the stream dies — partial usage exists.
+        # (Only an error result is followed by an exception; a successful
+        # one ends the call.)
         async def _agen(prompt, options):
             yield _FakeAssistantMessage([_FakeTextBlock("some")])
-            yield self._result_message()
+            result = self._result_message()
+            result.is_error = True
+            yield result
             raise RuntimeError("stream died")
 
         mock_sdk = _make_mock_sdk()
