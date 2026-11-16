@@ -18,6 +18,8 @@ not backfilled; their contents are recoverable from `git log`.
 
 ## [Unreleased]
 
+## [0.29.1] – 2026-11-16
+
 ### Fixed
 
 - `run_agent` returns when the CLI sends a successful result, instead of waiting for the stream to end; a shell the agent left running no longer holds the call open until the timeout.
@@ -1250,7 +1252,8 @@ not backfilled; their contents are recoverable from `git log`.
   agent run appends a priced record to the ledger. Defaults to `""`, which
   records nothing — existing calls are unaffected.
 
-[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/spikelab/multiplai-core/compare/v0.29.1...HEAD
+[0.29.1]: https://github.com/spikelab/multiplai-core/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/spikelab/multiplai-core/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/spikelab/multiplai-core/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/spikelab/multiplai-core/compare/v0.26.2...v0.27.0
