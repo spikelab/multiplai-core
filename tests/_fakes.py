@@ -35,9 +35,12 @@ class _FakeAssistantMessage:
 
 
 class _FakeResultMessage:
-    def __init__(self, usage: dict | None = None, cost: float = 0.0) -> None:
+    def __init__(
+        self, usage: dict | None = None, cost: float = 0.0, is_error: bool = False
+    ) -> None:
         self.usage = usage or {}
         self.total_cost_usd = cost
+        self.is_error = is_error
 
 
 def _make_mock_sdk(

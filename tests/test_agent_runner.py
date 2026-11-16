@@ -865,6 +865,55 @@ class TestTimeout:
         )
 
 
+class TestStopsAtResult:
+    """A successful result ends the call: a shell the agent left running keeps
+    the CLI's stream open, and waiting for the stream to end turned a finished
+    run into a timeout. An error result keeps the SDK's exception path."""
+
+    def test_successful_result_returns_without_waiting_for_the_stream(self):
+        import time
+
+        mock = _make_mock_sdk()
+        state = {"closed": False}
+
+        async def _agen(prompt, options):
+            try:
+                yield _FakeAssistantMessage([_FakeTextBlock("done")])
+                yield _FakeResultMessage(
+                    usage={"input_tokens": 7, "output_tokens": 3}, cost=0.01
+                )
+                await asyncio.Event().wait()  # background work never finishes
+            finally:
+                state["closed"] = True
+
+        mock.query = MagicMock(side_effect=_agen)
+        start = time.monotonic()
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            result = _run(run_agent("hi", timeout_s=5))
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1
+        assert result.text == "done"
+        assert result.usage.input_tokens == 7
+        assert result.usage.output_tokens == 3
+        assert result.usage.cost_usd == 0.01
+        assert state["closed"] is True
+
+    def test_error_result_still_raises(self):
+        mock = _make_mock_sdk()
+
+        async def _agen(prompt, options):
+            yield _FakeAssistantMessage([_FakeTextBlock("partial")])
+            yield _FakeResultMessage(is_error=True)
+            raise _ResultError("Reached maximum number of turns (5)")
+
+        mock.query = MagicMock(side_effect=_agen)
+        with patch.dict(sys.modules, {"claude_agent_sdk": mock}):
+            with pytest.raises(AgentRunError) as exc:
+                _run(run_agent("hi", timeout_s=5, max_attempts=1))
+        assert "Reached maximum number of turns" in str(exc.value)
+
+
 class TestLargePromptsInline:
     """A prompt of any size goes to ``sdk.query`` unchanged.
 
