@@ -20,7 +20,7 @@ def _row(**kw):
     base: dict[str, Any] = {
         "producer": "multiplai-dev:buildme 0.155.2",
         "kind": "epic",
-        "target": {"repo": "Dolcebot", "branch": "DF-1-x"},
+        "target": {"repo": "ShelfBot", "branch": "EPIC-1-x"},
         "outcome": "parked",
     }
     base.update(kw)
@@ -29,8 +29,8 @@ def _row(**kw):
 
 def test_paths(data_dir):
     assert runs.runs_path() == data_dir / "runs.jsonl"
-    assert runs.change_folder("Dolcebot", "DF-1-account management") == (
-        data_dir / "changes" / "Dolcebot" / "DF-1-account_management"
+    assert runs.change_folder("ShelfBot", "EPIC-1-member management") == (
+        data_dir / "changes" / "ShelfBot" / "EPIC-1-member_management"
     )
 
 

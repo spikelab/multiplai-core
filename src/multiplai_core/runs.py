@@ -18,7 +18,7 @@ A row (`make_row`):
     {"row_version": 1,
      "producer": "multiplai-dev:review 0.47.0",
      "kind": "review" | "build" | "epic" | "pm-spec",
-     "target": {"repo": "Dolcebot", "branch": "...", "change": "...", "pr": 88, ...},
+     "target": {"repo": "ShelfBot", "branch": "...", "change": "...", "pr": 88, ...},
      "folder": "<path under data_dir>" | null,
      "requested_by": null | {"branch": "...", "child": "..."},
      "started_at": "2026-11-04T01:20:57Z" | null,

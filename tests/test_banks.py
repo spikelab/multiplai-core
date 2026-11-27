@@ -96,20 +96,20 @@ class TestLoadBanks:
             tmp_path,
             """
 memory_banks:
-  - name: dolcebot-team
-    path: banks/dolcebot-team
+  - name: shelfbot-team
+    path: banks/shelfbot-team
     remote: git@github.com:example/memory-bank.git
     mode: propose
 """,
         )
         banks = load_banks(memory_dir=tmp_path / "memory", config_path=cfg)
 
-        assert [b.name for b in banks] == [PERSONAL_BANK, "dolcebot-team"]
+        assert [b.name for b in banks] == [PERSONAL_BANK, "shelfbot-team"]
         team = banks[1]
         assert team.is_shared
         assert not team.accepts_direct_writes
         assert team.accepts_contributions
-        assert team.path == (tmp_path / "banks" / "dolcebot-team").resolve()
+        assert team.path == (tmp_path / "banks" / "shelfbot-team").resolve()
         assert team.syncs_at_session_start
 
     def test_default_path_is_under_workspace_banks_dir(self, tmp_path):

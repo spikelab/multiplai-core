@@ -5,13 +5,13 @@ Runs one agent invocation through ``pi --mode rpc`` and returns the same
 returns. Importing this module registers the backend; ``run_agent`` imports it
 the first time it sees a ``pi:`` spec.
 
-Adapted from the agent path of DolceEvals ``buildme_pipeline/pi_executor.py``
-(DolceTech/DolceEvals@d755fcc): ``parse_pi_spec``, ``TOOL_MAP``,
+Adapted from the agent path of a private evals repository's
+``buildme_pipeline/pi_executor.py``: ``parse_pi_spec``, ``TOOL_MAP``,
 ``_assistant_text`` and ``_files_changed`` come from there. Left out on
 purpose: the metering proxy and its ledger (they need ``uvicorn``/``httpx``),
 the steering control channel, and the spend cap. The run loop below enforces
 the two bounds ``run_agent`` promises, ``max_turns`` and ``timeout_s``, which
-is the part of DolceEvals' ``supervisor.py`` this path needs.
+is the part of that repository's ``supervisor.py`` this path needs.
 
 How the arguments map onto Pi:
 
@@ -47,7 +47,7 @@ How the arguments map onto Pi:
 Environment:
 
     MULTIPLAI_PI_BIN       the pi binary (default ``pi`` on PATH)
-    MULTIPLAI_PI_GATE_EXT  path to a Pi extension that gates bash (DolceEvals'
+    MULTIPLAI_PI_GATE_EXT  path to a Pi extension that gates bash (the evals repo's
                            ``extensions/gating.ts``); loaded with
                            ``--no-extensions --extension <path>`` when set,
                            off otherwise. The Claude path does not gate bash
