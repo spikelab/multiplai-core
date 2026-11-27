@@ -1,6 +1,6 @@
 """Pi event-stream parsing.
 
-Ported from DolceEvals ``piharness/events.py`` (DolceTech/DolceEvals@d755fcc)
+Ported from ``piharness/events.py`` in a private evals repository
 for :mod:`multiplai_core.pi.backend`. Standard library only. Mentions of
 ``metrics.py`` below refer to that repo; it was not ported.
 

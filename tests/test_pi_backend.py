@@ -2,7 +2,7 @@
 
 No `pi` binary and no network: every run goes through an in-process stub
 transport that replays scripted Pi events. Event shapes follow a recorded
-`pi --mode rpc` run (DolceEvals evals archive, 2026-08-15).
+`pi --mode rpc` run (a private evals archive, 2026-08-15).
 """
 
 import asyncio

@@ -1,6 +1,6 @@
 """Pi's JSONL RPC transport.
 
-Ported from DolceEvals ``piharness/rpc.py`` (DolceTech/DolceEvals@d755fcc) for
+Ported from ``piharness/rpc.py`` in a private evals repository for
 :mod:`multiplai_core.pi.backend`. Standard library only. Mentions of
 ``supervisor.py`` and "the trial" below refer to that repo; here the backend's
 own run loop plays the supervisor's part, and nothing steers a run. One change
